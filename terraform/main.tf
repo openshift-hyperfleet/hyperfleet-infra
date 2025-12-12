@@ -45,3 +45,27 @@ module "gke_cluster" {
 #   count  = var.cloud_provider == "aks" ? 1 : 0
 #   ...
 # }
+
+# =============================================================================
+# Google Pub/Sub for HyperFleet messaging (optional)
+# =============================================================================
+module "pubsub" {
+  source = "./modules/pubsub"
+  count  = var.enable_pubsub ? 1 : 0
+
+  project_id    = var.gcp_project_id
+  namespace     = var.kubernetes_namespace
+  resource_type = "clusters"
+
+  # Service account names
+  sentinel_sa_name   = "hyperfleet-sentinel-${var.developer_name}"
+  adapter_sa_name    = "hyperfleet-adapter-${var.developer_name}"
+  sentinel_k8s_sa_name = "sentinel"
+  adapter_k8s_sa_name  = "hyperfleet-adapter"
+
+  # Dead letter queue
+  enable_dead_letter    = var.enable_dead_letter
+  max_delivery_attempts = 5
+
+  labels = local.common_labels
+}

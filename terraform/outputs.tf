@@ -48,3 +48,32 @@ output "connect_command" {
     "# Connection command not available for ${var.cloud_provider}"
   )
 }
+
+# =============================================================================
+# Pub/Sub Outputs (when enabled)
+# =============================================================================
+
+output "sentinel_service_account_email" {
+  description = "Email of the Sentinel GCP service account"
+  value       = var.enable_pubsub ? module.pubsub[0].sentinel_service_account_email : ""
+}
+
+output "adapter_service_account_email" {
+  description = "Email of the Adapter GCP service account"
+  value       = var.enable_pubsub ? module.pubsub[0].adapter_service_account_email : ""
+}
+
+output "topic_name" {
+  description = "Name of the Pub/Sub topic"
+  value       = var.enable_pubsub ? module.pubsub[0].topic_name : ""
+}
+
+output "subscription_name" {
+  description = "Name of the Pub/Sub subscription"
+  value       = var.enable_pubsub ? module.pubsub[0].subscription_name : ""
+}
+
+output "helm_values_snippet" {
+  description = "Snippet to add to Helm values for Workload Identity annotations"
+  value       = var.enable_pubsub ? module.pubsub[0].helm_values_snippet : ""
+}

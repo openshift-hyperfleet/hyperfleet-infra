@@ -21,7 +21,7 @@ Terraform configuration for creating personal HyperFleet development clusters.
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-- **Shared VPC**: One VPC for all dev clusters (managed by admin)
+- **Shared VPC**: One VPC for all dev clusters (deployed once per project)
 - **Per-developer clusters**: Each developer gets their own isolated GKE cluster
 
 ## Prerequisites
@@ -47,7 +47,7 @@ gcloud components install gke-gcloud-auth-plugin
 
 ## Quick Start (For Developers)
 
-> **Note**: The shared VPC must be deployed first by a team admin. If you get network errors, contact your team lead.
+> **Note**: The shared VPC must be deployed first. See [Shared Infrastructure](#shared-infrastructure) below.
 
 ```bash
 # 1. Authenticate with GCP
@@ -100,6 +100,9 @@ terraform destroy -var-file=envs/gke/dev-<username>.tfvars
 | `node_count` | Number of nodes | `1` |
 | `machine_type` | VM instance type | `e2-standard-4` |
 | `use_spot_vms` | Use Spot VMs for cost savings | `true` |
+| `enable_pubsub` | Enable Google Pub/Sub resources | `false` |
+| `enable_dead_letter` | Enable dead letter queue for Pub/Sub | `true` |
+| `kubernetes_namespace` | Namespace for Workload Identity bindings | `hyperfleet-system` |
 
 ## Cost Optimization
 
@@ -107,6 +110,77 @@ terraform destroy -var-file=envs/gke/dev-<username>.tfvars
 - Spot VMs may be preempted with 30 seconds notice
 - For stable workloads, set `use_spot_vms = false`
 - **Always destroy when done** - clusters cost ~$3-5/day with Spot VMs
+
+## Google Pub/Sub (Optional)
+
+Enable Pub/Sub to use Google's managed message broker instead of RabbitMQ.
+
+### Enable Pub/Sub
+
+Add to your tfvars file:
+
+```hcl
+enable_pubsub = true
+enable_dead_letter = true  # Optional, defaults to true
+kubernetes_namespace = "hyperfleet-system"
+```
+
+Or pass as command line arguments:
+
+```bash
+terraform apply -var-file=envs/gke/dev-<username>.tfvars \
+  -var="enable_pubsub=true"
+```
+
+### What It Creates
+
+| Resource | Name Pattern | Description |
+|----------|--------------|-------------|
+| Pub/Sub Topic | `{namespace}-clusters` | Event topic for cluster resources |
+| Pub/Sub Subscription | `{namespace}-adapter` | Subscription for adapter service |
+| Dead Letter Topic | `{namespace}-clusters-dlq` | Failed message storage (optional) |
+| Service Account | `hyperfleet-sentinel-{developer}` | Publisher SA for sentinel |
+| Service Account | `hyperfleet-adapter-{developer}` | Subscriber SA for adapter |
+| Workload Identity | - | Binds K8s SAs to GCP SAs |
+
+### Outputs
+
+After applying with `enable_pubsub=true`, you'll get these outputs:
+
+```bash
+# Get service account emails for Helm values
+terraform output sentinel_service_account_email
+terraform output adapter_service_account_email
+
+# Get topic/subscription names
+terraform output topic_name
+terraform output subscription_name
+
+# Get ready-to-use Helm values snippet
+terraform output helm_values_snippet
+```
+
+### Helm Configuration
+
+Get the complete Helm values snippet (includes broker config and Workload Identity):
+
+```bash
+terraform output helm_values_snippet
+```
+
+Or manually add the Workload Identity annotations:
+
+```yaml
+sentinel:
+  serviceAccount:
+    annotations:
+      iam.gke.io/gcp-service-account: <sentinel_service_account_email>
+
+hyperfleet-adapter:
+  serviceAccount:
+    annotations:
+      iam.gke.io/gcp-service-account: <adapter_service_account_email>
+```
 
 ## Directory Structure
 
@@ -117,24 +191,25 @@ terraform/
 ├── outputs.tf              # Cluster outputs
 ├── providers.tf            # Provider configuration
 ├── versions.tf             # Version constraints
-├── shared/                 # Shared infrastructure (admin only)
+├── shared/                 # Shared infrastructure (deploy once)
 │   ├── main.tf             # VPC, subnet, firewall, NAT
 │   ├── variables.tf
 │   ├── outputs.tf
 │   └── README.md
 ├── modules/
-│   └── cluster/
-│       └── gke/            # GKE cluster module
+│   ├── cluster/
+│   │   └── gke/            # GKE cluster module
+│   └── pubsub/             # Google Pub/Sub module
 └── envs/
     └── gke/
         └── dev.tfvars.example
 ```
 
-## Shared Infrastructure (Admin Only)
+## Shared Infrastructure
 
-The `shared/` directory contains Terraform for the VPC and networking that all developer clusters use.
+The `shared/` directory contains Terraform for the VPC and networking that developer clusters use.
 
-**This only needs to be deployed once by a team admin.**
+**This only needs to be deployed once per GCP project.**
 
 ### What It Creates
 
@@ -180,7 +255,7 @@ To add EKS or AKS support in the future:
 ## Troubleshooting
 
 ### "No network named X" error
-The shared VPC hasn't been deployed yet. Ask your team admin to run:
+The shared VPC hasn't been deployed yet. Deploy it first:
 ```bash
 cd terraform/shared && terraform apply
 ```

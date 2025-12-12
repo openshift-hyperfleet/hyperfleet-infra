@@ -82,3 +82,32 @@ variable "aws_region" {
   type        = string
   default     = "us-east-1"
 }
+
+# =============================================================================
+# Kubernetes Configuration
+# =============================================================================
+variable "kubernetes_namespace" {
+  description = "Kubernetes namespace for HyperFleet components"
+  type        = string
+  default     = "hyperfleet-system"
+
+  validation {
+    condition     = length(var.kubernetes_namespace) > 0
+    error_message = "kubernetes_namespace must not be empty."
+  }
+}
+
+# =============================================================================
+# Pub/Sub Configuration
+# =============================================================================
+variable "enable_pubsub" {
+  description = "Enable Google Pub/Sub for HyperFleet messaging"
+  type        = bool
+  default     = false
+}
+
+variable "enable_dead_letter" {
+  description = "Enable dead letter queue for Pub/Sub"
+  type        = bool
+  default     = true
+}

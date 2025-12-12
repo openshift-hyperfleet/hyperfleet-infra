@@ -6,14 +6,15 @@ Infrastructure as Code for HyperFleet development environments.
 
 This repository contains Terraform configurations for:
 
-- **Shared infrastructure** (VPC, subnets, firewall rules) - deployed once by admins
+- **Shared infrastructure** (VPC, subnets, firewall rules) - deployed once per GCP project, used by all developer clusters
 - **Developer GKE clusters** - personal Kubernetes clusters for each developer
+- **Google Pub/Sub** (optional) - managed message broker with Workload Identity
 
 ## Quick Start
 
 See [terraform/README.md](terraform/README.md) for detailed instructions.
 
-### For Admins (One-time Setup)
+### Shared Infrastructure (One-time Setup)
 
 ```bash
 cd terraform/shared
@@ -21,7 +22,7 @@ terraform init
 terraform apply
 ```
 
-### For Developers
+### Developer Clusters
 
 ```bash
 cd terraform
@@ -43,14 +44,15 @@ hyperfleet-infra/
 │   ├── outputs.tf
 │   ├── providers.tf
 │   ├── versions.tf
-│   ├── shared/                 # Shared infrastructure (admin only)
+│   ├── shared/                 # Shared infrastructure (deploy once)
 │   │   ├── README.md
 │   │   ├── main.tf
 │   │   ├── variables.tf
 │   │   └── outputs.tf
 │   ├── modules/
-│   │   └── cluster/
-│   │       └── gke/            # GKE cluster module
+│   │   ├── cluster/
+│   │   │   └── gke/            # GKE cluster module
+│   │   └── pubsub/             # Google Pub/Sub module
 │   └── envs/
 │       └── gke/
 │           └── dev.tfvars.example
