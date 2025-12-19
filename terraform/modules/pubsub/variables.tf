@@ -61,18 +61,6 @@ variable "max_delivery_attempts" {
   }
 }
 
-variable "sentinel_sa_name" {
-  description = "Sentinel GCP service account name"
-  type        = string
-  default     = "hyperfleet-sentinel"
-}
-
-variable "adapter_sa_name" {
-  description = "Adapter GCP service account name"
-  type        = string
-  default     = "hyperfleet-adapter"
-}
-
 variable "sentinel_k8s_sa_name" {
   description = "Sentinel Kubernetes service account name"
   type        = string

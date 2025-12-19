@@ -1,44 +1,26 @@
 # =============================================================================
 # Sentinel Service Account (Publisher)
 # =============================================================================
-resource "google_service_account" "sentinel" {
-  account_id   = var.sentinel_sa_name
-  display_name = "HyperFleet Sentinel"
-  description  = "Service account for HyperFleet Sentinel to publish events to Pub/Sub"
-  project      = var.project_id
-}
 
-# Grant Sentinel permission to publish to the events topic
-resource "google_pubsub_topic_iam_member" "sentinel_publisher" {
-  topic   = google_pubsub_topic.events.name
-  role    = "roles/pubsub.publisher"
-  member  = "serviceAccount:${google_service_account.sentinel.email}"
-  project = var.project_id
+
+resource "google_pubsub_topic_iam_member" "sentinel_publisher_wif" {
+  topic     = google_pubsub_topic.events.name
+  role      = "roles/pubsub.publisher"
+  member    = "principal://iam.googleapis.com/projects/${data.google_project.current.number}/locations/global/workloadIdentityPools/${var.project_id}.svc.id.goog/subject/ns/${var.namespace}/sa/${var.sentinel_k8s_sa_name}"
+  project   = var.project_id
 }
 
 # Workload Identity binding for Sentinel
-# Allows the Kubernetes service account to impersonate the GCP service account
-resource "google_service_account_iam_member" "sentinel_workload_identity" {
-  service_account_id = google_service_account.sentinel.name
-  role               = "roles/iam.workloadIdentityUser"
-  member             = "serviceAccount:${var.project_id}.svc.id.goog[${var.namespace}/${var.sentinel_k8s_sa_name}]"
-}
 
 # =============================================================================
 # Adapter Service Account (Subscriber)
 # =============================================================================
-resource "google_service_account" "adapter" {
-  account_id   = var.adapter_sa_name
-  display_name = "HyperFleet Adapter"
-  description  = "Service account for HyperFleet Adapter to consume events from Pub/Sub"
-  project      = var.project_id
-}
 
 # Grant Adapter permission to subscribe to the adapter subscription
 resource "google_pubsub_subscription_iam_member" "adapter_subscriber" {
   subscription = google_pubsub_subscription.adapter.name
   role         = "roles/pubsub.subscriber"
-  member       = "serviceAccount:${google_service_account.adapter.email}"
+  member    = "principal://iam.googleapis.com/projects/${data.google_project.current.number}/locations/global/workloadIdentityPools/${var.project_id}.svc.id.goog/subject/ns/${var.namespace}/sa/${var.adapter_k8s_sa_name}"
   project      = var.project_id
 }
 
@@ -46,16 +28,10 @@ resource "google_pubsub_subscription_iam_member" "adapter_subscriber" {
 resource "google_pubsub_subscription_iam_member" "adapter_viewer" {
   subscription = google_pubsub_subscription.adapter.name
   role         = "roles/pubsub.viewer"
-  member       = "serviceAccount:${google_service_account.adapter.email}"
+  member    = "principal://iam.googleapis.com/projects/${data.google_project.current.number}/locations/global/workloadIdentityPools/${var.project_id}.svc.id.goog/subject/ns/${var.namespace}/sa/${var.adapter_k8s_sa_name}"
   project      = var.project_id
 }
 
-# Workload Identity binding for Adapter
-resource "google_service_account_iam_member" "adapter_workload_identity" {
-  service_account_id = google_service_account.adapter.name
-  role               = "roles/iam.workloadIdentityUser"
-  member             = "serviceAccount:${var.project_id}.svc.id.goog[${var.namespace}/${var.adapter_k8s_sa_name}]"
-}
 
 # =============================================================================
 # Dead Letter Queue Permissions (if enabled)

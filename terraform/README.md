@@ -148,10 +148,6 @@ terraform apply -var-file=envs/gke/dev-<username>.tfvars \
 After applying with `enable_pubsub=true`, you'll get these outputs:
 
 ```bash
-# Get service account emails for Helm values
-terraform output sentinel_service_account_email
-terraform output adapter_service_account_email
-
 # Get topic/subscription names
 terraform output topic_name
 terraform output subscription_name
@@ -166,20 +162,6 @@ Get the complete Helm values snippet (includes broker config and Workload Identi
 
 ```bash
 terraform output helm_values_snippet
-```
-
-Or manually add the Workload Identity annotations:
-
-```yaml
-sentinel:
-  serviceAccount:
-    annotations:
-      iam.gke.io/gcp-service-account: <sentinel_service_account_email>
-
-hyperfleet-adapter:
-  serviceAccount:
-    annotations:
-      iam.gke.io/gcp-service-account: <adapter_service_account_email>
 ```
 
 ## Directory Structure

@@ -30,19 +30,6 @@ output "subscription_id" {
 }
 
 # =============================================================================
-# Service Account Outputs
-# =============================================================================
-output "sentinel_service_account_email" {
-  description = "Email of the Sentinel GCP service account"
-  value       = google_service_account.sentinel.email
-}
-
-output "adapter_service_account_email" {
-  description = "Email of the Adapter GCP service account"
-  value       = google_service_account.adapter.email
-}
-
-# =============================================================================
 # Helm Values Snippet
 # =============================================================================
 output "helm_values_snippet" {
@@ -52,9 +39,6 @@ output "helm_values_snippet" {
 
     # For Sentinel:
     sentinel:
-      serviceAccount:
-        annotations:
-          iam.gke.io/gcp-service-account: ${google_service_account.sentinel.email}
       broker:
         type: googlepubsub
         topic: ${google_pubsub_topic.events.name}
@@ -64,9 +48,6 @@ output "helm_values_snippet" {
 
     # For Adapter:
     hyperfleet-adapter:
-      serviceAccount:
-        annotations:
-          iam.gke.io/gcp-service-account: ${google_service_account.adapter.email}
       broker:
         type: googlepubsub
         subscriptionId: ${google_pubsub_subscription.adapter.name}

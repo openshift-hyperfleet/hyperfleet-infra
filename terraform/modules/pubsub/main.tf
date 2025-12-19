@@ -1,6 +1,6 @@
 locals {
   topic_name        = var.topic_name != "" ? var.topic_name : "${var.namespace}-${var.resource_type}"
-  subscription_name = var.subscription_name != "" ? var.subscription_name : "${var.namespace}-adapter"
+  subscription_name = var.subscription_name != "" ? var.subscription_name : "${local.topic_name}-sub"
   dlq_topic_name    = "${local.topic_name}-dlq"
 
   common_labels = merge(var.labels, {

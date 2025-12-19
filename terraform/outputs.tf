@@ -49,20 +49,6 @@ output "connect_command" {
   )
 }
 
-# =============================================================================
-# Pub/Sub Outputs (when enabled)
-# =============================================================================
-
-output "sentinel_service_account_email" {
-  description = "Email of the Sentinel GCP service account"
-  value       = var.enable_pubsub ? module.pubsub[0].sentinel_service_account_email : ""
-}
-
-output "adapter_service_account_email" {
-  description = "Email of the Adapter GCP service account"
-  value       = var.enable_pubsub ? module.pubsub[0].adapter_service_account_email : ""
-}
-
 output "topic_name" {
   description = "Name of the Pub/Sub topic"
   value       = var.enable_pubsub ? module.pubsub[0].topic_name : ""
