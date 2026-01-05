@@ -3,8 +3,8 @@ locals {
   # Key: topic name, Value: topic configuration with full topic name
   topics = {
     for topic_name, topic_config in var.topic_configs : topic_name => {
-      full_topic_name            = "${var.kubernetes_namespace}-${topic_name}-${var.developer_name}"
-      dlq_topic_name             = "${var.kubernetes_namespace}-${topic_name}-${var.developer_name}-dlq"
+      full_topic_name            = "${var.kubernetes_namespace}-${topic_name}"
+      dlq_topic_name             = "${var.kubernetes_namespace}-${topic_name}-dlq"
       message_retention_duration = topic_config.message_retention_duration
       adapter_subscriptions      = topic_config.adapter_subscriptions
     }
@@ -16,7 +16,7 @@ locals {
     for topic_name, topic_config in local.topics : {
       for adapter_name, adapter_config in topic_config.adapter_subscriptions :
       "${topic_name}-${adapter_name}" => {
-        subscription_name    = "${var.kubernetes_namespace}-${topic_name}-${adapter_name}-adapter-${var.developer_name}"
+        subscription_name    = "${var.kubernetes_namespace}-${topic_name}-${adapter_name}-adapter"
         adapter_name         = adapter_name
         topic_name           = topic_name
         ack_deadline_seconds = adapter_config.ack_deadline_seconds

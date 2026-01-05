@@ -1,20 +1,13 @@
 # =============================================================================
-# Sentinel Service Account (Publisher) - Single account for all topics
+# Sentinel Workload Identity (Publisher) - Publishes to all topics
 # =============================================================================
-resource "google_service_account" "sentinel" {
-  account_id   = substr("sentinel-${var.developer_name}", 0, 30)
-  display_name = "HyperFleet Sentinel"
-  description  = "Service account for HyperFleet Sentinel to publish events to all Pub/Sub topics"
-  project      = var.project_id
-}
-
-# Grant Sentinel permission to publish to all topics
+# Grant Sentinel permission to publish to all topics using WIF principal
 resource "google_pubsub_topic_iam_member" "sentinel_publisher" {
   for_each = local.topics
 
   topic   = google_pubsub_topic.topics[each.key].name
   role    = "roles/pubsub.publisher"
-  member  = "serviceAccount:${google_service_account.sentinel.email}"
+  member  = "principal://iam.googleapis.com/projects/${data.google_project.current.number}/locations/global/workloadIdentityPools/${var.project_id}.svc.id.goog/subject/ns/${var.kubernetes_namespace}/sa/${var.sentinel_k8s_sa_name}"
   project = var.project_id
 }
 
@@ -24,37 +17,20 @@ resource "google_pubsub_topic_iam_member" "sentinel_viewer" {
 
   topic   = google_pubsub_topic.topics[each.key].name
   role    = "roles/pubsub.viewer"
-  member  = "serviceAccount:${google_service_account.sentinel.email}"
+  member  = "principal://iam.googleapis.com/projects/${data.google_project.current.number}/locations/global/workloadIdentityPools/${var.project_id}.svc.id.goog/subject/ns/${var.kubernetes_namespace}/sa/${var.sentinel_k8s_sa_name}"
   project = var.project_id
 }
 
-# Workload Identity binding for Sentinel
-# Allows the Kubernetes service account to impersonate the GCP service account
-resource "google_service_account_iam_member" "sentinel_workload_identity" {
-  service_account_id = google_service_account.sentinel.name
-  role               = "roles/iam.workloadIdentityUser"
-  member             = "serviceAccount:${var.project_id}.svc.id.goog[${var.kubernetes_namespace}/${var.sentinel_k8s_sa_name}]"
-}
-
 # =============================================================================
-# Adapter Service Accounts (Subscribers)
+# Adapter Workload Identity (Subscribers)
 # =============================================================================
-resource "google_service_account" "adapters" {
-  for_each = local.unique_adapters
-
-  account_id   = substr("${each.key}-${var.developer_name}", 0, 30)
-  display_name = "HyperFleet Adapter - ${each.key}"
-  description  = "Service account for HyperFleet ${each.key} adapter to consume events from Pub/Sub"
-  project      = var.project_id
-}
-
-# Grant Adapter permission to subscribe to their subscriptions
+# Grant Adapter permission to subscribe to their subscriptions using WIF principals
 resource "google_pubsub_subscription_iam_member" "adapters_subscriber" {
   for_each = local.all_subscriptions
 
   subscription = google_pubsub_subscription.subscriptions[each.key].name
   role         = "roles/pubsub.subscriber"
-  member       = "serviceAccount:${google_service_account.adapters[each.value.adapter_name].email}"
+  member       = "principal://iam.googleapis.com/projects/${data.google_project.current.number}/locations/global/workloadIdentityPools/${var.project_id}.svc.id.goog/subject/ns/${var.kubernetes_namespace}/sa/${each.value.adapter_name}-adapter"
   project      = var.project_id
 }
 
@@ -64,17 +40,8 @@ resource "google_pubsub_subscription_iam_member" "adapters_viewer" {
 
   subscription = google_pubsub_subscription.subscriptions[each.key].name
   role         = "roles/pubsub.viewer"
-  member       = "serviceAccount:${google_service_account.adapters[each.value.adapter_name].email}"
+  member       = "principal://iam.googleapis.com/projects/${data.google_project.current.number}/locations/global/workloadIdentityPools/${var.project_id}.svc.id.goog/subject/ns/${var.kubernetes_namespace}/sa/${each.value.adapter_name}-adapter"
   project      = var.project_id
-}
-
-# Workload Identity binding for Adapters
-resource "google_service_account_iam_member" "adapters_workload_identity" {
-  for_each = local.unique_adapters
-
-  service_account_id = google_service_account.adapters[each.key].name
-  role               = "roles/iam.workloadIdentityUser"
-  member             = "serviceAccount:${var.project_id}.svc.id.goog[${var.kubernetes_namespace}/${each.key}-adapter]"
 }
 
 # =============================================================================
@@ -102,7 +69,7 @@ resource "google_pubsub_subscription_iam_member" "pubsub_dlq_subscriber" {
   project      = var.project_id
 }
 
-# Get current project info for Pub/Sub service account
+# Get current project info for service account references
 data "google_project" "current" {
   project_id = var.project_id
 }

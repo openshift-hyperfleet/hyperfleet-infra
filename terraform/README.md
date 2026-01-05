@@ -23,6 +23,9 @@ Terraform configuration for creating personal HyperFleet development clusters.
 
 - **Shared VPC**: One VPC for all dev clusters (deployed once per project)
 - **Per-developer clusters**: Each developer gets their own isolated GKE cluster
+- Per-developer namespace: Each developer deploys to a different namespace to isolate Workload Identity permissions
+  - Why? Because the principal used in the permission is made up of  `.../<identity pool>/ns/<namespace>/sa/<k8s_sa_name>`
+  - If every deployment goes to the same `<namespace>` we risk permission collisions
 
 ## Prerequisites
 
@@ -113,7 +116,6 @@ terraform destroy -var-file=envs/gke/dev-<username>.tfvars
 | `node_count` | Number of nodes | `1` |
 | `machine_type` | VM instance type | `e2-standard-4` |
 | `use_spot_vms` | Use Spot VMs for cost savings | `true` |
-| `kubernetes_namespace` | Kubernetes namespace for Workload Identity binding | `hyperfleet-system` |
 | `use_pubsub` | Use Google Pub/Sub for messaging (instead of RabbitMQ) | `false` |
 | `enable_dead_letter` | Enable dead letter queue for Pub/Sub | `true` |
 | `pubsub_topic_configs` | Map of Pub/Sub topic configurations with adapter subscriptions | See below |
@@ -134,7 +136,6 @@ Enable Pub/Sub to use Google's managed message broker instead of RabbitMQ.
 Add to your tfvars file:
 
 ```hcl
-kubernetes_namespace = "hyperfleet-system"  # Kubernetes namespace for Workload Identity binding
 use_pubsub = true
 enable_dead_letter = true  # Optional, defaults to true
 
@@ -198,12 +199,10 @@ When you add or remove topics/subscriptions and re-run `terraform apply`, the in
 
 | Resource | Name Pattern | Description |
 |----------|--------------|-------------|
-| Pub/Sub Topics | `{kubernetes_namespace}-{topic_name}-{developer}` | Event topics (clusters, nodepools, etc.) |
-| Pub/Sub Subscriptions | `{kubernetes_namespace}-{topic_name}-{adapter}-adapter-{developer}` | Subscriptions per topic per adapter |
-| Dead Letter Topics | `{kubernetes_namespace}-{topic_name}-{developer}-dlq` | Failed message storage (optional) |
-| Service Accounts | `sentinel-{developer}` | Single publisher SA for all topics (one sentinel publishes to all topics) |
-| Service Accounts | `{adapter}-{developer}` | Subscriber SA per unique adapter |
-| Workload Identity | - | Binds K8s SAs to GCP SAs |
+| Pub/Sub Topics | `{kubernetes_namespace}-{topic_name}` | Event topics (clusters, nodepools, etc.) |
+| Pub/Sub Subscriptions | `{kubernetes_namespace}-{topic_name}-{adapter}-adapter` | Subscriptions per topic per adapter |
+| Dead Letter Topics | `{kubernetes_namespace}-{topic_name}-dlq` | Failed message storage (optional) |
+| Workload Identity Bindings | - | Direct WIF permissions for K8s service accounts |
 
 **Example with developer `alice` and config:**
 ```hcl
@@ -215,34 +214,34 @@ pubsub_topic_configs = {
 
 **Creates:**
 - **Topics:**
-  - `hyperfleet-system-clusters-alice`
-  - `hyperfleet-system-nodepools-alice`
+  - `alice-clusters`
+  - `alice-nodepools`
 - **Subscriptions:**
-  - `hyperfleet-system-clusters-landing-zone-adapter-alice`
-  - `hyperfleet-system-clusters-validation-gcp-adapter-alice`
-  - `hyperfleet-system-nodepools-validation-gcp-adapter-alice`
-- **Service Accounts:**
-  - `sentinel-alice` (publishes to all topics: clusters, nodepools)
-  - `landing-zone-alice` (subscribes to clusters only)
-  - `validation-gcp-alice` (subscribes to both topics)
+  - `alice-clusters-landing-zone-adapter`
+  - `alice-clusters-validation-gcp-adapter`
+  - `alice-nodepools-validation-gcp-adapter`
+- **Workload Identity Bindings:**
+  - K8s SA `sentinel` → publishes to all topics (clusters, nodepools)
+  - K8s SA `landing-zone-adapter` → subscribes to clusters subscriptions
+  - K8s SA `validation-gcp-adapter` → subscribes to clusters and nodepools subscriptions
 
 Each developer gets completely isolated Pub/Sub resources - no conflicts between developer environments.
 
 ### IAM Permissions
 
-The module configures resource-level IAM permissions following the principle of least privilege:
+The module configures resource-level IAM permissions using Workload Identity Federation, following the principle of least privilege:
 
-**Sentinel Service Account** (`sentinel-{developer}`):
+**Sentinel Kubernetes Service Account** (`sentinel`):
 - `roles/pubsub.publisher` on **all topics** - Publish messages to any topic
 - `roles/pubsub.viewer` on **all topics** - View topic metadata (required to check if topic exists)
-- `roles/iam.workloadIdentityUser` on **service account** - Allow K8s SA `sentinel` to impersonate this GCP SA
+- Authenticated via WIF principal directly (no GCP service account created)
 
-**Adapter Service Accounts** (`{adapter}-{developer}`):
+**Adapter Kubernetes Service Accounts** (`{adapter}-adapter`):
 - `roles/pubsub.subscriber` on **their subscriptions** - Pull and acknowledge messages from subscriptions across all topics
 - `roles/pubsub.viewer` on **their subscriptions** - View subscription metadata
-- `roles/iam.workloadIdentityUser` on **service account** - Allow K8s SA `{adapter}-adapter` to impersonate this GCP SA
+- Authenticated via WIF principal directly (no GCP service account created)
 
-**Note**: These are resource-level IAM bindings, not project-level roles. There is one shared sentinel GCP service account with publish access to all topics. Each adapter has one GCP service account that can access their subscriptions across all topics, but adapters cannot access topics directly or other adapters' subscriptions.
+**Note**: This implementation uses Workload Identity Federation (WIF) principals directly, eliminating the need to create GCP service accounts. Kubernetes service accounts are granted permissions directly on Pub/Sub resources through WIF. Each Kubernetes service account can only access the specific resources they've been granted permissions for - adapters cannot access topics directly or other adapters' subscriptions.
 
 ### Outputs
 
@@ -251,10 +250,6 @@ After applying with `use_pubsub=true`, you'll get these outputs:
 ```bash
 # Get complete Pub/Sub resources (hierarchical view)
 terraform output pubsub_resources
-
-# Get service account emails for Helm values
-terraform output sentinel_service_account   # Sentinel email (shared across all topics)
-terraform output adapter_service_accounts
 
 # Get ready-to-use Helm values snippet
 terraform output helm_values_snippet
@@ -279,11 +274,9 @@ The output includes configurations organized by topic, showing the Helm chart co
 clusters-sentinel:
   serviceAccount:
     name: "sentinel"  # Shared K8s SA name across all topics
-    annotations:
-      iam.gke.io/gcp-service-account: sentinel-alice@...  # Shared GCP SA
   broker:
     type: googlepubsub
-    topic: hyperfleet-system-clusters-alice
+    topic: alice-clusters
     googlepubsub:
       projectId: hcm-hyperfleet
 
@@ -291,14 +284,12 @@ clusters-sentinel:
 clusters-landing-zone-adapter:
   serviceAccount:
     name: landing-zone-adapter
-    annotations:
-      iam.gke.io/gcp-service-account: landing-zone-alice@...
   broker:
     type: googlepubsub
     googlepubsub:
       projectId: hcm-hyperfleet
-      topic: hyperfleet-system-clusters-alice
-      subscription: hyperfleet-system-clusters-landing-zone-adapter-alice
+      topic: alice-clusters
+      subscription: alice-clusters-landing-zone-adapter
 
 clusters-validation-gcp-adapter:
   # Similar configuration for validation-gcp adapter...
@@ -310,11 +301,9 @@ clusters-validation-gcp-adapter:
 nodepools-sentinel:
   serviceAccount:
     name: "sentinel"  # Same K8s SA as clusters-sentinel
-    annotations:
-      iam.gke.io/gcp-service-account: sentinel-alice@...  # Same GCP SA
   broker:
     type: googlepubsub
-    topic: hyperfleet-system-nodepools-alice
+    topic: alice-nodepools
     googlepubsub:
       projectId: hcm-hyperfleet
 
@@ -323,7 +312,7 @@ nodepools-validation-gcp-adapter:
   # Configuration for validation-gcp adapter on nodepools topic...
 ```
 
-**Note**: While each topic has a separate Helm configuration section (e.g., `clusters-sentinel`, `nodepools-sentinel`), they all use the **same** Kubernetes service account (`sentinel`) and the **same** GCP service account (`sentinel-{developer}`). This single sentinel service account has permission to publish to all topics. Adapter service configurations are grouped by the topic they subscribe to for clarity.
+**Note**: While each topic has a separate Helm configuration section (e.g., `clusters-sentinel`, `nodepools-sentinel`), they all use the **same** Kubernetes service account (`sentinel`). This single Kubernetes service account has permission to publish to all topics via Workload Identity Federation. No GCP service accounts are created - permissions are granted directly to Kubernetes service accounts. Adapter service configurations are grouped by the topic they subscribe to for clarity.
 
 ## Directory Structure
 

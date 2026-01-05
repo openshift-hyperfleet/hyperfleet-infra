@@ -12,10 +12,9 @@ output "pubsub_resources" {
       subscriptions = {
         for adapter_name, adapter_config in topic_config.adapter_subscriptions :
         adapter_name => {
-          name                  = google_pubsub_subscription.subscriptions["${topic_name}-${adapter_name}"].name
-          id                    = google_pubsub_subscription.subscriptions["${topic_name}-${adapter_name}"].id
-          service_account_email = google_service_account.adapters[adapter_name].email
-          ack_deadline_seconds  = adapter_config.ack_deadline_seconds
+          name                 = google_pubsub_subscription.subscriptions["${topic_name}-${adapter_name}"].name
+          id                   = google_pubsub_subscription.subscriptions["${topic_name}-${adapter_name}"].id
+          ack_deadline_seconds = adapter_config.ack_deadline_seconds
         }
       }
     }
@@ -23,25 +22,10 @@ output "pubsub_resources" {
 }
 
 # =============================================================================
-# Service Account Outputs
-# =============================================================================
-output "sentinel_service_account" {
-  description = "Sentinel GCP service account email (shared across all topics)"
-  value       = google_service_account.sentinel.email
-}
-
-output "adapter_service_accounts" {
-  description = "Map of adapter names to their GCP service account emails"
-  value = {
-    for adapter in local.unique_adapters : adapter => google_service_account.adapters[adapter].email
-  }
-}
-
-# =============================================================================
 # Helm Values Snippet
 # =============================================================================
 output "helm_values_snippet" {
-  description = "Snippet to add to Helm values for Workload Identity annotations and Pub/Sub configuration"
+  description = "Snippet to add to Helm values for Workload Identity and Pub/Sub configuration"
   value       = <<-EOT
 %{for topic_name, topic_config in local.topics~}
 # ============================================================================
@@ -53,8 +37,6 @@ output "helm_values_snippet" {
 ${topic_name}-sentinel:
   serviceAccount:
     name: ${var.sentinel_k8s_sa_name}
-    annotations:
-      iam.gke.io/gcp-service-account: ${google_service_account.sentinel.email}
   broker:
     type: googlepubsub
     topic: ${google_pubsub_topic.topics[topic_name].name}
@@ -66,8 +48,6 @@ ${topic_name}-sentinel:
 ${topic_name}-${adapter_name}-adapter:
   serviceAccount:
     name: ${adapter_name}-adapter
-    annotations:
-      iam.gke.io/gcp-service-account: ${google_service_account.adapters[adapter_name].email}
   broker:
     type: googlepubsub
     googlepubsub:

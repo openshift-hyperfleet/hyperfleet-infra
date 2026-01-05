@@ -10,6 +10,21 @@ This repository contains Terraform configurations for:
 - **Developer GKE clusters** - personal Kubernetes clusters for each developer
 - **Google Pub/Sub** (optional) - managed message broker with Workload Identity
 
+### Shared Infrastructure Resources
+
+The `terraform/shared` module provides the following resources (deployed once by a team admin):
+
+| Resource | Name | Purpose |
+|----------|------|---------|
+| VPC | `hyperfleet-dev-vpc` | Virtual network for all dev clusters |
+| Subnet | `hyperfleet-dev-vpc-subnet` | Node IPs (10.100.0.0/16) |
+| Secondary Range | `pods` | Pod IPs (10.101.0.0/16) |
+| Secondary Range | `services` | Service IPs (10.102.0.0/16) |
+| Firewall | `hyperfleet-dev-vpc-allow-internal` | Allow traffic within VPC |
+| Firewall | `hyperfleet-dev-vpc-allow-iap-ssh` | Allow SSH via Identity-Aware Proxy |
+| Cloud Router | `hyperfleet-dev-vpc-router` | Required for Cloud NAT |
+| Cloud NAT | `hyperfleet-dev-vpc-nat` | Internet access for private nodes |
+
 ## Quick Start
 
 See [terraform/README.md](terraform/README.md) for detailed instructions.

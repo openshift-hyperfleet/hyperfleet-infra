@@ -36,7 +36,7 @@ output "services_range_name" {
 # Helper output for developers
 output "developer_config" {
   description = "Values to use in developer tfvars"
-  value = <<-EOT
+  value       = <<-EOT
 
     # Add these to your dev-<username>.tfvars:
     gcp_network    = "${google_compute_network.dev_vpc.name}"

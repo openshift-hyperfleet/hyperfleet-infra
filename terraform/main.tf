@@ -54,7 +54,7 @@ module "pubsub" {
   count  = var.use_pubsub ? 1 : 0
 
   project_id           = var.gcp_project_id
-  kubernetes_namespace = var.kubernetes_namespace
+  kubernetes_namespace = var.developer_name
   developer_name       = var.developer_name
 
   # Topic configurations with adapter subscriptions

@@ -10,7 +10,7 @@ variable "kubernetes_namespace" {
 }
 
 variable "developer_name" {
-  description = "Developer name to include in GCP service account names for uniqueness"
+  description = "Developer name to include in resource names for uniqueness"
   type        = string
 }
 

@@ -7,7 +7,7 @@
 # =============================================================================
 # Required: Your Info
 # =============================================================================
-developer_name = "shared"  # Your username (e.g., "your-username")
+developer_name = "shared" # Your username (e.g., "your-username")
 
 # =============================================================================
 # Cloud Provider
@@ -28,16 +28,16 @@ gcp_subnetwork = "hyperfleet-dev-vpc-subnet"
 # =============================================================================
 # Cluster Configuration
 # =============================================================================
-node_count   = 1              # Start with 1 node for dev
+node_count   = 1               # Start with 1 node for dev
 machine_type = "e2-standard-4" # 4 vCPU, 16GB RAM
-use_spot_vms = true           # ~70% cost savings, may be preempted
+use_spot_vms = true            # ~70% cost savings, may be preempted
 
 # =============================================================================
 # Pub/Sub Configuration (for HyperFleet messaging)
 # =============================================================================
-use_pubsub           = true # Set to true to use Google Pub/Sub for event messaging
+use_pubsub           = true                # Set to true to use Google Pub/Sub for event messaging
 kubernetes_namespace = "hyperfleet-system" # Kubernetes namespace for Workload Identity binding
-enable_dead_letter   = true  # Enable dead letter queue for failed messages
+enable_dead_letter   = true                # Enable dead letter queue for failed messages
 
 # Topic configurations - each topic can have different adapter subscriptions
 pubsub_topic_configs = {
