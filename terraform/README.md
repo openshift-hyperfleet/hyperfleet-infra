@@ -194,6 +194,8 @@ pubsub_topic_configs = {
 
 When you add or remove topics/subscriptions and re-run `terraform apply`, the infrastructure will be updated accordingly.
 
+> **Note**: The `helm_values_snippet` output assumes each adapter subscribes to at most ONE topic. If an adapter is configured for multiple topics (like `landing-zone` above), only the first topic (alphabetically) will be included in the Helm values. The Pub/Sub resources (topics, subscriptions, IAM) will be created correctly for all configured subscriptions.
+
 ### What It Creates
 
 | Resource | Name Pattern | Description |

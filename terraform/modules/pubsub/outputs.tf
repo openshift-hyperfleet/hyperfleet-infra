@@ -43,6 +43,11 @@ output "adapter_service_accounts" {
 # Updated for hyperfleet-gcp overlay chart structure:
 # - Base chart components (sentinel, landing-zone) go under "base:" prefix
 # - GCP overlay components (validation-gcp) stay at root level
+#
+# NOTE: This template assumes each adapter (sentinel, landing-zone, validation-gcp)
+# is configured for at most ONE topic. The Helm chart expects single blocks per adapter.
+# If an adapter subscribes to multiple topics, only the first (alphabetically) is used.
+
 output "helm_values_snippet" {
   description = "Snippet to add to Helm values for Workload Identity annotations and Pub/Sub configuration"
   value       = <<-EOT
@@ -67,8 +72,7 @@ base:
       rabbitmq:
         enabled: false
 
-%{for topic_name, topic_config in local.topics~}
-  # Sentinel - publishes to ${google_pubsub_topic.topics[topic_name].name}
+  # Sentinel - publishes to ${google_pubsub_topic.topics[local.first_topic_name].name}
   sentinel:
     serviceAccount:
       create: true
@@ -77,58 +81,52 @@ base:
         iam.gke.io/gcp-service-account: ${google_service_account.sentinel.email}
     broker:
       type: googlepubsub
-      topic: ${google_pubsub_topic.topics[topic_name].name}
+      topic: ${google_pubsub_topic.topics[local.first_topic_name].name}
       googlepubsub:
         projectId: ${var.project_id}
+%{if local.landing_zone_topic != null~}
 
-%{for adapter_name, adapter_config in topic_config.adapter_subscriptions~}
-%{if adapter_name == "landing-zone"~}
-  # Landing Zone Adapter - subscribes to ${google_pubsub_topic.topics[topic_name].name}
+  # Landing Zone Adapter - subscribes to ${google_pubsub_topic.topics[local.landing_zone_topic].name}
   landing-zone:
     serviceAccount:
       create: true
-      name: ${adapter_name}-adapter
+      name: landing-zone-adapter
       annotations:
-        iam.gke.io/gcp-service-account: ${google_service_account.adapters[adapter_name].email}
+        iam.gke.io/gcp-service-account: ${google_service_account.adapters["landing-zone"].email}
     broker:
       type: googlepubsub
       googlepubsub:
         projectId: ${var.project_id}
-        topic: ${google_pubsub_topic.topics[topic_name].name}
-        subscription: ${google_pubsub_subscription.subscriptions["${topic_name}-${adapter_name}"].name}
+        topic: ${google_pubsub_topic.topics[local.landing_zone_topic].name}
+        subscription: ${google_pubsub_subscription.subscriptions["${local.landing_zone_topic}-landing-zone"].name}
 %{if var.enable_dead_letter~}
-        deadLetterTopic: ${google_pubsub_topic.dead_letter[topic_name].name}
+        deadLetterTopic: ${google_pubsub_topic.dead_letter[local.landing_zone_topic].name}
+%{endif~}
 %{endif~}
 
-%{endif~}
-%{endfor~}
   # Disable RabbitMQ when using Pub/Sub
   rabbitmq:
     enabled: false
+%{if local.validation_gcp_topic != null~}
 
-%{for adapter_name, adapter_config in topic_config.adapter_subscriptions~}
-%{if adapter_name == "validation-gcp"~}
 # GCP Validation Adapter (GCP overlay chart component - NOT under base:)
-# Subscribes to ${google_pubsub_topic.topics[topic_name].name}
+# Subscribes to ${google_pubsub_topic.topics[local.validation_gcp_topic].name}
 validation-gcp:
   enabled: true
   serviceAccount:
     create: true
-    name: ${adapter_name}-adapter
+    name: validation-gcp-adapter
     annotations:
-      iam.gke.io/gcp-service-account: ${google_service_account.adapters[adapter_name].email}
+      iam.gke.io/gcp-service-account: ${google_service_account.adapters["validation-gcp"].email}
   broker:
     type: googlepubsub
     googlepubsub:
       projectId: ${var.project_id}
-      topic: ${google_pubsub_topic.topics[topic_name].name}
-      subscription: ${google_pubsub_subscription.subscriptions["${topic_name}-${adapter_name}"].name}
+      topic: ${google_pubsub_topic.topics[local.validation_gcp_topic].name}
+      subscription: ${google_pubsub_subscription.subscriptions["${local.validation_gcp_topic}-validation-gcp"].name}
 %{if var.enable_dead_letter~}
-      deadLetterTopic: ${google_pubsub_topic.dead_letter[topic_name].name}
+      deadLetterTopic: ${google_pubsub_topic.dead_letter[local.validation_gcp_topic].name}
 %{endif~}
-
 %{endif~}
-%{endfor~}
-%{endfor~}
   EOT
 }
