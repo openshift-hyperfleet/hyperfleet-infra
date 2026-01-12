@@ -58,7 +58,8 @@ locals {
   ]...)
 
   # For Helm values output: get first topic (alphabetically) for sentinel
-  first_topic_name = sort(keys(local.topics))[0]
+  # Returns null if no topics configured (defensive check)
+  first_topic_name = length(local.topics) > 0 ? sort(keys(local.topics))[0] : null
 
   # For Helm values output: find topic that has landing-zone adapter subscription
   landing_zone_topics = [

@@ -71,6 +71,7 @@ base:
         createSubscriptionIfMissing: false
       rabbitmq:
         enabled: false
+%{if local.first_topic_name != null~}
 
   # Sentinel - publishes to ${google_pubsub_topic.topics[local.first_topic_name].name}
   sentinel:
@@ -84,6 +85,7 @@ base:
       topic: ${google_pubsub_topic.topics[local.first_topic_name].name}
       googlepubsub:
         projectId: ${var.project_id}
+%{endif~}
 %{if local.landing_zone_topic != null~}
 
   # Landing Zone Adapter - subscribes to ${google_pubsub_topic.topics[local.landing_zone_topic].name}
