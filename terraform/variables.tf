@@ -122,7 +122,7 @@ variable "pubsub_topic_configs" {
     Example:
       pubsub_topic_configs = {
         clusters = {
-          subscriptions = {
+          subscribers = {
             landing-zone   = {}
             validation-gcp = { ack_deadline_seconds = 120 }
           }
@@ -131,7 +131,7 @@ variable "pubsub_topic_configs" {
           }
         }
         nodepools = {
-          subscriptions = {
+          subscribers = {
             validation-nodepool-gcp = {}
           }
           publishers = {
@@ -142,7 +142,7 @@ variable "pubsub_topic_configs" {
   EOT
   type = map(object({
     message_retention_duration = optional(string, "604800s")
-    subscriptions = optional(map(object({
+    subscribers = optional(map(object({
       ack_deadline_seconds = optional(number, 60)
       roles                = optional(list(string), ["roles/pubsub.subscriber", "roles/pubsub.viewer"])
     })), {})
@@ -152,7 +152,7 @@ variable "pubsub_topic_configs" {
   }))
   default = {
     clusters = {
-      subscriptions = {
+      subscribers = {
         landing-zone   = {}
         validation-gcp = {}
       }

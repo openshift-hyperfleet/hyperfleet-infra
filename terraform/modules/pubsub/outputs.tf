@@ -9,8 +9,8 @@ output "pubsub_resources" {
       topic_id       = google_pubsub_topic.topics[topic_name].id
       dlq_topic_name = var.enable_dead_letter ? google_pubsub_topic.dead_letter[topic_name].name : null
 
-      subscriptions = {
-        for adapter_name, adapter_config in topic_config.subscriptions :
+      subscribers = {
+        for adapter_name, adapter_config in topic_config.subscribers :
         adapter_name => {
           name                 = google_pubsub_subscription.subscriptions["${topic_name}-${adapter_name}"].name
           id                   = google_pubsub_subscription.subscriptions["${topic_name}-${adapter_name}"].id
@@ -56,7 +56,7 @@ ${topic_name}-${publisher_name}:
 
 %{endfor~}
 # Adapters (subscribe to ${topic_name} topic)
-%{for adapter_name, adapter_config in topic_config.subscriptions~}
+%{for adapter_name, adapter_config in topic_config.subscribers~}
 ${topic_name}-${adapter_name}-adapter:
   serviceAccount:
     name: ${adapter_name}-adapter

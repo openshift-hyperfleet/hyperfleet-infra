@@ -22,7 +22,7 @@ variable "topic_configs" {
       topic_configs = {
         clusters = {
           message_retention_duration = "604800s"
-          subscriptions = {
+          subscribers = {
             landing-zone = {
               ack_deadline_seconds = 60
             }
@@ -35,7 +35,7 @@ variable "topic_configs" {
           }
         }
         nodepools = {
-          subscriptions = {
+          subscribers = {
             validation-gcp = {}
           }
           publishers = {
@@ -59,7 +59,7 @@ variable "topic_configs" {
   EOT
   type = map(object({
     message_retention_duration = optional(string, "604800s")
-    subscriptions = optional(map(object({
+    subscribers = optional(map(object({
       ack_deadline_seconds = optional(number, 60)
       roles                = optional(list(string), ["roles/pubsub.subscriber", "roles/pubsub.viewer"])
     })), {})
@@ -73,7 +73,7 @@ variable "topic_configs" {
     condition = alltrue([
       for topic_name, topic_config in var.topic_configs :
       alltrue([
-        for adapter_name, adapter_config in topic_config.subscriptions :
+        for adapter_name, adapter_config in topic_config.subscribers :
         adapter_config.ack_deadline_seconds >= 10 && adapter_config.ack_deadline_seconds <= 600
       ])
     ])

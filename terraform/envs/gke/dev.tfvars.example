@@ -45,7 +45,7 @@ enable_dead_letter   = true  # Enable dead letter queue for failed messages
 # Uncomment and customize as needed for your development environment
 # pubsub_topic_configs = {
 #   clusters = {
-#     subscriptions = {
+#     subscribers = {
 #       landing-zone   = {}
 #       validation-gcp = {}
 #     }
@@ -54,7 +54,7 @@ enable_dead_letter   = true  # Enable dead letter queue for failed messages
 #     }
 #   }
 #   nodepools = {
-#     subscriptions = {
+#     subscribers = {
 #       validation-nodepool-gcp = {}
 #     }
 #     publishers = {

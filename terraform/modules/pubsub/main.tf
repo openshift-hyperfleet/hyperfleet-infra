@@ -6,7 +6,7 @@ locals {
       full_topic_name            = "${var.kubernetes_namespace}-${topic_name}"
       dlq_topic_name             = "${var.kubernetes_namespace}-${topic_name}-dlq"
       message_retention_duration = topic_config.message_retention_duration
-      subscriptions              = topic_config.subscriptions
+      subscribers                = topic_config.subscribers
       publishers                 = topic_config.publishers
     }
   }
@@ -15,7 +15,7 @@ locals {
   # Key: "{topic_name}-{adapter_name}", Value: subscription configuration
   all_subscriptions = merge([
     for topic_name, topic_config in local.topics : {
-      for adapter_name, adapter_config in topic_config.subscriptions :
+      for adapter_name, adapter_config in topic_config.subscribers :
       "${topic_name}-${adapter_name}" => {
         subscription_name    = "${var.kubernetes_namespace}-${topic_name}-${adapter_name}-adapter"
         adapter_name         = adapter_name
@@ -30,7 +30,7 @@ locals {
   # Key: "{topic_name}-{adapter_name}-{role_short}", Value: subscription role configuration
   all_subscription_roles = merge([
     for topic_name, topic_config in local.topics : merge([
-      for adapter_name, adapter_config in topic_config.subscriptions : {
+      for adapter_name, adapter_config in topic_config.subscribers : {
         for role in adapter_config.roles :
         "${topic_name}-${adapter_name}-${replace(role, "roles/pubsub.", "")}" => {
           topic_name        = topic_name
