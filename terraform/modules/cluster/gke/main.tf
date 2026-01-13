@@ -37,10 +37,13 @@ resource "google_container_node_pool" "primary" {
   node_count = var.node_count
 
   node_config {
-    machine_type = var.machine_type
-    disk_size_gb = var.disk_size_gb
-    spot         = var.use_spot_vms
+    machine_type    = var.machine_type
+    disk_size_gb    = var.disk_size_gb
+    spot            = var.use_spot_vms
     resource_labels = var.labels
+
+    # Network tags for firewall rules (e.g., LoadBalancer health checks)
+    tags = ["gke-${var.cluster_name}"]
 
     oauth_scopes = [
       "https://www.googleapis.com/auth/cloud-platform"
