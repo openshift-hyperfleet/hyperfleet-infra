@@ -1,0 +1,4 @@
+# Backend configuration for long-running reserved cluster used for Prow
+# Usage: terraform init -backend-config=envs/gke/dev-prow.tfbackend
+
+prefix = "terraform/state/shared/prow"

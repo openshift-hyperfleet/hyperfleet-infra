@@ -27,6 +27,9 @@ module "gke_cluster" {
   machine_type = var.machine_type
   use_spot_vms = var.use_spot_vms
   labels       = local.common_labels
+
+  # Deletion protection for shared/production clusters
+  enable_deletion_protection = var.enable_deletion_protection
 }
 
 # =============================================================================

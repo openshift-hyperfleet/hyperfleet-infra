@@ -1,0 +1,4 @@
+# Backend configuration for shared infrastructure (VPC, networking)
+# Usage: terraform init -backend-config=shared.tfbackend
+
+prefix = "terraform/state/shared/networking"

@@ -47,6 +47,12 @@ variable "use_spot_vms" {
   default     = true
 }
 
+variable "enable_deletion_protection" {
+  description = "Enable deletion protection for the cluster (recommended for shared/production clusters like Prow)"
+  type        = bool
+  default     = false
+}
+
 # =============================================================================
 # GCP-Specific Variables
 # =============================================================================

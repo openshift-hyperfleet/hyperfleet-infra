@@ -33,7 +33,7 @@ See [terraform/README.md](terraform/README.md) for detailed instructions.
 
 ```bash
 cd terraform/shared
-terraform init
+terraform init -backend-config=shared.tfbackend
 terraform apply
 ```
 
@@ -41,10 +41,10 @@ terraform apply
 
 ```bash
 cd terraform
-terraform init
 cp envs/gke/dev.tfvars.example envs/gke/dev-<username>.tfvars
-# Edit the file: set developer_name = "your-username"
-# Optionally customize kubernetes_suffix (default: "default")
+cp envs/gke/dev.tfbackend.example envs/gke/dev-<username>.tfbackend
+# Edit both files: set developer_name and prefix to your username
+terraform init -backend-config=envs/gke/dev-<username>.tfbackend
 terraform apply -var-file=envs/gke/dev-<username>.tfvars
 ```
 

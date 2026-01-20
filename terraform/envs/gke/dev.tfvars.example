@@ -2,7 +2,10 @@
 # Copy this file to dev-<username>.tfvars and customize
 #
 # Usage:
-#   cp dev.tfvars.example dev-<username>.tfvars
+#   cp envs/gke/dev.tfvars.example envs/gke/dev-<username>.tfvars
+#   cp envs/gke/dev.tfbackend.example envs/gke/dev-<username>.tfbackend
+#   # Edit both files to set your username
+#   terraform init -backend-config=envs/gke/dev-<username>.tfbackend
 #   terraform plan -var-file=envs/gke/dev-<username>.tfvars
 #   terraform apply -var-file=envs/gke/dev-<username>.tfvars
 
@@ -34,6 +37,12 @@ gcp_subnetwork = "hyperfleet-dev-vpc-subnet"
 node_count   = 1              # Start with 1 node for dev
 machine_type = "e2-standard-4" # 4 vCPU, 16GB RAM
 use_spot_vms = true           # ~70% cost savings, may be preempted
+
+# Deletion protection (prevents accidental terraform destroy)
+# Personal dev clusters: false (default) - easy cleanup when done
+# Shared long-running clusters: true - prevents accidental deletion (e.g., Prow)
+# To destroy a protected cluster: set to false, apply, then destroy
+enable_deletion_protection = false
 
 # =============================================================================
 # Pub/Sub Configuration (for HyperFleet messaging)

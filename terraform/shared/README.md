@@ -22,23 +22,45 @@ This Terraform configuration creates the shared networking infrastructure that a
 - Terraform >= 1.5
 - `gcloud` CLI authenticated
 - Admin access to `hcm-hyperfleet` GCP project
+- **Remote backend bucket created** (run `../bootstrap/setup-backend.sh` first)
 
 ## Usage
 
+### Authenticate with GCP
 ```bash
-# 1. Authenticate with GCP
 gcloud auth application-default login
 gcloud config set project hcm-hyperfleet
+```
 
-# 2. Initialize Terraform
-terraform init
+### New Deployment
 
-# 3. Review the plan
+```bash
+cd terraform/shared
+terraform init -backend-config=shared.tfbackend
 terraform plan
-
-# 4. Create the infrastructure
 terraform apply
 ```
+
+### Migrating Existing Infrastructure
+
+If shared infrastructure already exists with local state, migrate to remote backend:
+
+```bash
+cd terraform/shared
+
+# Backup local state
+cp terraform.tfstate terraform.tfstate.backup
+
+# Initialize with backend - Terraform will detect local state and offer to migrate
+terraform init -backend-config=shared.tfbackend
+# Answer: yes
+
+# Verify migration succeeded
+terraform state list
+terraform plan  # Should show "No changes"
+```
+
+State is stored at `terraform/state/shared/networking` in the GCS backend for team coordination.
 
 ## Outputs
 
@@ -62,8 +84,12 @@ gcloud container clusters list --project=hcm-hyperfleet --filter="name~hyperflee
 
 If no clusters exist, you can safely destroy:
 ```bash
+cd terraform/shared
+terraform init -backend-config=shared.tfbackend
 terraform destroy
 ```
+
+**Note:** The state is in the remote backend, so any team member with proper IAM permissions can run destroy (but coordinate with the team first!).
 
 ## Network Architecture
 

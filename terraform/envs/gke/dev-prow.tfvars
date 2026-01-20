@@ -1,13 +1,15 @@
-# HyperFleet GKE Developer Shared Environment - Long-running Reserved Cluster
+# HyperFleet GKE Developer Environment - Long-running Reserved Cluster Used for Prow
 #
 # Usage:
-#   terraform plan -var-file=envs/gke/dev-shared.tfvars
-#   terraform apply -var-file=envs/gke/dev-shared.tfvars
+#   terraform init -backend-config=envs/gke/dev-prow.tfbackend
+#   terraform plan -var-file=envs/gke/dev-prow.tfvars
+#   terraform apply -var-file=envs/gke/dev-prow.tfvars
 
 # =============================================================================
 # Required: Your Info
 # =============================================================================
-developer_name = "shared" # Your username (e.g., "your-username")
+developer_name = "prow" # Your username (e.g., "your-username")
+kubernetes_suffix  = "hyperfleet"    # Namespace suffix (allows multiple deployments to share a cluster)
 
 # =============================================================================
 # Cloud Provider
@@ -28,28 +30,39 @@ gcp_subnetwork = "hyperfleet-dev-vpc-subnet"
 # =============================================================================
 # Cluster Configuration
 # =============================================================================
-node_count   = 1               # Start with 1 node for dev
+node_count   = 1              # Start with 1 node for dev
 machine_type = "e2-standard-4" # 4 vCPU, 16GB RAM
-use_spot_vms = true            # ~70% cost savings, may be preempted
+use_spot_vms = true           # ~70% cost savings, may be preempted
+
+# IMPORTANT: Enable deletion protection for this shared long-running cluster
+# This prevents accidental deletion via terraform destroy
+# To destroy, you must first set this to false, apply, then destroy
+enable_deletion_protection = true
 
 # =============================================================================
 # Pub/Sub Configuration (for HyperFleet messaging)
 # =============================================================================
 use_pubsub           = true                # Set to true to use Google Pub/Sub for event messaging
-kubernetes_namespace = "hyperfleet-system" # Kubernetes namespace for Workload Identity binding
 enable_dead_letter   = true                # Enable dead letter queue for failed messages
 
-# Topic configurations - each topic can have different adapter subscriptions
+# Topic configurations - each topic can have different subscriptions and publishers
+# Uncomment and customize as needed for your development environment
 pubsub_topic_configs = {
   clusters = {
-    adapter_subscriptions = {
+    subscribers = {
       landing-zone   = {}
       validation-gcp = {}
     }
+    publishers = {
+      sentinel = {}
+    }
   }
   nodepools = {
-    adapter_subscriptions = {
-      validation-gcp = {}
+    subscribers = {
+      validation-nodepool-gcp = {}
+    }
+    publishers = {
+      sentinel = {}
     }
   }
 }

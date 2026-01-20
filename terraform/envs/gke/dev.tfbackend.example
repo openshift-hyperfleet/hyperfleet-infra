@@ -1,0 +1,5 @@
+# Backend configuration for personal dev cluster
+# Copy: cp envs/gke/dev.tfbackend.example envs/gke/dev-<username>.tfbackend
+# Edit: Set prefix = "terraform/state/dev-<username>"
+
+prefix = "terraform/state/dev-YOUR-USERNAME-HERE"

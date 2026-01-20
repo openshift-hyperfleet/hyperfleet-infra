@@ -36,6 +36,7 @@ Terraform configuration for creating personal HyperFleet development clusters.
 - `kubectl`
 - Access to the `hcm-hyperfleet` GCP project
 - Shared infrastructure deployed (see [Shared Infrastructure](#shared-infrastructure) below)
+- **Remote backend configured** (see [Remote Backend Setup](#remote-backend-setup) below)
 
 ### Installing gke-gcloud-auth-plugin
 
@@ -51,37 +52,44 @@ gcloud components install gke-gcloud-auth-plugin
 
 ## Quick Start (For Developers)
 
-> **Note**: The shared VPC must be deployed first. See [Shared Infrastructure](#shared-infrastructure) below.
+> **Note**: The shared VPC and remote backend must be deployed first. See [Shared Infrastructure](#shared-infrastructure) and [Remote Backend Setup](#remote-backend-setup) below.
 
 ```bash
 # 1. Authenticate with GCP
 gcloud auth application-default login
 gcloud config set project hcm-hyperfleet
 
-# 2. Initialize Terraform
+# 2. Create your configuration files (both .tfvars and .tfbackend)
 cd terraform
-terraform init
-
-# 3. Create your tfvars file
 cp envs/gke/dev.tfvars.example envs/gke/dev-<username>.tfvars
+cp envs/gke/dev.tfbackend.example envs/gke/dev-<username>.tfbackend
 
-# 4. Edit your tfvars - set developer_name to your username
+# 3. Edit your tfvars - set developer_name to your username
 #    e.g., developer_name = "your-username"
 #    Optionally customize kubernetes_suffix (default: "default")
 
-# 5. Plan (review what will be created)
+# 4. Edit your tfbackend - set prefix to match your username
+#    e.g., prefix = "terraform/state/dev-<username>"
+
+# 5. Initialize Terraform with remote backend
+terraform init -backend-config=envs/gke/dev-<username>.tfbackend
+
+# 6. Plan (review what will be created)
 terraform plan -var-file=envs/gke/dev-<username>.tfvars
 
-# 6. Apply (create the cluster)
+# 7. Apply (create the cluster)
 terraform apply -var-file=envs/gke/dev-<username>.tfvars
 
-# 7. Connect to your cluster (command shown in terraform output)
+# 8. Connect to your cluster (command shown in terraform output)
 gcloud container clusters get-credentials hyperfleet-dev-<username> \
   --zone us-central1-a \
   --project hcm-hyperfleet
 
-# 8. Verify
+# 9. Verify
 kubectl get nodes
+
+# 10. Query outputs (accessible to all team members)
+terraform output
 ```
 
 ### Using Shared Configuration
@@ -97,13 +105,91 @@ terraform apply \
 
 Personal tfvars override shared values, so you can customize specific settings while inheriting common defaults.
 
+## Remote Backend Setup
+
+State files are stored in a **GCS bucket** (`hyperfleet-terraform-state`) with automatic locking for team collaboration.
+
+### One-Time Setup (Admin Only)
+
+Create the backend bucket once:
+
+```bash
+cd terraform
+./bootstrap/setup-backend.sh
+```
+
+### Team Member Setup
+
+Request these IAM roles from your admin:
+- `roles/storage.objectUser` - Read/write state files
+- `roles/compute.admin` - Manage GKE
+- `roles/container.admin` - Manage GKE resources
+- `roles/iam.serviceAccountUser` - Use service accounts
+- `roles/pubsub.admin` - Manage Pub/Sub (if enabled)
+
+### Using the Backend
+
+Each `.tfvars` file has a paired `.tfbackend` file:
+
+```bash
+# Personal dev cluster
+cp envs/gke/dev.tfvars.example envs/gke/dev-<username>.tfvars
+cp envs/gke/dev.tfbackend.example envs/gke/dev-<username>.tfbackend
+# Edit both files to set your username
+terraform init -backend-config=envs/gke/dev-<username>.tfbackend
+
+# Shared cluster (e.g., Prow) - already configured
+terraform init -backend-config=envs/gke/dev-prow.tfbackend
+```
+
+### Migrating Local State (If Needed)
+
+If you have existing local state files:
+
+```bash
+# Backup first
+cp terraform.tfstate terraform.tfstate.backup
+
+# Initialize with backend (Terraform will offer to migrate)
+terraform init -backend-config=envs/gke/dev-<username>.tfbackend
+# Answer: yes
+
+# Verify
+terraform state list
+```
+
+### Switching Between Environments
+
+To switch between different state files (e.g., personal cluster to Prow cluster):
+
+```bash
+# Switch to a different backend configuration
+terraform init -reconfigure -backend-config=envs/gke/dev-prow.tfbackend
+
+# Verify you're using the correct state
+terraform state list
+```
+
+The `-reconfigure` flag switches the backend without migrating state.
+
 ## Destroying Your Cluster
 
 **Always destroy your cluster when you're done to avoid unnecessary costs.**
 
+### Personal Dev Clusters
+
 ```bash
 terraform destroy -var-file=envs/gke/dev-<username>.tfvars
 ```
+
+### Shared Long-Running Clusters
+
+Shared clusters (like Prow) have **deletion protection enabled**. To destroy:
+
+1. **Coordinate with team first!** (Post in Slack, wait for confirmation)
+2. Disable protection in tfvars: `enable_deletion_protection = false`
+3. Apply the change: `terraform apply -var-file=envs/gke/dev-prow.tfvars`
+4. Destroy: `terraform destroy -var-file=envs/gke/dev-prow.tfvars`
 
 ## Configuration Options
 
@@ -119,6 +205,7 @@ terraform destroy -var-file=envs/gke/dev-<username>.tfvars
 | `node_count` | Number of nodes | `1` |
 | `machine_type` | VM instance type | `e2-standard-4` |
 | `use_spot_vms` | Use Spot VMs for cost savings | `true` |
+| `enable_deletion_protection` | Enable deletion protection for shared clusters | `false` |
 | `use_pubsub` | Use Google Pub/Sub for messaging (instead of RabbitMQ) | `false` |
 | `enable_dead_letter` | Enable dead letter queue for Pub/Sub | `true` |
 | `pubsub_topic_configs` | Map of Pub/Sub topic configurations with subscriptions and publishers | See below |
@@ -396,7 +483,7 @@ The `shared/` directory contains Terraform for the VPC and networking that devel
 
 ```bash
 cd terraform/shared
-terraform init
+terraform init -backend-config=shared.tfbackend
 terraform plan
 terraform apply
 ```
@@ -407,6 +494,7 @@ terraform apply
 
 ```bash
 cd terraform/shared
+terraform init -backend-config=shared.tfbackend
 terraform destroy
 ```
 
@@ -434,3 +522,6 @@ Your GCP project may have hit resource limits. Check quotas in the GCP Console o
 
 ### Cluster creation times out
 GKE cluster creation typically takes 5-10 minutes. If it takes longer, check the GCP Console for errors.
+
+### "Error acquiring the state lock"
+Another team member is currently running an operation. Wait for them to complete. If the lock is stale, use `terraform force-unlock <lock-id>`.
