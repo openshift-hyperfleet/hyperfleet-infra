@@ -33,7 +33,7 @@ See [terraform/README.md](terraform/README.md) for detailed instructions.
 
 ```bash
 cd terraform/shared
-terraform init
+terraform init -backend-config=shared.tfbackend
 terraform apply
 ```
 
@@ -41,10 +41,10 @@ terraform apply
 
 ```bash
 cd terraform
-terraform init
 cp envs/gke/dev.tfvars.example envs/gke/dev-<username>.tfvars
-# Edit the file: set developer_name = "your-username"
-# Optionally customize kubernetes_suffix (default: "default")
+cp envs/gke/dev.tfbackend.example envs/gke/dev-<username>.tfbackend
+# Edit both files: set developer_name and prefix to your username
+terraform init -backend-config=envs/gke/dev-<username>.tfbackend
 terraform apply -var-file=envs/gke/dev-<username>.tfvars
 ```
 
@@ -53,6 +53,7 @@ terraform apply -var-file=envs/gke/dev-<username>.tfvars
 ```
 hyperfleet-infra/
 ├── README.md                   # This file
+├── LICENSE
 ├── terraform/
 │   ├── README.md               # Detailed Terraform documentation
 │   ├── main.tf                 # Root module (developer clusters)
@@ -60,18 +61,27 @@ hyperfleet-infra/
 │   ├── outputs.tf
 │   ├── providers.tf
 │   ├── versions.tf
+│   ├── backend.tf              # Remote state backend configuration
+│   ├── bootstrap/              # One-time setup scripts
+│   │   └── setup-backend.sh    # Creates GCS bucket for Terraform state
 │   ├── shared/                 # Shared infrastructure (deploy once)
 │   │   ├── README.md
 │   │   ├── main.tf
 │   │   ├── variables.tf
-│   │   └── outputs.tf
+│   │   ├── outputs.tf
+│   │   ├── versions.tf
+│   │   ├── backend.tf
+│   │   └── shared.tfbackend    # Backend config for shared infrastructure
 │   ├── modules/
 │   │   ├── cluster/
 │   │   │   └── gke/            # GKE cluster module
 │   │   └── pubsub/             # Google Pub/Sub module
 │   └── envs/
 │       └── gke/
-│           └── dev.tfvars.example
+│           ├── dev.tfbackend.example  # Backend configuration template
+│           ├── dev.tfvars.example     # Variables template
+│           ├── dev-prow.tfbackend     # Prow cluster backend config
+│           └── dev-prow.tfvars        # Prow cluster variables
 ```
 
 ## Prerequisites

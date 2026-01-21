@@ -24,8 +24,10 @@ resource "google_container_cluster" "primary" {
 
   resource_labels = var.labels
 
-  # Deletion protection - disabled for dev clusters
-  deletion_protection = false
+  # Deletion protection - enable for shared/production clusters
+  # When enabled, prevents deletion via GCP Console, API, and Terraform
+  # Must be set to false before cluster can be destroyed
+  deletion_protection = var.enable_deletion_protection
 }
 
 resource "google_container_node_pool" "primary" {

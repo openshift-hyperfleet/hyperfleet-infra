@@ -1,0 +1,8 @@
+# Backend configuration for long-running reserved cluster used for Prow
+# Usage: terraform init -backend-config=envs/gke/dev-prow.tfbackend
+#
+# Note: Use the same bucket with different prefixes for different environments.
+# To use a different bucket, run bootstrap/setup-backend.sh first.
+
+bucket = "hyperfleet-terraform-state"
+prefix = "terraform/state/shared/prow"

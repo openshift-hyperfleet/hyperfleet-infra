@@ -1,0 +1,10 @@
+# Backend configuration for personal dev cluster
+# Copy: cp envs/gke/dev.tfbackend.example envs/gke/dev-<username>.tfbackend
+# Edit: Set prefix = "terraform/state/dev-<username>"
+# Usage: terraform init -backend-config=envs/gke/dev-<username>.tfbackend
+#
+# Note: Use the same bucket with different prefixes for different environments.
+# To use a different bucket, run bootstrap/setup-backend.sh first.
+
+bucket = "hyperfleet-terraform-state"
+prefix = "terraform/state/dev-YOUR-USERNAME-HERE"

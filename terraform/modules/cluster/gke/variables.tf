@@ -69,3 +69,9 @@ variable "services_range_name" {
   type        = string
   default     = "services"
 }
+
+variable "enable_deletion_protection" {
+  description = "Enable deletion protection for the cluster (recommended for shared/production clusters)"
+  type        = bool
+  default     = false
+}

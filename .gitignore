@@ -5,10 +5,13 @@
 *.tfplan
 .terraform.lock.hcl
 
-# Personal tfvars files (keep the examples)
+# Personal tfvars and tfbackend files (keep the examples and shared configs)
 **/dev-*.tfvars
+**/dev-*.tfbackend
 !**/dev.tfvars.example
-!**/dev-shared.tfvars
+!**/dev.tfbackend.example
+!**/dev-prow.tfvars
+!**/dev-prow.tfbackend
 
 # Crash logs
 crash.log
