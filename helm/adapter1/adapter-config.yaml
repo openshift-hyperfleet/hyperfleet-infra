@@ -1,0 +1,28 @@
+# Example HyperFleet Adapter deployment configuration
+apiVersion: hyperfleet.redhat.com/v1alpha1
+kind: AdapterConfig
+metadata:
+  name: adapter1
+  labels:
+    hyperfleet.io/adapter-type: kubernetes
+    hyperfleet.io/component: adapter
+spec:
+  adapter:
+    version: "0.1.0"
+
+  # Log the full merged configuration after load (default: false)
+  debugConfig: true
+  log:
+    level: debug
+
+  clients:
+    hyperfleetApi:
+      baseUrl: http://hyperfleet-api:8000
+      version: v1
+      timeout: 2s
+      retryAttempts: 3
+      retryBackoff: exponential
+
+    kubernetes:
+      apiVersion: "v1"
+      #kubeConfigPath: PATH_TO_KUBECONFIG  # for local development

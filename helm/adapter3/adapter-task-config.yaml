@@ -1,0 +1,170 @@
+# HyperFleet Adapter task configuration for adapter3
+apiVersion: hyperfleet.redhat.com/v1alpha1
+kind: AdapterTaskConfig
+metadata:
+  name: adapter3
+  labels:
+    hyperfleet.io/adapter-type: adapter3
+    hyperfleet.io/component: adapter
+spec:
+  # Parameters with all required variables
+  params:
+
+    - name: "nodepoolId"
+      source: "event.id"
+      type: "string"
+      required: true
+
+    - name: "generation"
+      source: "event.generation"
+      type: "int"
+      required: true
+
+    - name: "nodepoolHref"
+      source: "event.href"
+      type: "string"
+      required: true
+      description: "Full API href for the nodepool, e.g. /api/hyperfleet/v1/clusters/{cid}/nodepools/{npid}"
+
+    - name: "namespace"
+      source: "env.NAMESPACE"
+      type: "string"
+
+  # Preconditions with valid operators and CEL expressions
+  preconditions:
+    - name: "nodepoolStatus"
+      apiCall:
+        method: "GET"
+        url: "{{ slice .nodepoolHref 18 }}"
+        timeout: 10s
+        retryAttempts: 3
+        retryBackoff: "exponential"
+      capture:
+        - name: "nodepoolName"
+          field: "name"
+        - name: "generation"
+          field: "generation"
+        - name: "readyConditionStatus"
+          expression: |
+            status.conditions.filter(c, c.type == "Ready").size() > 0
+              ? status.conditions.filter(c, c.type == "Ready")[0].status
+              : "False"
+      # Structured conditions with valid operators
+      conditions:
+        - field: "readyConditionStatus"
+          operator: "equals"
+          value: "False"
+
+    - name: "validationCheck"
+      # Valid CEL expression
+      expression: |
+        readyConditionStatus == "False"
+
+  # Resources with valid K8s manifests
+  resources:
+    - name: "resource0"
+      transport:
+        client: "kubernetes"
+      manifest:
+        apiVersion: v1
+        kind: ConfigMap
+        data:
+          nodepoolId: "{{ .nodepoolId }}"
+
+        metadata:
+          name: "{{ .nodepoolId }}-adapter3-configmap"
+          namespace: "{{ .namespace }}"
+          labels:
+            app.kubernetes.io/component: adapter-task-config
+            app.kubernetes.io/instance: adapter3
+            app.kubernetes.io/name: hyperfleet-adapter
+            app.kubernetes.io/version: 1.0.0
+            hyperfleet.io/nodepool-id: "{{ .nodepoolId }}"
+            hyperfleet.io/nodepool-name: "{{ .nodepoolName }}"
+      discovery:
+        namespace: "{{ .namespace }}"
+        bySelectors:
+          labelSelector:
+            hyperfleet.io/nodepool-id: "{{ .nodepoolId }}"
+            hyperfleet.io/nodepool-name: "{{ .nodepoolName }}"
+
+  # Post-processing with valid CEL expressions
+  post:
+    payloads:
+      - name: "statusPayload"
+        build:
+          # TODO: this should come from config.adapter.metadata.name
+          adapter: "adapter3"
+          conditions:
+            # Applied: Job successfully created
+            - type: "Applied"
+              status:
+                expression: |
+                  has(resources.resource0.metadata.creationTimestamp) 
+                  ? "True" 
+                  : "False"
+              reason:
+                expression: |
+                  has(resources.resource0.metadata.creationTimestamp) 
+                    ? "ConfigMap manifest applied successfully"
+                    : "ConfigMap is pending to be applied"
+              message:
+                expression: |
+                  has(resources.resource0.metadata.creationTimestamp) 
+                    ? "ConfigMap manifest applied successfully"
+                    : "ConfigMap is pending to be applied"
+            # Available: Check job status conditions
+            - type: "Available"
+              status:
+                expression: |
+                  has(resources.resource0.data.nodepoolId) 
+                    ? "True"
+                   : "False"
+              reason:
+                expression: |
+                  has(resources.resource0.data.nodepoolId) 
+                    ? "ConfigMap data available"
+                    : "ConfigMap data not yet available"
+              message:
+                expression: |
+                  has(resources.resource0.data.nodepoolId) 
+                    ? "ConfigMap data available"
+                    : "ConfigMap data not yet available"
+            # Health: Adapter execution status (runtime)
+            - type: "Health"
+              status:
+                expression: |
+                  has(resources.resource0.data.nodepoolId) 
+                    ? "True"
+                   : "False"
+              reason:
+                expression: |
+                  has(resources.resource0.data.nodepoolId) 
+                    ? "ConfigMap data available"
+                    : "ConfigMap data not yet available"
+              message:
+                expression: |
+                  toJson(resources.resource0)
+          # Event generation ID metadata field needs to use expression to avoid interpolation issues
+          observed_generation:
+            expression: "generation"
+          observed_time: "{{ now | date \"2006-01-02T15:04:05Z07:00\" }}"
+          # Optional data field for adapter-specific metrics extracted from resources
+          data:
+            namespace:
+              name:
+                expression: |
+                  resources.?resource0.?metadata.?name.orValue("")
+              creationTimestamp:
+                expression: |
+                  resources.?resource0.?metadata.?creationTimestamp.orValue("")
+
+    postActions:
+      - name: "reportNodepoolStatus"
+        apiCall:
+          method: "POST"
+          url: "{{ slice .nodepoolHref 18 }}/statuses"
+          headers:
+            - name: "Content-Type"
+              value: "application/json"
+          body: "{{ .statusPayload }}"

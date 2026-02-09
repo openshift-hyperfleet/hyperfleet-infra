@@ -43,7 +43,7 @@ output "pubsub_resources" {
 #
 # Example usage:
 #   terraform output -json pubsub_config | jq '.topics.clusters.topic_name'
-#   terraform output -json pubsub_config | jq '.subscriptions["clusters-validation-gcp"]'
+#   terraform output -json pubsub_config | jq '.subscriptions["clusters-adapter1"]'
 
 output "pubsub_config" {
   description = "Complete Pub/Sub configuration for constructing Helm values (WIF-based)"

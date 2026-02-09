@@ -37,6 +37,20 @@ output "cluster_location" {
 }
 
 # =============================================================================
+# Namespace (used as prefix for Pub/Sub topics, subscriptions, etc.)
+# =============================================================================
+
+output "kubernetes_namespace" {
+  description = "Kubernetes namespace prefix (developer_name-kubernetes_suffix)"
+  value       = local.kubernetes_namespace
+}
+
+output "gcp_project_id" {
+  description = "GCP project ID used for this deployment"
+  value       = var.gcp_project_id
+}
+
+# =============================================================================
 # Connection Instructions
 # =============================================================================
 

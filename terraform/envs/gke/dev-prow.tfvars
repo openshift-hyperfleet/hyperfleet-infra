@@ -50,8 +50,8 @@ enable_dead_letter   = true                # Enable dead letter queue for failed
 pubsub_topic_configs = {
   clusters = {
     subscribers = {
-      landing-zone   = {}
-      validation-gcp = {}
+      adapter2 = {}
+      adapter1 = {}
     }
     publishers = {
       sentinel = {}
@@ -59,7 +59,7 @@ pubsub_topic_configs = {
   }
   nodepools = {
     subscribers = {
-      validation-nodepool-gcp = {}
+      adapter3 = {}
     }
     publishers = {
       sentinel = {}

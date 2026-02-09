@@ -1,0 +1,37 @@
+# Default values for adapter2
+
+hyperfleet-adapter:
+  image:
+    # make install will substitute this by data coming from terraform
+    registry: CHANGE_THIS
+    repository: hyperfleet-adapter
+    tag: latest
+
+  adapterConfig:
+    create: true
+    # yaml is injected via --set-file in Makefile
+
+  adapterTaskConfig:
+    create: true
+    # yaml is injected via --set-file in Makefile
+
+  broker:
+    type: googlepubsub
+    googlepubsub:
+      # make install will substitute this by data coming from terraform
+      projectId: CHANGE_THIS 
+      # make install will substitute this by data coming from terraform
+      subscriptionId: CHANGE_THIS
+      # make install will substitute this by data coming from terraform
+      topic: CHANGE_THIS
+      deadLetterTopic: ""
+      createTopicIfMissing: true
+      createSubscriptionIfMissing: true
+
+  env:
+    - name: SIMULATE_RESULT
+      value: success
+    - name: NAMESPACE
+      valueFrom:
+        fieldRef:
+          fieldPath: metadata.namespace

@@ -119,8 +119,8 @@ variable "pubsub_topic_configs" {
       pubsub_topic_configs = {
         clusters = {
           subscribers = {
-            landing-zone   = {}
-            validation-gcp = { ack_deadline_seconds = 120 }
+            adapter1 = { ack_deadline_seconds = 120 }
+            adapter2 = {}
           }
           publishers = {
             sentinel = {}
@@ -128,7 +128,7 @@ variable "pubsub_topic_configs" {
         }
         nodepools = {
           subscribers = {
-            validation-nodepool-gcp = {}
+            adapter3 = {}
           }
           publishers = {
             sentinel = {}
@@ -149,8 +149,8 @@ variable "pubsub_topic_configs" {
   default = {
     clusters = {
       subscribers = {
-        landing-zone   = {}
-        validation-gcp = {}
+        adapter1 = {}
+        adapter2 = {}
       }
       publishers = {
         sentinel = {}

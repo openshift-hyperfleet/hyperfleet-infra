@@ -1,0 +1,22 @@
+# Default values for Sentinel (nodepools)
+
+sentinel:
+  image:
+    # make install will substitute this by data coming from terraform
+    registry: CHANGE_THIS
+    #TODO: this should be removed when we publish the image to hyperfleet-sentinel repository instead of sentinel
+    repository: sentinel
+
+  config:
+    resourceType: nodepools
+    resourceSelector: []
+    hyperfleetApi:
+      baseUrl: http://hyperfleet-api:8000
+
+  broker:
+    type: googlepubsub
+    # make install will substitute this by data coming from terraform
+    topic: CHANGE_THIS
+    googlepubsub:
+      # make install will substitute this by data coming from terraform
+      projectId: CHANGE_THIS 
