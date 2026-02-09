@@ -167,3 +167,37 @@ variable "enable_external_api" {
   type        = bool
   default     = false
 }
+
+# =============================================================================
+# Maestro Configuration
+# =============================================================================
+
+variable "use_maestro" {
+  description = "Deploy Maestro server and agent components"
+  type        = bool
+  default     = false
+}
+
+variable "maestro_consumer_name" {
+  description = "Consumer/cluster name for the Maestro agent"
+  type        = string
+  default     = "cluster1"
+}
+
+variable "maestro_server_replicas" {
+  description = "Number of Maestro server replicas"
+  type        = number
+  default     = 1
+}
+
+variable "maestro_enable_postgres" {
+  description = "Deploy embedded PostgreSQL database for Maestro"
+  type        = bool
+  default     = true
+}
+
+variable "maestro_enable_mqtt_broker" {
+  description = "Deploy embedded MQTT broker (Mosquitto) for Maestro"
+  type        = bool
+  default     = true
+}

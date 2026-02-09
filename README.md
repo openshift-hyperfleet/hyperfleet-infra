@@ -9,6 +9,7 @@ This repository contains Terraform configurations for:
 - **Shared infrastructure** (VPC, subnets, firewall rules) - deployed once per GCP project, used by all developer clusters
 - **Developer GKE clusters** - personal Kubernetes clusters for each developer
 - **Google Pub/Sub** (optional) - managed message broker with Workload Identity
+- Maestro deployment
 
 ### Shared Infrastructure Resources
 

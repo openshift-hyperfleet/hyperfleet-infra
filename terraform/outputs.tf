@@ -76,3 +76,17 @@ output "external_api_note" {
   description = "Instructions for external API access"
   value       = var.enable_external_api ? "External API access is ENABLED. Deploy with: helm install hyperfleet charts/hyperfleet-gcp --set base.hyperfleet-api.service.type=LoadBalancer -n hyperfleet-system" : "External API access is DISABLED. Set enable_external_api=true to enable."
 }
+
+# =============================================================================
+# Maestro Outputs (when enabled)
+# =============================================================================
+
+output "maestro_namespace" {
+  description = "Namespace where Maestro is deployed"
+  value       = var.use_maestro ? module.maestro[0].namespace : null
+}
+
+output "maestro_release_status" {
+  description = "Maestro Helm release status"
+  value       = var.use_maestro ? module.maestro[0].release_status : null
+}

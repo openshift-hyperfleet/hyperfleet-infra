@@ -93,3 +93,20 @@ resource "google_compute_firewall" "allow_lb_health_checks" {
 
   description = "Allow GCP health checks for LoadBalancer services exposing HyperFleet API"
 }
+
+# =============================================================================
+# Maestro (optional)
+# =============================================================================
+module "maestro" {
+  source = "./modules/maestro"
+  count  = var.use_maestro ? 1 : 0
+
+  namespace          = "maestro"
+  consumer_name      = var.maestro_consumer_name
+  server_replicas    = var.maestro_server_replicas
+  enable_postgres    = var.maestro_enable_postgres
+  enable_mqtt_broker = var.maestro_enable_mqtt_broker
+  labels             = local.common_labels
+
+  depends_on = [module.gke_cluster]
+}

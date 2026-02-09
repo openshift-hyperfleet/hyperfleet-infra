@@ -42,3 +42,6 @@ Thumbs.db
 .claude/
 plan.md
 
+terraform/modules/maestro/charts/maestro-stack/Chart.lock
+terraform/modules/maestro/charts/maestro-stack/charts/maestro-agent-*
+terraform/modules/maestro/charts/maestro-stack/charts/maestro-server-*

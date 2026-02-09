@@ -1,0 +1,76 @@
+# Default values for maestro-stack umbrella chart
+# Values are passed to sub-charts via their aliases (server, agent)
+
+# Maestro Server configuration
+server:
+  replicas: 1
+
+  serviceAccount:
+    name: maestro-server
+
+  database:
+    secretName: maestro-db
+    sslMode: disable
+
+  messageBroker:
+    type: mqtt
+    secretName: maestro-mqtt
+    mqtt:
+      host: maestro-mqtt
+      port: 1883
+      topics:
+        sourceEvents: "sources/maestro/consumers/+/sourceevents"
+        agentEvents: "sources/maestro/consumers/+/agentevents"
+
+  # Embedded PostgreSQL for development/demo
+  postgresql:
+    enabled: true
+    database:
+      name: maestro
+      user: maestro
+      password: maestro-password
+      host: maestro-db
+    service:
+      name: maestro-db
+      port: 5432
+    secretName: maestro-db
+
+  # Embedded Mosquitto MQTT broker for development/demo
+  mosquitto:
+    enabled: true
+    service:
+      name: maestro-mqtt
+      port: 1883
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+  logging:
+    klogV: "4"
+
+# Maestro Agent configuration
+agent:
+  enabled: true
+  environment: production
+
+  consumerName: "cluster-1"
+  cloudeventsClientId: "cluster-1-work-agent"
+
+  serviceAccount:
+    name: maestro-agent
+
+  messageBroker:
+    type: mqtt
+    mqtt:
+      host: maestro-mqtt.maestro
+      port: "1883"
+
+  installWorkCRDs: true
+
+  logging:
+    klogV: "4"

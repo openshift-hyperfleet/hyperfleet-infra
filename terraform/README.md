@@ -4,21 +4,46 @@ Terraform configuration for creating personal HyperFleet development clusters.
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                     hcm-hyperfleet project                      │
-│                                                                 │
-│  ┌───────────────────────────────────────────────────────────┐  │
-│  │              hyperfleet-dev-vpc (shared)                  │  │
-│  │                                                           │  │
-│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐       │  │
-│  │  │ hyperfleet- │  │ hyperfleet- │  │ hyperfleet- │       │  │
-│  │  │ dev-alice   │  │ dev-bob     │  │ dev-carol   │  ...  │  │
-│  │  │ (GKE)       │  │ (GKE)       │  │ (GKE)       │       │  │
-│  │  └─────────────┘  └─────────────┘  └─────────────┘       │  │
-│  │                                                           │  │
-│  └───────────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────┘
+```text
+┌──────────────────────────────────────────────────────────────────────────────────┐
+│                              hcm-hyperfleet project                              │
+│                                                                                  │
+│  ┌────────────────────────────────────────────────────────────────────────────┐  │
+│  │                       hyperfleet-dev-vpc (shared)                          │  │
+│  │                                                                            │  │
+│  │  ┌──────────────────────────────────────────────────────────────────────┐  │  │
+│  │  │                    hyperfleet-dev-alice (GKE)                        │  │  │
+│  │  │                                                                      │  │  │
+│  │  │  ┌─────────────────────────────┐  ┌───────────────────────────────┐  │  │  │
+│  │  │  │  namespace: alice-default   │  │     namespace: maestro        │  │  │  │
+│  │  │  │  ┌───────────────────────┐  │  │  ┌─────────────────────────┐  │  │  │  │
+│  │  │  │  │ HyperFleet Components │  │  │  │    Maestro Server       │  │  │  │  │
+│  │  │  │  │  - Sentinel           │  │  │  │    Maestro Agent        │  │  │  │  │
+│  │  │  │  │  - Landing Zone       │  │  │  │    PostgreSQL           │  │  │  │  │
+│  │  │  │  │  - Validation Adapter │  │  │  │    MQTT Broker          │  │  │  │  │
+│  │  │  │  └───────────────────────┘  │  │  └─────────────────────────┘  │  │  │  │
+│  │  │  └─────────────────────────────┘  └───────────────────────────────┘  │  │  │
+│  │  └──────────────────────────────────────────────────────────────────────┘  │  │
+│  │                                                                            │  │
+│  │  ┌─────────────────────┐  ┌─────────────────────┐                          │  │
+│  │  │ hyperfleet-dev-bob  │  │ hyperfleet-dev-carol│  ...                     │  │
+│  │  │ (GKE)               │  │ (GKE)               │                          │  │
+│  │  └─────────────────────┘  └─────────────────────┘                          │  │
+│  └────────────────────────────────────────────────────────────────────────────┘  │
+│                                                                                  │
+│  ┌────────────────────────────────────────────────────────────────────────────┐  │
+│  │                         Google Pub/Sub Topics                              │  │
+│  │                     (scoped per developer-suffix)                          │  │
+│  │                                                                            │  │
+│  │  alice-default-clusters ──► alice-default-clusters-landing-zone-adapter    │  │
+│  │                         └─► alice-default-clusters-validation-gcp-adapter  │  │
+│  │                                                                            │  │
+│  │  alice-default-nodepools ─► alice-default-nodepools-validation-gcp-adapter │  │
+│  │                                                                            │  │
+│  │  bob-default-clusters ────► bob-default-clusters-landing-zone-adapter      │  │
+│  │  ...                                                                       │  │
+│  └────────────────────────────────────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 - **Shared VPC**: One VPC for all dev clusters (deployed once per project)
@@ -111,6 +136,7 @@ State files are stored in a **GCS bucket** (`hyperfleet-terraform-state`) with a
 ### Backend Configuration Approach
 
 Each `.tfbackend` file contains:
+
 - `bucket` - The GCS bucket name (currently `hyperfleet-terraform-state`)
 - `prefix` - The state file path within the bucket (unique per environment)
 
@@ -128,6 +154,7 @@ cd terraform
 ```
 
 This script configures the GCS bucket with:
+
 - **Versioning enabled** - Allows recovery of previous state versions
 - **Lifecycle policy** - Keeps the 5 most recent versions OR deletes versions older than 90 days
 - **Uniform bucket-level access** - Enhanced security with IAM-only permissions
@@ -138,6 +165,7 @@ This script configures the GCS bucket with:
 **Note:** Project owners and editors automatically have bucket access. Other team members need individual IAM permissions.
 
 Request these IAM roles from your admin:
+
 - `roles/storage.objectUser` - Read/write state files (if not project owner/editor)
 - `roles/compute.admin` - Manage GKE clusters
 - `roles/container.admin` - Manage GKE resources
@@ -227,6 +255,11 @@ Shared clusters (like Prow) have **deletion protection enabled**. To destroy:
 | `use_pubsub` | Use Google Pub/Sub for messaging (instead of RabbitMQ) | `false` |
 | `enable_dead_letter` | Enable dead letter queue for Pub/Sub | `true` |
 | `pubsub_topic_configs` | Map of Pub/Sub topic configurations with subscriptions and publishers | See below |
+| `use_maestro` | Deploy Maestro server and agent components | `false` |
+| `maestro_consumer_name` | Consumer/cluster name for the Maestro agent | `cluster1` |
+| `maestro_server_replicas` | Number of Maestro server replicas | `1` |
+| `maestro_enable_postgres` | Deploy embedded PostgreSQL database for Maestro | `true` |
+| `maestro_enable_mqtt_broker` | Deploy embedded MQTT broker (Mosquitto) for Maestro | `true` |
 
 ## Cost Optimization
 
@@ -331,6 +364,7 @@ When you add or remove topics/subscriptions/publishers and re-run `terraform app
 | Workload Identity Bindings | - | Direct WIF permissions for K8s service accounts |
 
 **Example with developer `alice`, kubernetes_suffix `test1`, and config:**
+
 ```hcl
 pubsub_topic_configs = {
   clusters = {
@@ -345,6 +379,7 @@ pubsub_topic_configs = {
 ```
 
 **Creates:**
+
 - **Topics:**
   - `alice-test1-clusters`
   - `alice-test1-nodepools`
@@ -365,6 +400,7 @@ Each deployment gets completely isolated Pub/Sub resources - multiple deployment
 The module configures resource-level IAM permissions using Workload Identity Federation, following the principle of least privilege:
 
 **Publisher Kubernetes Service Accounts** (configured per topic):
+
 - Configurable roles per topic (default: `roles/pubsub.publisher` and `roles/pubsub.viewer`)
 - `roles/pubsub.publisher` - Publish messages to the topic
 - `roles/pubsub.viewer` - View topic metadata (required to check if topic exists)
@@ -372,6 +408,7 @@ The module configures resource-level IAM permissions using Workload Identity Fed
 - Example: `sentinel` service account gets publisher permissions on topics where it's configured
 
 **Adapter Kubernetes Service Accounts** (`{adapter}-adapter`):
+
 - `roles/pubsub.subscriber` on **their subscriptions** - Pull and acknowledge messages from subscriptions
 - `roles/pubsub.viewer` on **their subscriptions** - View subscription metadata
 - Authenticated via WIF principal directly (no GCP service account created)
@@ -402,6 +439,7 @@ terraform output helm_values_snippet
 The output includes configurations organized by topic, showing the Helm chart configurations for publishers and adapters (subscribers) grouped by the topic they interact with.
 
 **Example output structure:**
+
 ```yaml
 # ============================================================================
 # Services for Clusters Topic
@@ -451,10 +489,149 @@ nodepools-validation-gcp-adapter:
 **Note**: While each topic has a separate Helm configuration section (e.g., `clusters-sentinel`, `nodepools-sentinel`), they all use the **same** Kubernetes service account (`sentinel`). This single Kubernetes service account has permission to publish to all topics via Workload Identity Federation. No GCP service accounts are created - permissions are granted directly to Kubernetes service accounts. Adapter service configurations are grouped by the topic they subscribe to for clarity.
 
 **Chart Structure Note**: The hyperfleet-gcp chart uses a base + overlay pattern:
+
 - `base:` - Core platform components (API, Sentinel, Landing Zone, RabbitMQ)
 - Root level - GCP-specific components (validation-gcp)
 
 When constructing your values file, sentinel and landing-zone configs go under the `base:` prefix while validation-gcp stays at root level. See the [hyperfleet-chart README](https://github.com/openshift-hyperfleet/hyperfleet-chart) for full documentation.
+
+## Maestro (Optional)
+
+Enable Maestro to deploy the Maestro server and agent components for workload management.
+
+### Prerequisites
+
+Install the Helm git plugin (required to fetch Maestro charts from GitHub):
+
+```bash
+helm plugin install https://github.com/aslafy-z/helm-git
+```
+
+### Enable Maestro
+
+Add to your tfvars file:
+
+```hcl
+use_maestro = true
+
+# Optional configuration (defaults shown):
+maestro_consumer_name      = "cluster1"
+maestro_server_replicas    = 1
+maestro_enable_postgres    = true   # Deploy embedded PostgreSQL
+maestro_enable_mqtt_broker = true   # Deploy embedded Mosquitto MQTT broker
+```
+
+Or pass as command line arguments:
+
+```bash
+terraform apply -var-file=envs/gke/dev-<username>.tfvars \
+  -var="use_maestro=true"
+```
+
+### What It Creates
+
+| Resource | Name | Description |
+|----------|------|-------------|
+| Namespace | `maestro` | Dedicated namespace for Maestro components |
+| Helm Release | `maestro` | Umbrella chart deploying server and agent |
+| PostgreSQL | `maestro-db` | Embedded database (if `maestro_enable_postgres=true`) |
+| MQTT Broker | `maestro-mqtt` | Mosquitto broker (if `maestro_enable_mqtt_broker=true`) |
+| Service Accounts | `maestro-server`, `maestro-agent` | Kubernetes service accounts |
+
+### Components
+
+**Maestro Server:**
+
+- Manages workload resources and coordinates with agents
+- Connects to PostgreSQL for persistence
+- Uses MQTT for agent communication
+
+**Maestro Agent:**
+
+- Runs on managed clusters to execute workloads
+- Communicates with server via MQTT
+- Installs Work CRDs for workload management
+
+### Outputs
+
+After applying with `use_maestro=true`:
+
+```bash
+# Get Maestro namespace
+terraform output maestro_namespace
+
+# Get Helm release status
+terraform output maestro_release_status
+```
+
+### Verification
+
+After deployment, verify Maestro is running:
+
+```bash
+# Check pods in maestro namespace
+kubectl get pods -n maestro
+
+# Check Maestro server logs
+kubectl logs -n maestro -l app.kubernetes.io/name=maestro-server
+
+# Check Maestro agent logs
+kubectl logs -n maestro -l app.kubernetes.io/name=maestro-agent
+```
+
+### How the Helm Chart Works
+
+The Maestro module uses an **umbrella chart** pattern with automatic dependency management:
+
+```text
+modules/maestro/charts/maestro-stack/
+├── Chart.yaml          # Declares dependencies on maestro-server and maestro-agent
+├── values.yaml         # Default values passed to sub-charts
+└── charts/             # Downloaded dependencies (auto-generated)
+    ├── maestro-server-0.1.0.tgz
+    └── maestro-agent-0.1.0.tgz
+```
+
+**Chart Dependencies:**
+
+The `Chart.yaml` declares dependencies that are fetched from the upstream [openshift-online/maestro](https://github.com/openshift-online/maestro) repository using the `helm-git` plugin:
+
+```yaml
+dependencies:
+  - name: maestro-server
+    repository: "git+https://github.com/openshift-online/maestro@charts/maestro-server?ref=main"
+  - name: maestro-agent
+    repository: "git+https://github.com/openshift-online/maestro@charts/maestro-agent?ref=main"
+```
+
+**Automatic Dependency Updates:**
+
+The Terraform module automatically runs `helm dependency update` during the **plan phase** using an external data source. This ensures:
+
+1. Dependencies are downloaded before Terraform validates the Helm release
+2. No manual `helm dependency update` is required
+3. Running `terraform apply` directly works without any pre-steps
+
+```hcl
+# From modules/maestro/main.tf
+data "external" "helm_dependency_update" {
+  program = ["bash", "-c", <<-EOF
+    helm dependency update ${path.module}/charts/maestro-stack >&2
+    echo '{"status": "ok"}'
+  EOF
+  ]
+}
+```
+
+**Note:** The dependency update runs on every `terraform plan` and `terraform apply`. This ensures you always have the latest charts from the upstream repository, but adds a few seconds to each operation.
+
+**Updating to a New Chart Version:**
+
+To update to a newer version of the upstream charts:
+
+1. Edit `modules/maestro/charts/maestro-stack/Chart.yaml`
+2. Change the `ref=main` to a specific tag or commit (e.g., `ref=v1.0.0`)
+3. Run `terraform apply` - dependencies will be automatically updated
 
 ## Directory Structure
 
@@ -473,7 +650,13 @@ terraform/
 ├── modules/
 │   ├── cluster/
 │   │   └── gke/            # GKE cluster module
-│   └── pubsub/             # Google Pub/Sub module
+│   ├── pubsub/             # Google Pub/Sub module
+│   └── maestro/            # Maestro server and agent module
+│       ├── main.tf
+│       ├── variables.tf
+│       ├── outputs.tf
+│       └── charts/         # Maestro Helm charts
+│           └── maestro-stack/
 └── envs/
     └── gke/
         └── dev.tfvars.example
@@ -523,6 +706,7 @@ See [shared/README.md](shared/README.md) for more details.
 The configuration is designed to support multiple cloud providers. Currently only GKE is implemented.
 
 To add EKS or AKS support in the future:
+
 1. Create `modules/cluster/eks/` or `modules/cluster/aks/`
 2. Add the module call in `main.tf`
 3. Update outputs in `outputs.tf`
@@ -530,16 +714,21 @@ To add EKS or AKS support in the future:
 ## Troubleshooting
 
 ### "No network named X" error
+
 The shared VPC hasn't been deployed yet. Deploy it first:
+
 ```bash
 cd terraform/shared && terraform apply
 ```
 
 ### "Quota exceeded" error
+
 Your GCP project may have hit resource limits. Check quotas in the GCP Console or use a different zone.
 
 ### Cluster creation times out
+
 GKE cluster creation typically takes 5-10 minutes. If it takes longer, check the GCP Console for errors.
 
 ### "Error acquiring the state lock"
+
 Another team member is currently running an operation. Wait for them to complete. If the lock is stale, use `terraform force-unlock <lock-id>`.
