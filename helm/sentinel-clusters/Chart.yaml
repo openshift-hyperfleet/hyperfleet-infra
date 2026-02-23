@@ -3,7 +3,7 @@ name: sentinel-clusters
 description: Sentinel deployment for cluster lifecycle events
 type: application
 version: 0.1.0
-appVersion: "1.0.0"
+appVersion: "0.1.0"
 
 dependencies:
   - name: sentinel
