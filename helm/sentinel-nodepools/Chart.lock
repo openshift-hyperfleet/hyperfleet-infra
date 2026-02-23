@@ -1,0 +1,6 @@
+dependencies:
+- name: sentinel
+  repository: git+https://github.com/openshift-hyperfleet/hyperfleet-sentinel@deployments/helm/sentinel?ref=main
+  version: 0.1.0
+digest: sha256:db02d39aa08dda6f99a40f1245babe6654fd618c0728c689d5ade499a54f86ad
+generated: "2026-02-17T23:09:19.585833+01:00"

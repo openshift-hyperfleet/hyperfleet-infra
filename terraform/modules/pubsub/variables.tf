@@ -18,10 +18,10 @@ variable "topic_configs" {
         clusters = {
           message_retention_duration = "604800s"
           subscribers = {
-            landing-zone = {
+            adapter2 = {
               ack_deadline_seconds = 60
             }
-            validation-gcp = {
+            adapter1 = {
               roles = ["roles/pubsub.subscriber", "roles/pubsub.viewer"]
             }
           }
@@ -31,7 +31,7 @@ variable "topic_configs" {
         }
         nodepools = {
           subscribers = {
-            validation-gcp = {}
+            adapter3 = {}
           }
           publishers = {
             sentinel = {
@@ -43,11 +43,11 @@ variable "topic_configs" {
 
     This creates:
     - Topic: {developer}-{ns suffix}-clusters
-      - Subscription: {developer}-{ns suffix}-clusters-landing-zone-adapter-sub
-      - Subscription: {developer}-{ns suffix}-clusters-validation-gcp-adapter-sub
+      - Subscription: {developer}-{ns suffix}-clusters-adapter2-adapter-sub
+      - Subscription: {developer}-{ns suffix}-clusters-adapter1-adapter-sub
       - IAM binding for sentinel service account with publisher/viewer roles
     - Topic: {developer}-{ns suffix}-nodepools
-      - Subscription: {developer}-{ns suffix}-nodepools-validation-nodepool-gcp-adapter-sub
+      - Subscription: {developer}-{ns suffix}-nodepools-adapter3-adapter-sub
       - IAM binding for sentinel service account with publisher/viewer roles
 
     Note: Subscription names include the topic name to ensure uniqueness across the GCP project.

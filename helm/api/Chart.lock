@@ -1,0 +1,6 @@
+dependencies:
+- name: hyperfleet-api
+  repository: git+https://github.com/openshift-hyperfleet/hyperfleet-api@charts?ref=main
+  version: 1.0.0
+digest: sha256:d02d7606833eccfdd1b9631169b7da756b7b6c55c92e22c0b9612e837d017c97
+generated: "2026-02-17T13:40:55.324042+01:00"

@@ -1,0 +1,9 @@
+dependencies:
+- name: maestro-server
+  repository: git+https://github.com/openshift-online/maestro@charts/maestro-server?ref=main
+  version: 0.1.0
+- name: maestro-agent
+  repository: git+https://github.com/openshift-online/maestro@charts/maestro-agent?ref=main
+  version: 0.1.0
+digest: sha256:5829ceb3d68b20327c49b37dca45d5dea969cdde8736fdb3ddb6773a20f3ff3c
+generated: "2026-02-17T18:56:24.924805+01:00"

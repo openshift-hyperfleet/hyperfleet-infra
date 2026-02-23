@@ -1,0 +1,265 @@
+{
+  "abc123-adapter2": {
+    "apiVersion": "work.open-cluster-management.io/v1",
+    "kind": "ManifestWork",
+    "metadata": {
+      "name": "abc123-adapter2",
+      "namespace": "cluster1",
+      "uid": "a1b2c3d4-5678-9012-abcd-ef0123456789",
+      "resourceVersion": "1",
+      "creationTimestamp": "2026-02-18T10:22:10Z",
+      "generation": 1,
+      "labels": {
+        "hyperfleet.io/cluster-id": "abc123",
+        "hyperfleet.io/adapter": "adapter2",
+        "hyperfleet.io/component": "infrastructure",
+        "hyperfleet.io/generation": "77",
+        "hyperfleet.io/resource-group": "cluster-setup",
+        "maestro.io/source-id": "adapter2",
+        "maestro.io/resource-type": "manifestwork",
+        "maestro.io/priority": "normal",
+        "app.kubernetes.io/name": "aro-hcp-cluster",
+        "app.kubernetes.io/instance": "abc123",
+        "app.kubernetes.io/version": "v1.0.0",
+        "app.kubernetes.io/component": "infrastructure",
+        "app.kubernetes.io/part-of": "hyperfleet",
+        "app.kubernetes.io/managed-by": "hyperfleet-adapter",
+        "app.kubernetes.io/created-by": "adapter2"
+      },
+      "annotations": {
+        "hyperfleet.io/created-by": "hyperfleet-adapter-framework",
+        "hyperfleet.io/managed-by": "adapter2",
+        "hyperfleet.io/generation": "77",
+        "hyperfleet.io/cluster-name": "abc123",
+        "deployment.hyperfleet.io/strategy": "rolling",
+        "deployment.hyperfleet.io/timeout": "300s",
+        "monitoring.hyperfleet.io/enabled": "true",
+        "description": "Complete cluster setup including namespace, configuration, and RBAC",
+        "documentation": "https://docs.hyperfleet.io/adapters/aro-hcp"
+      }
+    },
+    "spec": {
+      "workload": {
+        "manifests": [
+          {
+            "apiVersion": "v1",
+            "kind": "Namespace",
+            "metadata": {
+              "name": "abc123-adapter2-namespace",
+              "labels": {
+                "app.kubernetes.io/component": "adapter-task-config",
+                "app.kubernetes.io/instance": "adapter2",
+                "app.kubernetes.io/name": "hyperfleet-adapter",
+                "app.kubernetes.io/version": "1.0.0",
+                "app.kubernetes.io/transport": "maestro"
+              },
+              "annotations": {
+                "hyperfleet.io/generation": "77"
+              }
+            }
+          },
+          {
+            "apiVersion": "v1",
+            "kind": "ConfigMap",
+            "metadata": {
+              "name": "abc123-adapter2-configmap",
+              "namespace": "abc123-adapter2-namespace",
+              "labels": {
+                "app.kubernetes.io/component": "adapter-task-config",
+                "app.kubernetes.io/instance": "adapter2",
+                "app.kubernetes.io/name": "hyperfleet-adapter",
+                "app.kubernetes.io/version": "1.0.0",
+                "app.kubernetes.io/transport": "maestro"
+              },
+              "annotations": {
+                "hyperfleet.io/generation": "77"
+              }
+            },
+            "data": {
+              "cluster_id": "abc123",
+              "cluster_name": "abc123"
+            }
+          }
+        ]
+      },
+      "deleteOption": {
+        "propagationPolicy": "Foreground",
+        "gracePeriodSeconds": 30
+      },
+      "manifestConfigs": [
+        {
+          "resourceIdentifier": {
+            "group": "",
+            "resource": "namespaces",
+            "name": "abc123-adapter2-namespace"
+          },
+          "updateStrategy": {
+            "type": "ServerSideApply"
+          },
+          "feedbackRules": [
+            {
+              "type": "JSONPaths",
+              "jsonPaths": [
+                {
+                  "name": "phase",
+                  "path": ".status.phase"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "resourceIdentifier": {
+            "group": "",
+            "resource": "configmaps",
+            "namespace": "abc123-adapter2-namespace",
+            "name": "abc123-adapter2-configmap"
+          },
+          "updateStrategy": {
+            "type": "ServerSideApply",
+            "serverSideApply": {
+              "fieldManager": "hyperfleet-adapter",
+              "force": false
+            }
+          },
+          "feedbackRules": [
+            {
+              "type": "JSONPaths",
+              "jsonPaths": [
+                {
+                  "name": "data",
+                  "path": ".data"
+                },
+                {
+                  "name": "resourceVersion",
+                  "path": ".metadata.resourceVersion"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "status": {
+      "conditions": [
+        {
+          "type": "Applied",
+          "status": "True",
+          "reason": "AppliedManifestWorkComplete",
+          "message": "Apply manifest work complete",
+          "lastTransitionTime": "2026-02-18T10:22:10Z",
+          "observedGeneration": 1
+        },
+        {
+          "type": "Available",
+          "status": "True",
+          "reason": "ResourcesAvailable",
+          "message": "All resources are available",
+          "lastTransitionTime": "2026-02-18T10:22:10Z",
+          "observedGeneration": 1
+        }
+      ],
+      "resourceStatus": {
+        "manifests": [
+          {
+            "resourceMeta": {
+              "ordinal": 0,
+              "group": "",
+              "version": "v1",
+              "kind": "Namespace",
+              "resource": "namespaces",
+              "name": "abc123-adapter2-namespace",
+              "namespace": ""
+            },
+            "conditions": [
+              {
+                "type": "Applied",
+                "status": "True",
+                "reason": "AppliedManifestComplete",
+                "message": "Apply manifest complete",
+                "lastTransitionTime": "2026-02-18T10:22:10Z"
+              },
+              {
+                "type": "Available",
+                "status": "True",
+                "reason": "ResourceAvailable",
+                "message": "Resource is available",
+                "lastTransitionTime": "2026-02-18T10:22:10Z"
+              },
+              {
+                "type": "StatusFeedbackSynced",
+                "status": "True",
+                "reason": "StatusFeedbackSynced",
+                "message": "",
+                "lastTransitionTime": "2026-02-18T10:22:10Z"
+              }
+            ],
+            "statusFeedback": {
+              "values": [
+                {
+                  "name": "phase",
+                  "fieldValue": {
+                    "type": "String",
+                    "string": "Active"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "resourceMeta": {
+              "ordinal": 1,
+              "group": "",
+              "version": "v1",
+              "kind": "ConfigMap",
+              "resource": "configmaps",
+              "name": "abc123-adapter2-configmap",
+              "namespace": "abc123-adapter2-namespace"
+            },
+            "conditions": [
+              {
+                "type": "Applied",
+                "status": "True",
+                "reason": "AppliedManifestComplete",
+                "message": "Apply manifest complete",
+                "lastTransitionTime": "2026-02-18T10:22:10Z"
+              },
+              {
+                "type": "Available",
+                "status": "True",
+                "reason": "ResourceAvailable",
+                "message": "Resource is available",
+                "lastTransitionTime": "2026-02-18T10:22:10Z"
+              },
+              {
+                "type": "StatusFeedbackSynced",
+                "status": "True",
+                "reason": "StatusFeedbackSynced",
+                "message": "",
+                "lastTransitionTime": "2026-02-18T10:22:10Z"
+              }
+            ],
+            "statusFeedback": {
+              "values": [
+                {
+                  "name": "data",
+                  "fieldValue": {
+                    "type": "JsonRaw",
+                    "jsonRaw": "{\"cluster_id\":\"abc123\",\"cluster_name\":\"abc123\"}"
+                  }
+                },
+                {
+                  "name": "resourceVersion",
+                  "fieldValue": {
+                    "type": "String",
+                    "string": "12345"
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,19 @@
+# Default values for HyperFleet API umbrella chart
+
+hyperfleet-api:
+  image:
+    # make install will substitute this by data coming from terraform
+    registry: CHANGE_THIS
+  database:
+    postgresql:
+      enabled: true
+
+  auth:
+    enableJwt: false
+
+  adapters:
+    cluster:
+      - adapter1
+      - adapter2
+    nodepool:
+      - adapter3

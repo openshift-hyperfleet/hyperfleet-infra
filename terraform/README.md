@@ -111,6 +111,7 @@ State files are stored in a **GCS bucket** (`hyperfleet-terraform-state`) with a
 ### Backend Configuration Approach
 
 Each `.tfbackend` file contains:
+
 - `bucket` - The GCS bucket name (currently `hyperfleet-terraform-state`)
 - `prefix` - The state file path within the bucket (unique per environment)
 
@@ -128,6 +129,7 @@ cd terraform
 ```
 
 This script configures the GCS bucket with:
+
 - **Versioning enabled** - Allows recovery of previous state versions
 - **Lifecycle policy** - Keeps the 5 most recent versions OR deletes versions older than 90 days
 - **Uniform bucket-level access** - Enhanced security with IAM-only permissions
@@ -138,6 +140,7 @@ This script configures the GCS bucket with:
 **Note:** Project owners and editors automatically have bucket access. Other team members need individual IAM permissions.
 
 Request these IAM roles from your admin:
+
 - `roles/storage.objectUser` - Read/write state files (if not project owner/editor)
 - `roles/compute.admin` - Manage GKE clusters
 - `roles/container.admin` - Manage GKE resources
@@ -251,8 +254,8 @@ enable_dead_letter = true  # Optional, defaults to true
 pubsub_topic_configs = {
   clusters = {
     subscriptions = {
-      landing-zone   = {}
-      validation-gcp = {}
+      adapter2 = {}
+      adapter1 = {}
     }
     publishers = {
       sentinel = {}
@@ -260,7 +263,7 @@ pubsub_topic_configs = {
   }
   nodepools = {
     subscriptions = {
-      validation-node-gcp = {}
+      adapter3 = {}
     }
     publishers = {
       sentinel = {}
@@ -285,12 +288,13 @@ pubsub_topic_configs = {
   clusters = {
     message_retention_duration = "604800s"  # 7 days (optional)
     subscriptions = {
-      landing-zone = {
-        ack_deadline_seconds = 60  # Default: 60
-      }
-      validation-gcp = {
+      adapter1 = {
         ack_deadline_seconds = 120  # Custom setting for this adapter
       }
+      adapter2 = {
+        ack_deadline_seconds = 60  # Default: 60
+      }
+
     }
     publishers = {
       sentinel = {}  # Uses default roles: publisher and viewer
@@ -298,7 +302,7 @@ pubsub_topic_configs = {
   }
   nodepools = {
     subscriptions = {
-      validation-node-gcp = {}  # Only validation-node-gcp subscribes to nodepools
+      adapter3 = {}  # Only adapter3 subscribes to nodepools
     }
     publishers = {
       sentinel = {}
@@ -309,7 +313,7 @@ pubsub_topic_configs = {
   }
   volumes = {
     subscriptions = {
-      landing-zone = {}
+      adapter2 = {}
       orchestrator = {}
     }
     publishers = {
@@ -331,32 +335,34 @@ When you add or remove topics/subscriptions/publishers and re-run `terraform app
 | Workload Identity Bindings | - | Direct WIF permissions for K8s service accounts |
 
 **Example with developer `alice`, kubernetes_suffix `test1`, and config:**
+
 ```hcl
 pubsub_topic_configs = {
   clusters = {
-    subscriptions = { landing-zone = {}, validation-gcp = {} }
+    subscriptions = { adapter1 = {}, adapter2 = {} }
     publishers    = { sentinel = {} }
   }
   nodepools = {
-    subscriptions = { validation-node-gcp = {} }
+    subscriptions = { adapter3 = {} }
     publishers    = { sentinel = {} }
   }
 }
 ```
 
 **Creates:**
+
 - **Topics:**
   - `alice-test1-clusters`
   - `alice-test1-nodepools`
 - **Subscriptions:**
-  - `alice-test1-clusters-landing-zone-adapter`
-  - `alice-test1-clusters-validation-gcp-adapter`
-  - `alice-test1-nodepools-validation-node-gcp-adapter`
+  - `alice-test1-clusters-adapter1-adapter`
+  - `alice-test1-clusters-adapter2-adapter`
+  - `alice-test1-nodepools-adapter3-adapter`
 - **Workload Identity Bindings:**
   - K8s SA `sentinel` in namespace `alice-test1` → publishes to clusters and nodepools topics
-  - K8s SA `landing-zone-adapter` in namespace `alice-test1` → subscribes to clusters topic
-  - K8s SA `validation-gcp-adapter` in namespace `alice-test1` → subscribes to clusters topic
-  - K8s SA `validation-node-gcp-adapter` in namespace `alice-test1` → subscribes to nodepools topic
+  - K8s SA `adapter1-adapter` in namespace `alice-test1` → subscribes to clusters topic
+  - K8s SA `adapter2-adapter` in namespace `alice-test1` → subscribes to clusters topic
+  - K8s SA `adapter3-adapter` in namespace `alice-test1` → subscribes to nodepools topic
 
 Each deployment gets completely isolated Pub/Sub resources - multiple deployments can share a cluster by using different kubernetes_suffix values.
 
@@ -365,6 +371,7 @@ Each deployment gets completely isolated Pub/Sub resources - multiple deployment
 The module configures resource-level IAM permissions using Workload Identity Federation, following the principle of least privilege:
 
 **Publisher Kubernetes Service Accounts** (configured per topic):
+
 - Configurable roles per topic (default: `roles/pubsub.publisher` and `roles/pubsub.viewer`)
 - `roles/pubsub.publisher` - Publish messages to the topic
 - `roles/pubsub.viewer` - View topic metadata (required to check if topic exists)
@@ -372,6 +379,7 @@ The module configures resource-level IAM permissions using Workload Identity Fed
 - Example: `sentinel` service account gets publisher permissions on topics where it's configured
 
 **Adapter Kubernetes Service Accounts** (`{adapter}-adapter`):
+
 - `roles/pubsub.subscriber` on **their subscriptions** - Pull and acknowledge messages from subscriptions
 - `roles/pubsub.viewer` on **their subscriptions** - View subscription metadata
 - Authenticated via WIF principal directly (no GCP service account created)
@@ -402,6 +410,7 @@ terraform output helm_values_snippet
 The output includes configurations organized by topic, showing the Helm chart configurations for publishers and adapters (subscribers) grouped by the topic they interact with.
 
 **Example output structure:**
+
 ```yaml
 # ============================================================================
 # Services for Clusters Topic
@@ -417,18 +426,18 @@ clusters-sentinel:
       projectId: hcm-hyperfleet
 
 # Adapters (subscribe to clusters topic)
-clusters-landing-zone-adapter:
+clusters-adapter1-adapter:
   serviceAccount:
-    name: landing-zone-adapter
+    name: adapter1-adapter
   broker:
     type: googlepubsub
     googlepubsub:
       projectId: hcm-hyperfleet
       topic: alice-test1-clusters
-      subscription: alice-test1-clusters-landing-zone-adapter
+      subscription: alice-test1-clusters-adapter1-adapter
 
-clusters-validation-gcp-adapter:
-  # Similar configuration for validation-gcp adapter...
+clusters-adapter2-adapter:
+  # Similar configuration for adapter2 adapter...
 
 # ============================================================================
 # Services for Nodepools Topic
@@ -444,17 +453,18 @@ nodepools-sentinel:
       projectId: hcm-hyperfleet
 
 # Adapters (subscribe to nodepools topic)
-nodepools-validation-gcp-adapter:
-  # Configuration for validation-gcp adapter on nodepools topic...
+nodepools-adapter1-adapter:
+  # Configuration for adapter3 adapter on nodepools topic...
 ```
 
 **Note**: While each topic has a separate Helm configuration section (e.g., `clusters-sentinel`, `nodepools-sentinel`), they all use the **same** Kubernetes service account (`sentinel`). This single Kubernetes service account has permission to publish to all topics via Workload Identity Federation. No GCP service accounts are created - permissions are granted directly to Kubernetes service accounts. Adapter service configurations are grouped by the topic they subscribe to for clarity.
 
 **Chart Structure Note**: The hyperfleet-gcp chart uses a base + overlay pattern:
-- `base:` - Core platform components (API, Sentinel, Landing Zone, RabbitMQ)
-- Root level - GCP-specific components (validation-gcp)
 
-When constructing your values file, sentinel and landing-zone configs go under the `base:` prefix while validation-gcp stays at root level. See the [hyperfleet-chart README](https://github.com/openshift-hyperfleet/hyperfleet-chart) for full documentation.
+- `base:` - Core platform components (API, Sentinel, adapter2, RabbitMQ)
+- Root level - GCP-specific components (adapter1)
+
+When constructing your values file, sentinel and adapter2 configs go under the `base:` prefix while adapter1 stays at root level. See the [hyperfleet-chart README](https://github.com/openshift-hyperfleet/hyperfleet-chart) for full documentation.
 
 ## Directory Structure
 
@@ -523,6 +533,7 @@ See [shared/README.md](shared/README.md) for more details.
 The configuration is designed to support multiple cloud providers. Currently only GKE is implemented.
 
 To add EKS or AKS support in the future:
+
 1. Create `modules/cluster/eks/` or `modules/cluster/aks/`
 2. Add the module call in `main.tf`
 3. Update outputs in `outputs.tf`
@@ -530,16 +541,21 @@ To add EKS or AKS support in the future:
 ## Troubleshooting
 
 ### "No network named X" error
+
 The shared VPC hasn't been deployed yet. Deploy it first:
+
 ```bash
 cd terraform/shared && terraform apply
 ```
 
 ### "Quota exceeded" error
+
 Your GCP project may have hit resource limits. Check quotas in the GCP Console or use a different zone.
 
 ### Cluster creation times out
+
 GKE cluster creation typically takes 5-10 minutes. If it takes longer, check the GCP Console for errors.
 
 ### "Error acquiring the state lock"
+
 Another team member is currently running an operation. Wait for them to complete. If the lock is stale, use `terraform force-unlock <lock-id>`.
