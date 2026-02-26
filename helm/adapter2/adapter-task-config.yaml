@@ -24,12 +24,6 @@ spec:
       source: "env.NAMESPACE"
       type: "string"
 
-     #TODO: this should come from config.adapter.metadata.name
-    - name: "adapterName"
-      source: "config.adapterConfig.metadata.name"
-      default: "adapter2"
-      description: "Unique identifier for the adapter"
-
   # Preconditions with valid operators and CEL expressions
   preconditions:
     - name: "clusterStatus"
@@ -256,7 +250,7 @@ spec:
                   has(resources.namespace0) && has(resources.namespace0.conditions)
                     && resources.namespace0.conditions.exists(c, has(c.type) && c.type == "Available" && has(c.status) && c.status == "True")
                     && has(resources.configmap0) && has(resources.configmap0.conditions)
-                    && resources.configmap0.conditions.exists(c, c.type == "Available" && has(c.status) && c.status == "True")
+                    && resources.configmap0.conditions.exists(c, has(c.type) && c.type == "Available" && has(c.status) && c.status == "True")
                   ? "True"
                   : "False"
               reason:
@@ -267,7 +261,7 @@ spec:
                     ? "NamespaceNotAvailable"
                     : !(has(resources.configmap0) && has(resources.configmap0.conditions))
                       ? "ConfigMapNotDiscovered"
-                      : !resources.configmap0.conditions.exists(c, c.type == "Available" && has(c.status) && c.status == "True")
+                      : !resources.configmap0.conditions.exists(c, has(c.type) && c.type == "Available" && has(c.status) && c.status == "True")
                         ? "ConfigMapNotAvailable"
                         : "AllResourcesAvailable"
               message:
@@ -278,7 +272,7 @@ spec:
                     ? "Namespace not yet available on spoke cluster"
                     : !(has(resources.configmap0) && has(resources.configmap0.conditions))
                       ? "ConfigMap not discovered from ManifestWork"
-                      : !resources.configmap0.conditions.exists(c, c.type == "Available" && has(c.status) && c.status == "True")
+                      : !resources.configmap0.conditions.exists(c, has(c.type) && c.type == "Available" && has(c.status) && c.status == "True")
                         ? "ConfigMap not yet available on spoke cluster"
                         : "All manifests (namespace, configmap) are available on spoke cluster"
 
