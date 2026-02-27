@@ -19,7 +19,7 @@ SENTINEL_TAG     ?= $(IMAGE_TAG)
 ADAPTER_TAG      ?= $(IMAGE_TAG)
 
 HELM_DIR         := helm
-TF_DIR           := terraform
+TF_DIR           ?= terraform
 GENERATED_DIR    := generated-values-from-terraform
 
 # ──────────────────────────────────────────────
