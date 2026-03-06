@@ -4,8 +4,7 @@ sentinel:
   image:
     # make install will substitute this by data coming from terraform
     registry: CHANGE_THIS
-    #TODO: this should be removed when we publish the image to hyperfleet-sentinel repository instead of sentinel
-    repository: sentinel
+    repository: hyperfleet-sentinel
 
   config:
     resourceType: nodepools
