@@ -6,10 +6,24 @@ hyperfleet-sentinel:
     registry: CHANGE_ME
 
   config:
+    sentinel:
+      name: hyperfleet-sentinel-clusters
+
     resourceType: clusters
     resourceSelector: []
-    hyperfleetApi:
-      baseUrl: http://hyperfleet-api:8000
+
+    debugConfig: false
+
+    log:
+      level: info
+      format: json
+      output: stdout
+
+    clients:
+      hyperfleetApi:
+        baseUrl: http://hyperfleet-api:8000
+        version: v1
+        timeout: 10s
 
   broker:
     type: googlepubsub
