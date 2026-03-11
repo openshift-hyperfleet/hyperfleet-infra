@@ -269,6 +269,8 @@ lint-helm: check-helm deps ## Lint all Helm charts
 lint-shellcheck: ## Validate shell scripts with shellcheck
 	@if command -v shellcheck >/dev/null 2>&1; then \
 		find . -name '*.sh' -not -path './.terraform/*' -not -path './.git/*' -exec shellcheck {} +; \
+	elif [ -n "$$CI" ]; then \
+		echo "ERROR: shellcheck is required in CI but not installed"; exit 1; \
 	else \
 		echo "WARN: shellcheck not installed, skipping"; \
 	fi
@@ -354,6 +356,7 @@ health-check: check-kubectl ## Verify all HyperFleet components are healthy
 .PHONY: destroy-terraform
 destroy-terraform: check-terraform check-tf-files ## Destroy Terraform-managed infrastructure
 	cd $(TF_DIR) && terraform init -backend-config=$(TF_BACKEND)
+	# Always use -auto-approve to prevent CI cleanup from hanging on interactive prompt
 	cd $(TF_DIR) && terraform destroy -var-file=$(TF_VARS) -auto-approve
 
 .PHONY: ci-test
