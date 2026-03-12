@@ -25,6 +25,12 @@ spec:
       source: "env.NAMESPACE"
       type: "string"
 
+    - name: "TTL_EXPIRY_THRESHOLD"
+      source: "env.TTL_EXPIRY_THRESHOLD"
+      type: "int"
+      required: false
+      default: 300
+
   # Preconditions with valid operators and CEL expressions
   preconditions:
     - name: "clusterStatus"
@@ -39,21 +45,21 @@ spec:
           field: "name"
         - name: "generation"
           field: "generation"
-        - name: "readyConditionStatus"
+        - name: "readyCondition"
           expression: |
             status.conditions.filter(c, c.type == "Ready").size() > 0
-              ? status.conditions.filter(c, c.type == "Ready")[0].status
-              : "False"
-      # Structured conditions with valid operators
-      conditions:
-        - field: "readyConditionStatus"
-          operator: "equals"
-          value: "False"
+              ? status.conditions.filter(c, c.type == "Ready")[0]
+              : null
+        # Capture current time as a fixed timestamp for consistent time comparisons
+        # Using `now()` directly in multiple expressions would return different values
+        - name: "currentTime"
+          expression: "now()"
 
     - name: "validationCheck"
-      # Valid CEL expression
+      # Precondition passes if cluster is NOT Ready OR if cluster is Ready and stable for >TTL_EXPIRY_THRESHOLD seconds since last transition (enables self-healing)
       expression: |
-        readyConditionStatus == "False"
+        readyCondition == null || readyCondition.status != "True" ||
+        (timestamp(currentTime) - timestamp(readyCondition.last_transition_time)).getSeconds() >= TTL_EXPIRY_THRESHOLD
 
   # Resources with valid K8s manifests
   resources:
