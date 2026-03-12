@@ -10,6 +10,15 @@ sentinel:
     resourceSelector: []
     hyperfleetApi:
       baseUrl: http://hyperfleet-api:8000
+    messageData:
+      id: "resource.id"
+      kind: "resource.kind"
+      href: "resource.href"
+      generation: "resource.generation"
+      owner_references:
+        id: "resource.owner_references.id"
+        href: "resource.owner_references.href"
+        kind: "resource.owner_references.kind"
 
   broker:
     type: googlepubsub
