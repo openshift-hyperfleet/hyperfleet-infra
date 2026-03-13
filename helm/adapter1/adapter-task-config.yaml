@@ -39,21 +39,23 @@ spec:
           field: "name"
         - name: "generation"
           field: "generation"
-        - name: "readyConditionStatus"
+        - name: "clusterNotReady"
           expression: |
             status.conditions.filter(c, c.type == "Ready").size() > 0
-              ? status.conditions.filter(c, c.type == "Ready")[0].status
-              : "False"
-      # Structured conditions with valid operators
-      conditions:
-        - field: "readyConditionStatus"
-          operator: "equals"
-          value: "False"
+              ? status.conditions.filter(c, c.type == "Ready")[0].status != "True"
+              : true
+        - name: "clusterReadyTTL"
+          expression: |
+            (timestamp(now()) - timestamp(
+              status.conditions.filter(c, c.type == "Ready").size() > 0
+                ? status.conditions.filter(c, c.type == "Ready")[0].last_transition_time
+                : now()
+            )).getSeconds() >= 300
 
     - name: "validationCheck"
-      # Valid CEL expression
+      # Precondition passes if cluster is NOT Ready OR if cluster is Ready and stable for >300 seconds since last transition (enables self-healing)
       expression: |
-        readyConditionStatus == "False"
+        clusterNotReady || clusterReadyTTL
 
   # Resources with valid K8s manifests
   resources:

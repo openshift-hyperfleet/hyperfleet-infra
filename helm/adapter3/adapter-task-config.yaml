@@ -44,21 +44,23 @@ spec:
           field: "name"
         - name: "generation"
           field: "generation"
-        - name: "readyConditionStatus"
+        - name: "nodepoolNotReady"
           expression: |
             status.conditions.filter(c, c.type == "Ready").size() > 0
-              ? status.conditions.filter(c, c.type == "Ready")[0].status
-              : "False"
-      # Structured conditions with valid operators
-      conditions:
-        - field: "readyConditionStatus"
-          operator: "equals"
-          value: "False"
+              ? status.conditions.filter(c, c.type == "Ready")[0].status != "True"
+              : true
+        - name: "nodepoolReadyTTL"
+          expression: |
+            (timestamp(now()) - timestamp(
+              status.conditions.filter(c, c.type == "Ready").size() > 0
+                ? status.conditions.filter(c, c.type == "Ready")[0].last_transition_time
+                : now()
+            )).getSeconds() >= 300
 
     - name: "validationCheck"
-      # Valid CEL expression
+      # Precondition passes if nodepool is NOT Ready OR if nodepool is Ready and stable for >300 seconds since last transition (enables self-healing)
       expression: |
-        readyConditionStatus == "False"
+        nodepoolNotReady || nodepoolReadyTTL
 
   # Resources with valid K8s manifests
   resources:
