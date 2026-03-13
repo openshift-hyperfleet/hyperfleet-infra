@@ -40,21 +40,23 @@ preconditions:
         field: "name"
       - name: "generation"
         field: "generation"
-      - name: "readyCondition"
+      - name: "nodepoolNotReady"
         expression: |
           status.conditions.filter(c, c.type == "Ready").size() > 0
-            ? status.conditions.filter(c, c.type == "Ready")[0]
-            : null
-      # Capture current time as a fixed timestamp for consistent time comparisons
-      # Using `now()` directly in multiple expressions would return different values
-      - name: "currentTime"
-        expression: "now()"
+            ? status.conditions.filter(c, c.type == "Ready")[0].status != "True"
+            : true
+      - name: "nodepoolReadyTTL"
+        expression: |
+          (timestamp(now()) - timestamp(
+            status.conditions.filter(c, c.type == "Ready").size() > 0
+              ? status.conditions.filter(c, c.type == "Ready")[0].last_transition_time
+              : now()
+          )).getSeconds() > TTL_EXPIRY_THRESHOLD
 
   - name: "validationCheck"
-    # Precondition passes if cluster is NOT Ready OR if cluster is Ready and stable for >TTL_EXPIRY_THRESHOLD seconds since last transition (enables self-healing)
+    # Precondition passes if nodepool is NOT Ready OR if nodepool is Ready and stable for >TTL_EXPIRY_THRESHOLD seconds since last transition (enables self-healing)
     expression: |
-      readyCondition == null || readyCondition.status != "True" ||
-      (timestamp(currentTime) - timestamp(readyCondition.last_transition_time)).getSeconds() >= TTL_EXPIRY_THRESHOLD
+      nodepoolNotReady || nodepoolReadyTTL
 
 # Resources with valid K8s manifests
 resources:
