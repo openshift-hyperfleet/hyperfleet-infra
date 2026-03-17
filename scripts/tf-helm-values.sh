@@ -68,7 +68,7 @@ sentinel:
     type: ${BROKER_TYPE}
     topic: ${NS}-${resource_type}
     googlepubsub:
-      projectId: ${PROJECT_ID}
+      project_id: ${PROJECT_ID}
 EOF
     echo "  wrote ${file}"
   done
@@ -84,8 +84,8 @@ hyperfleet-adapter:
   broker:
     type: ${BROKER_TYPE}
     googlepubsub:
-      projectId: ${PROJECT_ID}
-      subscriptionId: ${NS}-${topic}-${adapter}
+      project_id: ${PROJECT_ID}
+      subscription_id: ${NS}-${topic}-${adapter}
       topic: ${NS}-${topic}
 EOF
     echo "  wrote ${file}"
