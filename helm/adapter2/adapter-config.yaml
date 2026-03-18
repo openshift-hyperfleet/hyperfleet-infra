@@ -23,6 +23,11 @@ spec:
       retryAttempts: 3
       retryBackoff: exponential
 
+    broker:
+      # These values are overridden at deploy time via env vars from Helm values
+      subscriptionId: "placeholder"
+      topic: "placeholder"
+
     maestro:
       grpcServerAddress: "maestro-grpc.maestro.svc.cluster.local:8090"
       

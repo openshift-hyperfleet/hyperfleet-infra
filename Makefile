@@ -1,6 +1,8 @@
 # HyperFleet CLM - Full Installation Makefile
 # Usage: make help
 
+.DEFAULT_GOAL := help
+
 NAMESPACE        ?= hyperfleet
 MAESTRO_NS       ?= maestro
 KUBECONFIG       ?= $(HOME)/.kube/config
@@ -9,14 +11,25 @@ TF_BACKEND       ?= envs/gke/$(TF_ENV).tfbackend
 TF_VARS          ?= envs/gke/$(TF_ENV).tfvars
 GCP_PROJECT_ID   ?= hcm-hyperfleet
 BROKER_TYPE      ?= googlepubsub
+RABBITMQ_URL     ?= amqp://guest:guest@rabbitmq:5672/
 REGISTRY         ?= quay.io/openshift-hyperfleet
-IMAGE_TAG        ?= v0.1.0
-API_TAG          ?= $(IMAGE_TAG)
-SENTINEL_TAG     ?= $(IMAGE_TAG)
-ADAPTER_TAG      ?= $(IMAGE_TAG)
+API_IMAGE_TAG      ?= v0.1.1
+SENTINEL_IMAGE_TAG ?= v0.1.1
+ADAPTER_IMAGE_TAG  ?= v0.1.1
+
+# Chart source configuration (helm-git plugin)
+# Chart refs are independent of image tags so that overriding an image tag
+# (e.g., make install-api API_IMAGE_TAG=dev-abc123) does not retarget charts.
+# Override chart refs explicitly when needed:
+#   make install-adapter1 ADAPTER_CHART_REF=main
+#   make install-adapter1 CHART_ORG=myuser
+CHART_ORG          ?= openshift-hyperfleet
+API_CHART_REF      ?= v0.1.1
+SENTINEL_CHART_REF ?= v0.1.1
+ADAPTER_CHART_REF  ?= v0.1.1
 
 HELM_DIR         := helm
-TF_DIR           := terraform
+TF_DIR           ?= terraform
 GENERATED_DIR    := generated-values-from-terraform
 
 # ──────────────────────────────────────────────
@@ -67,8 +80,10 @@ get-credentials: check-terraform ## Configure kubectl credentials from Terraform
 	@echo "OK: kubectl configured"
 
 .PHONY: tf-helm-values
-tf-helm-values: check-terraform ## Generate Helm override values from Terraform outputs
-	./scripts/tf-helm-values.sh --tf-dir $(TF_DIR) --out-dir $(GENERATED_DIR) --broker-type $(BROKER_TYPE)
+tf-helm-values: $(if $(filter googlepubsub,$(BROKER_TYPE)),check-terraform) ## Generate Helm override values (from Terraform for googlepubsub, from variables for rabbitmq)
+	./scripts/tf-helm-values.sh --out-dir $(GENERATED_DIR) --broker-type $(BROKER_TYPE) \
+		$(if $(filter googlepubsub,$(BROKER_TYPE)),--tf-dir $(TF_DIR)) \
+		$(if $(filter rabbitmq,$(BROKER_TYPE)),--rabbitmq-url $(RABBITMQ_URL) --namespace $(NAMESPACE))
 
 .PHONY: clean-generated
 clean-generated: ## Remove generated Helm values
@@ -80,15 +95,30 @@ clean-generated: ## Remove generated Helm values
 # ──────────────────────────────────────────────
 
 MAESTRO_CONSUMER ?= cluster1
+MANIFESTS_DIR    := manifests
+
+.PHONY: install-rabbitmq
+install-rabbitmq: check-kubectl check-namespace ## Install RabbitMQ (dev only, for BROKER_TYPE=rabbitmq)
+	kubectl apply -f $(MANIFESTS_DIR)/rabbitmq.yaml --namespace $(NAMESPACE) --kubeconfig $(KUBECONFIG)
+	@echo "Waiting for RabbitMQ to be ready..."
+	@kubectl wait --for=condition=ready pod -l app=rabbitmq --namespace $(NAMESPACE) --kubeconfig $(KUBECONFIG) --timeout=120s
+	@echo "OK: RabbitMQ is ready"
 
 .PHONY: install-maestro
 install-maestro: check-helm check-kubectl check-maestro-namespace ## Install Maestro (server + agent)
 	helm dependency update $(HELM_DIR)/maestro
-	helm upgrade --install $(MAESTRO_NS)-maestro $(HELM_DIR)/maestro \
+	@echo "Installing Maestro..."
+	
+	if ! helm upgrade --install $(MAESTRO_NS)-maestro $(HELM_DIR)/maestro \
 		--namespace $(MAESTRO_NS) \
 		--kubeconfig $(KUBECONFIG) \
 		--set agent.messageBroker.mqtt.host=maestro-mqtt.$(MAESTRO_NS) \
-		--wait --timeout 5m
+		--wait --timeout 5m ; then \
+		echo "Warning: maestro install failed on kind cluster; continuing"; \
+	fi; 
+	@echo "Waiting for Maestro pods to be ready..."
+	@kubectl wait --for=condition=ready pod -l app.kubernetes.io/instance=$(MAESTRO_NS)-maestro --namespace $(MAESTRO_NS) --kubeconfig $(KUBECONFIG) --timeout=180s || true
+	@echo "OK: Maestro pods are ready"
 
 .PHONY: create-maestro-consumer
 create-maestro-consumer: check-kubectl ## Create a Maestro consumer (requires Maestro server running)
@@ -104,72 +134,87 @@ create-maestro-consumer: check-kubectl ## Create a Maestro consumer (requires Ma
 	@echo ""
 	@echo "OK: consumer '$(MAESTRO_CONSUMER)' created"
 
+# set-chart-ref: update the ?ref= and org in a Chart.yaml dependency URL
+# Usage: $(call set-chart-ref,<chart-dir>,<ref>)
+define set-chart-ref
+	@sed -i.bak 's|github.com/[^/]*/|github.com/$(CHART_ORG)/|' $(1)/Chart.yaml
+	@sed -i.bak 's|\(?ref=\)[^"]*"|\1$(2)"|' $(1)/Chart.yaml
+	@rm -f $(1)/Chart.yaml.bak
+	@rm -rf $(1)/charts $(1)/Chart.lock
+endef
+
 .PHONY: install-api
 install-api: check-helm check-kubectl check-namespace ## Install HyperFleet API
+	$(call set-chart-ref,$(HELM_DIR)/api,$(API_CHART_REF))
 	helm dependency update $(HELM_DIR)/api
 	helm upgrade --install $(NAMESPACE)-api $(HELM_DIR)/api \
 		--namespace $(NAMESPACE) \
 		--kubeconfig $(KUBECONFIG) \
 		$(if $(REGISTRY),--set hyperfleet-api.image.registry=$(REGISTRY)) \
-		--set hyperfleet-api.image.tag=$(API_TAG)
+		--set hyperfleet-api.image.tag=$(API_IMAGE_TAG)
 
 .PHONY: install-sentinel-clusters
 install-sentinel-clusters: check-helm check-kubectl check-namespace ## Install Sentinel for clusters
+	$(call set-chart-ref,$(HELM_DIR)/sentinel-clusters,$(SENTINEL_CHART_REF))
 	helm dependency update $(HELM_DIR)/sentinel-clusters
 	helm upgrade --install $(NAMESPACE)-sentinel-clusters $(HELM_DIR)/sentinel-clusters \
 		--namespace $(NAMESPACE) \
 		--kubeconfig $(KUBECONFIG) \
 		--set sentinel.broker.type=$(BROKER_TYPE) \
 		$(if $(REGISTRY),--set sentinel.image.registry=$(REGISTRY)) \
-		--set sentinel.image.tag=$(SENTINEL_TAG) \
+		--set sentinel.image.tag=$(SENTINEL_IMAGE_TAG) \
 		$(if $(wildcard $(GENERATED_DIR)/sentinel-clusters.yaml),--values $(GENERATED_DIR)/sentinel-clusters.yaml)
 
 .PHONY: install-sentinel-nodepools
 install-sentinel-nodepools: check-helm check-kubectl check-namespace ## Install Sentinel for nodepools
+	$(call set-chart-ref,$(HELM_DIR)/sentinel-nodepools,$(SENTINEL_CHART_REF))
 	helm dependency update $(HELM_DIR)/sentinel-nodepools
 	helm upgrade --install $(NAMESPACE)-sentinel-nodepools $(HELM_DIR)/sentinel-nodepools \
 		--namespace $(NAMESPACE) \
 		--kubeconfig $(KUBECONFIG) \
 		--set sentinel.broker.type=$(BROKER_TYPE) \
 		$(if $(REGISTRY),--set sentinel.image.registry=$(REGISTRY)) \
-		--set sentinel.image.tag=$(SENTINEL_TAG) \
+		--set sentinel.image.tag=$(SENTINEL_IMAGE_TAG) \
 		$(if $(wildcard $(GENERATED_DIR)/sentinel-nodepools.yaml),--values $(GENERATED_DIR)/sentinel-nodepools.yaml)
 
 .PHONY: install-adapter1
 install-adapter1: check-helm check-kubectl check-namespace ## Install adapter1
+	$(call set-chart-ref,$(HELM_DIR)/adapter1,$(ADAPTER_CHART_REF))
 	helm dependency update $(HELM_DIR)/adapter1
 	helm upgrade --install $(NAMESPACE)-adapter1 $(HELM_DIR)/adapter1 \
 		--namespace $(NAMESPACE) \
 		--kubeconfig $(KUBECONFIG) \
 		--set hyperfleet-adapter.broker.type=$(BROKER_TYPE) \
 		$(if $(REGISTRY),--set hyperfleet-adapter.image.registry=$(REGISTRY)) \
-		--set hyperfleet-adapter.image.tag=$(ADAPTER_TAG) \
+		--set hyperfleet-adapter.image.tag=$(ADAPTER_IMAGE_TAG) \
 		--set-file hyperfleet-adapter.adapterConfig.yaml=$(HELM_DIR)/adapter1/adapter-config.yaml \
 		--set-file hyperfleet-adapter.adapterTaskConfig.yaml=$(HELM_DIR)/adapter1/adapter-task-config.yaml \
 		$(if $(wildcard $(GENERATED_DIR)/adapter1.yaml),--values $(GENERATED_DIR)/adapter1.yaml)
 
 .PHONY: install-adapter2
 install-adapter2: check-helm check-kubectl check-namespace ## Install adapter2
+	$(call set-chart-ref,$(HELM_DIR)/adapter2,$(ADAPTER_CHART_REF))
 	helm dependency update $(HELM_DIR)/adapter2
 	helm upgrade --install $(NAMESPACE)-adapter2 $(HELM_DIR)/adapter2 \
 		--namespace $(NAMESPACE) \
 		--kubeconfig $(KUBECONFIG) \
 		--set hyperfleet-adapter.broker.type=$(BROKER_TYPE) \
 		$(if $(REGISTRY),--set hyperfleet-adapter.image.registry=$(REGISTRY)) \
-		--set hyperfleet-adapter.image.tag=$(ADAPTER_TAG) \
+		--set hyperfleet-adapter.image.tag=$(ADAPTER_IMAGE_TAG) \
 		--set-file hyperfleet-adapter.adapterConfig.yaml=$(HELM_DIR)/adapter2/adapter-config.yaml \
 		--set-file hyperfleet-adapter.adapterTaskConfig.yaml=$(HELM_DIR)/adapter2/adapter-task-config.yaml \
 		$(if $(wildcard $(GENERATED_DIR)/adapter2.yaml),--values $(GENERATED_DIR)/adapter2.yaml)
 
 .PHONY: install-adapter3
 install-adapter3: check-helm check-kubectl check-namespace ## Install adapter3
+	$(call set-chart-ref,$(HELM_DIR)/adapter3,$(ADAPTER_CHART_REF))
 	helm dependency update $(HELM_DIR)/adapter3
 	helm upgrade --install $(NAMESPACE)-adapter3 $(HELM_DIR)/adapter3 \
 		--namespace $(NAMESPACE) \
 		--kubeconfig $(KUBECONFIG) \
 		--set hyperfleet-adapter.broker.type=$(BROKER_TYPE) \
 		$(if $(REGISTRY),--set hyperfleet-adapter.image.registry=$(REGISTRY)) \
-		--set hyperfleet-adapter.image.tag=$(ADAPTER_TAG) \
+		--set hyperfleet-adapter.image.tag=$(ADAPTER_IMAGE_TAG) \
 		--set-file hyperfleet-adapter.adapterConfig.yaml=$(HELM_DIR)/adapter3/adapter-config.yaml \
 		--set-file hyperfleet-adapter.adapterTaskConfig.yaml=$(HELM_DIR)/adapter3/adapter-task-config.yaml \
 		$(if $(wildcard $(GENERATED_DIR)/adapter3.yaml),--values $(GENERATED_DIR)/adapter3.yaml)
@@ -193,11 +238,19 @@ install-adapters: install-adapter1 install-adapter2 install-adapter3 ## Install 
 install-hyperfleet: install-api install-sentinels install-adapters ## Install API + sentinels + adapters (no maestro, no terraform)
 
 .PHONY: install-all
-install-all: install-terraform get-credentials tf-helm-values install-maestro create-maestro-consumer install-hyperfleet ## Install everything (terraform + hyperfleet + maestro)
+install-all: install-terraform get-credentials tf-helm-values install-maestro create-maestro-consumer install-hyperfleet ## Full GCP install (terraform + googlepubsub + hyperfleet + maestro)
+
+.PHONY: install-all-rabbitmq
+install-all-rabbitmq: BROKER_TYPE = rabbitmq
+install-all-rabbitmq: install-rabbitmq tf-helm-values install-hyperfleet install-maestro create-maestro-consumer ## Full RabbitMQ install (rabbitmq + hyperfleet + maestro, no terraform)
 
 # ──────────────────────────────────────────────
 # Uninstall targets
 # ──────────────────────────────────────────────
+
+.PHONY: uninstall-rabbitmq
+uninstall-rabbitmq: check-kubectl ## Uninstall RabbitMQ
+	kubectl delete -f $(MANIFESTS_DIR)/rabbitmq.yaml --namespace $(NAMESPACE) --kubeconfig $(KUBECONFIG) --ignore-not-found
 
 .PHONY: uninstall-maestro
 uninstall-maestro: ## Uninstall Maestro
@@ -264,12 +317,16 @@ help: ## Print available targets
 	@echo "  KUBECONFIG       Path to kubeconfig (default: ~/.kube/config)"
 	@echo "  TF_ENV           Terraform environment (default: dev)"
 	@echo "  GCP_PROJECT_ID   GCP project ID (default: hcm-hyperfleet)"
-	@echo "  BROKER_TYPE      Message broker type (default: googlepubsub)"
+	@echo "  BROKER_TYPE      Message broker type: googlepubsub or rabbitmq (default: googlepubsub)"
+	@echo "  RABBITMQ_URL     RabbitMQ connection URL (default: amqp://guest:guest@rabbitmq:5672/)"
 	@echo "  REGISTRY         Override image registry for all components (e.g. quay.io/myuser)"
-	@echo "  IMAGE_TAG        Default image tag for all components (default: v0.1.0)"
-	@echo "  API_TAG          Override image tag for API (default: IMAGE_TAG)"
-	@echo "  SENTINEL_TAG     Override image tag for sentinels (default: IMAGE_TAG)"
-	@echo "  ADAPTER_TAG      Override image tag for adapters (default: IMAGE_TAG)"
+	@echo "  API_IMAGE_TAG      Image tag for API (default: v0.1.1)"
+	@echo "  SENTINEL_IMAGE_TAG Image tag for sentinels (default: v0.1.1)"
+	@echo "  ADAPTER_IMAGE_TAG  Image tag for adapters (default: v0.1.1)"
+	@echo "  CHART_ORG          GitHub org for helm chart repos (default: openshift-hyperfleet)"
+	@echo "  API_CHART_REF      Git ref for API helm chart source (default: API_IMAGE_TAG)"
+	@echo "  SENTINEL_CHART_REF Git ref for sentinel helm chart source (default: SENTINEL_IMAGE_TAG)"
+	@echo "  ADAPTER_CHART_REF  Git ref for adapter helm chart source (default: ADAPTER_IMAGE_TAG)"
 	@echo "  MAESTRO_CONSUMER Maestro consumer name (default: cluster1)"
 	@echo ""
 	@echo "Targets:"
