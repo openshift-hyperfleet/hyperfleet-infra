@@ -19,7 +19,7 @@ hyperfleet-adapter:
     type: googlepubsub
     googlepubsub:
       # make install will substitute this by data coming from terraform
-      projectId: CHANGE_THIS 
+      projectId: CHANGE_THIS
       # make install will substitute this by data coming from terraform
       subscriptionId: CHANGE_THIS
       # make install will substitute this by data coming from terraform
@@ -27,6 +27,12 @@ hyperfleet-adapter:
       deadLetterTopic: ""
       createTopicIfMissing: true
       createSubscriptionIfMissing: true
+    rabbitmq:
+      # make install will substitute this by data coming from tf-helm-values.sh
+      url: CHANGE_THIS
+      queue: ""
+      exchange: ""
+      routingKey: ""
 
   env:
     - name: SIMULATE_RESULT

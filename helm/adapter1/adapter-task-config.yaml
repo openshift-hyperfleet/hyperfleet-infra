@@ -110,32 +110,28 @@ spec:
             - type: "Available"
               status:
                 expression: |
-                  has(resources.resource0.data.clusterId) ? "True" : "False"
+                  has(resources.resource0.data.cluster_id) ? "True" : "False"
               reason:
                 expression: |
-                  has(resources.resource0.data.clusterId) 
+                  has(resources.resource0.data.cluster_id) 
                     ? "ConfigMap data available"
                     : "ConfigMap data not yet available"
               message:
                 expression: |
-                  has(resources.resource0.data.clusterId) 
+                  has(resources.resource0.data.cluster_id) 
                     ? "ConfigMap data available"
                     : "ConfigMap data not yet available"
             # Health: Adapter execution status (runtime)
             - type: "Health"
               status:
                 expression: |
-                  has(resources.resource0.data.clusterId) ? "True" : "False"
+                  adapter.?executionStatus.orValue("") == "success" ? "True" : (adapter.?executionStatus.orValue("") == "failed" ? "False" : "Unknown")
               reason:
                 expression: |
-                  has(resources.resource0.data.clusterId) 
-                    ? "ConfigMap data available"
-                    : "ConfigMap data not yet available"
+                  adapter.?errorReason.orValue("") != "" ? adapter.?errorReason.orValue("") : "Healthy"
               message:
                 expression: |
-                  has(resources.resource0.data.clusterId) 
-                    ? "ConfigMap data available"
-                    : "ConfigMap data not yet available"
+                  adapter.?errorMessage.orValue("") != "" ? adapter.?errorMessage.orValue("") : "All adapter operations completed successfully"
           # Event generation ID metadata field needs to use expression to avoid interpolation issues
           observed_generation:
             expression: "generation"

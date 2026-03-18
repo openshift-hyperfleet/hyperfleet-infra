@@ -56,3 +56,4 @@ helm/api/charts/*
 helm/maestro/charts/*
 helm/sentinel-clusters/charts/*
 helm/sentinel-nodepools/charts/*
+helm/*/Chart.lock

@@ -8,4 +8,4 @@ appVersion: "0.1.0"
 dependencies:
   - name: hyperfleet-adapter
     version: "1.0.0"
-    repository: "git+https://github.com/openshift-hyperfleet/hyperfleet-adapter@charts?ref=main"
+    repository: "git+https://github.com/openshift-hyperfleet/hyperfleet-adapter@charts?ref=v0.1.1"
