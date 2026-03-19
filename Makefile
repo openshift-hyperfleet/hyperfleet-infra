@@ -136,7 +136,7 @@ create-maestro-consumer: check-kubectl ## Create a Maestro consumer (requires Ma
 		--namespace $(MAESTRO_NS) \
 		--kubeconfig $(KUBECONFIG) \
 		--image=curlimages/curl:latest -- \
-		curl -sv -X POST \
+		curl -s -X POST \
 		-H "Content-Type: application/json" \
 		http://maestro.$(MAESTRO_NS).svc.cluster.local:8000/api/maestro/v1/consumers \
 		-d '{"name": "$(MAESTRO_CONSUMER)"}'
@@ -367,9 +367,15 @@ ci-dry-run: ci-validate ## Layer 2: Static + dry-run validation (no credentials 
 .PHONY: health-check
 health-check: check-kubectl ## Verify all HyperFleet components are healthy
 	@echo "Checking HyperFleet components..."
-	@kubectl wait --for=condition=ready pods --all --namespace $(NAMESPACE) --kubeconfig $(KUBECONFIG) --timeout=300s
+	@for deploy in $$(kubectl get deployments --namespace $(NAMESPACE) --kubeconfig $(KUBECONFIG) -o name); do \
+		echo "  Waiting for $$deploy..."; \
+		kubectl rollout status $$deploy --namespace $(NAMESPACE) --kubeconfig $(KUBECONFIG) --timeout=300s; \
+	done
 	@echo "Checking Maestro components..."
-	@kubectl wait --for=condition=ready pods --all --namespace $(MAESTRO_NS) --kubeconfig $(KUBECONFIG) --timeout=300s
+	@for deploy in $$(kubectl get deployments --namespace $(MAESTRO_NS) --kubeconfig $(KUBECONFIG) -o name); do \
+		echo "  Waiting for $$deploy..."; \
+		kubectl rollout status $$deploy --namespace $(MAESTRO_NS) --kubeconfig $(KUBECONFIG) --timeout=300s; \
+	done
 	@echo "OK: all components healthy"
 
 .PHONY: destroy-terraform
