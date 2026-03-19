@@ -12,10 +12,13 @@ TF_VARS          ?= envs/gke/$(TF_ENV).tfvars
 GCP_PROJECT_ID   ?= hcm-hyperfleet
 BROKER_TYPE      ?= googlepubsub
 RABBITMQ_URL     ?= amqp://guest:guest@rabbitmq:5672/
-REGISTRY         ?= quay.io/openshift-hyperfleet
-API_IMAGE_TAG      ?= v0.1.1
-SENTINEL_IMAGE_TAG ?= v0.1.1
-ADAPTER_IMAGE_TAG  ?= v0.1.1
+REGISTRY             ?= registry.ci.openshift.org
+API_REPOSITORY       ?= ci/hyperfleet-api
+SENTINEL_REPOSITORY  ?= ci/hyperfleet-sentinel
+ADAPTER_REPOSITORY   ?= ci/hyperfleet-adapter
+API_IMAGE_TAG        ?= latest
+SENTINEL_IMAGE_TAG   ?= latest
+ADAPTER_IMAGE_TAG    ?= latest
 DRY_RUN            ?=
 AUTO_APPROVE       ?=
 # Derived flags from boolean variables (only true/1 are treated as truthy)
@@ -30,9 +33,9 @@ AUTO_APPROVE_FLAG := $(if $(filter $(TRUTHY_VALUES),$(strip $(AUTO_APPROVE))),-a
 #   make install-adapter1 ADAPTER_CHART_REF=main
 #   make install-adapter1 CHART_ORG=myuser
 CHART_ORG          ?= openshift-hyperfleet
-API_CHART_REF      ?= v0.1.1
-SENTINEL_CHART_REF ?= v0.1.1
-ADAPTER_CHART_REF  ?= v0.1.1
+API_CHART_REF      ?= main
+SENTINEL_CHART_REF ?= main
+ADAPTER_CHART_REF  ?= main
 
 HELM_DIR         := helm
 TF_DIR           ?= terraform
@@ -157,6 +160,7 @@ install-api: check-helm check-kubectl check-namespace ## Install HyperFleet API
 		--namespace $(NAMESPACE) \
 		--kubeconfig $(KUBECONFIG) \
 		$(if $(REGISTRY),--set hyperfleet-api.image.registry=$(REGISTRY)) \
+		$(if $(API_REPOSITORY),--set hyperfleet-api.image.repository=$(API_REPOSITORY)) \
 		--set hyperfleet-api.image.tag=$(API_IMAGE_TAG)
 
 .PHONY: install-sentinel-clusters
@@ -168,6 +172,7 @@ install-sentinel-clusters: check-helm check-kubectl check-namespace ## Install S
 		--kubeconfig $(KUBECONFIG) \
 		--set sentinel.broker.type=$(BROKER_TYPE) \
 		$(if $(REGISTRY),--set sentinel.image.registry=$(REGISTRY)) \
+		$(if $(SENTINEL_REPOSITORY),--set sentinel.image.repository=$(SENTINEL_REPOSITORY)) \
 		--set sentinel.image.tag=$(SENTINEL_IMAGE_TAG) \
 		$(if $(wildcard $(GENERATED_DIR)/sentinel-clusters.yaml),--values $(GENERATED_DIR)/sentinel-clusters.yaml)
 
@@ -180,6 +185,7 @@ install-sentinel-nodepools: check-helm check-kubectl check-namespace ## Install 
 		--kubeconfig $(KUBECONFIG) \
 		--set sentinel.broker.type=$(BROKER_TYPE) \
 		$(if $(REGISTRY),--set sentinel.image.registry=$(REGISTRY)) \
+		$(if $(SENTINEL_REPOSITORY),--set sentinel.image.repository=$(SENTINEL_REPOSITORY)) \
 		--set sentinel.image.tag=$(SENTINEL_IMAGE_TAG) \
 		$(if $(wildcard $(GENERATED_DIR)/sentinel-nodepools.yaml),--values $(GENERATED_DIR)/sentinel-nodepools.yaml)
 
@@ -192,6 +198,7 @@ install-adapter1: check-helm check-kubectl check-namespace ## Install adapter1
 		--kubeconfig $(KUBECONFIG) \
 		--set hyperfleet-adapter.broker.type=$(BROKER_TYPE) \
 		$(if $(REGISTRY),--set hyperfleet-adapter.image.registry=$(REGISTRY)) \
+		$(if $(ADAPTER_REPOSITORY),--set hyperfleet-adapter.image.repository=$(ADAPTER_REPOSITORY)) \
 		--set hyperfleet-adapter.image.tag=$(ADAPTER_IMAGE_TAG) \
 		--set-file hyperfleet-adapter.adapterConfig.yaml=$(HELM_DIR)/adapter1/adapter-config.yaml \
 		--set-file hyperfleet-adapter.adapterTaskConfig.yaml=$(HELM_DIR)/adapter1/adapter-task-config.yaml \
@@ -206,6 +213,7 @@ install-adapter2: check-helm check-kubectl check-namespace ## Install adapter2
 		--kubeconfig $(KUBECONFIG) \
 		--set hyperfleet-adapter.broker.type=$(BROKER_TYPE) \
 		$(if $(REGISTRY),--set hyperfleet-adapter.image.registry=$(REGISTRY)) \
+		$(if $(ADAPTER_REPOSITORY),--set hyperfleet-adapter.image.repository=$(ADAPTER_REPOSITORY)) \
 		--set hyperfleet-adapter.image.tag=$(ADAPTER_IMAGE_TAG) \
 		--set-file hyperfleet-adapter.adapterConfig.yaml=$(HELM_DIR)/adapter2/adapter-config.yaml \
 		--set-file hyperfleet-adapter.adapterTaskConfig.yaml=$(HELM_DIR)/adapter2/adapter-task-config.yaml \
@@ -220,6 +228,7 @@ install-adapter3: check-helm check-kubectl check-namespace ## Install adapter3
 		--kubeconfig $(KUBECONFIG) \
 		--set hyperfleet-adapter.broker.type=$(BROKER_TYPE) \
 		$(if $(REGISTRY),--set hyperfleet-adapter.image.registry=$(REGISTRY)) \
+		$(if $(ADAPTER_REPOSITORY),--set hyperfleet-adapter.image.repository=$(ADAPTER_REPOSITORY)) \
 		--set hyperfleet-adapter.image.tag=$(ADAPTER_IMAGE_TAG) \
 		--set-file hyperfleet-adapter.adapterConfig.yaml=$(HELM_DIR)/adapter3/adapter-config.yaml \
 		--set-file hyperfleet-adapter.adapterTaskConfig.yaml=$(HELM_DIR)/adapter3/adapter-task-config.yaml \
@@ -303,21 +312,25 @@ endef
 validate-helm-charts: check-helm ## Render all Helm charts with helm template (no cluster required)
 	$(call validate-chart,api,$(API_CHART_REF),\
 		$(if $(REGISTRY),--set hyperfleet-api.image.registry=$(REGISTRY)) \
+		$(if $(API_REPOSITORY),--set hyperfleet-api.image.repository=$(API_REPOSITORY)) \
 		--set hyperfleet-api.image.tag=$(API_IMAGE_TAG))
 
 	$(call validate-chart,sentinel-clusters,$(SENTINEL_CHART_REF),\
 		--set sentinel.broker.type=$(BROKER_TYPE) \
 		$(if $(REGISTRY),--set sentinel.image.registry=$(REGISTRY)) \
+		$(if $(SENTINEL_REPOSITORY),--set sentinel.image.repository=$(SENTINEL_REPOSITORY)) \
 		--set sentinel.image.tag=$(SENTINEL_IMAGE_TAG))
 
 	$(call validate-chart,sentinel-nodepools,$(SENTINEL_CHART_REF),\
 		--set sentinel.broker.type=$(BROKER_TYPE) \
 		$(if $(REGISTRY),--set sentinel.image.registry=$(REGISTRY)) \
+		$(if $(SENTINEL_REPOSITORY),--set sentinel.image.repository=$(SENTINEL_REPOSITORY)) \
 		--set sentinel.image.tag=$(SENTINEL_IMAGE_TAG))
 
 	$(call validate-chart,adapter1,$(ADAPTER_CHART_REF),\
 		--set hyperfleet-adapter.broker.type=$(BROKER_TYPE) \
 		$(if $(REGISTRY),--set hyperfleet-adapter.image.registry=$(REGISTRY)) \
+		$(if $(ADAPTER_REPOSITORY),--set hyperfleet-adapter.image.repository=$(ADAPTER_REPOSITORY)) \
 		--set hyperfleet-adapter.image.tag=$(ADAPTER_IMAGE_TAG) \
 		--set-file hyperfleet-adapter.adapterConfig.yaml=$(HELM_DIR)/adapter1/adapter-config.yaml \
 		--set-file hyperfleet-adapter.adapterTaskConfig.yaml=$(HELM_DIR)/adapter1/adapter-task-config.yaml)
@@ -325,6 +338,7 @@ validate-helm-charts: check-helm ## Render all Helm charts with helm template (n
 	$(call validate-chart,adapter2,$(ADAPTER_CHART_REF),\
 		--set hyperfleet-adapter.broker.type=$(BROKER_TYPE) \
 		$(if $(REGISTRY),--set hyperfleet-adapter.image.registry=$(REGISTRY)) \
+		$(if $(ADAPTER_REPOSITORY),--set hyperfleet-adapter.image.repository=$(ADAPTER_REPOSITORY)) \
 		--set hyperfleet-adapter.image.tag=$(ADAPTER_IMAGE_TAG) \
 		--set-file hyperfleet-adapter.adapterConfig.yaml=$(HELM_DIR)/adapter2/adapter-config.yaml \
 		--set-file hyperfleet-adapter.adapterTaskConfig.yaml=$(HELM_DIR)/adapter2/adapter-task-config.yaml)
@@ -332,6 +346,7 @@ validate-helm-charts: check-helm ## Render all Helm charts with helm template (n
 	$(call validate-chart,adapter3,$(ADAPTER_CHART_REF),\
 		--set hyperfleet-adapter.broker.type=$(BROKER_TYPE) \
 		$(if $(REGISTRY),--set hyperfleet-adapter.image.registry=$(REGISTRY)) \
+		$(if $(ADAPTER_REPOSITORY),--set hyperfleet-adapter.image.repository=$(ADAPTER_REPOSITORY)) \
 		--set hyperfleet-adapter.image.tag=$(ADAPTER_IMAGE_TAG) \
 		--set-file hyperfleet-adapter.adapterConfig.yaml=$(HELM_DIR)/adapter3/adapter-config.yaml \
 		--set-file hyperfleet-adapter.adapterTaskConfig.yaml=$(HELM_DIR)/adapter3/adapter-task-config.yaml)
@@ -444,14 +459,17 @@ help: ## Print available targets
 	@echo "  GCP_PROJECT_ID   GCP project ID (default: hcm-hyperfleet)"
 	@echo "  BROKER_TYPE      Message broker type: googlepubsub or rabbitmq (default: googlepubsub)"
 	@echo "  RABBITMQ_URL     RabbitMQ connection URL (default: amqp://guest:guest@rabbitmq:5672/)"
-	@echo "  REGISTRY         Override image registry for all components (e.g. quay.io/myuser)"
-	@echo "  API_IMAGE_TAG      Image tag for API (default: v0.1.1)"
-	@echo "  SENTINEL_IMAGE_TAG Image tag for sentinels (default: v0.1.1)"
-	@echo "  ADAPTER_IMAGE_TAG  Image tag for adapters (default: v0.1.1)"
+	@echo "  REGISTRY           Override image registry for all components (default: registry.ci.openshift.org)"
+	@echo "  API_REPOSITORY     Override API image repository (default: ci/hyperfleet-api)"
+	@echo "  SENTINEL_REPOSITORY Override sentinel image repository (default: ci/hyperfleet-sentinel)"
+	@echo "  ADAPTER_REPOSITORY Override adapter image repository (default: ci/hyperfleet-adapter)"
+	@echo "  API_IMAGE_TAG      Image tag for API (default: latest)"
+	@echo "  SENTINEL_IMAGE_TAG Image tag for sentinels (default: latest)"
+	@echo "  ADAPTER_IMAGE_TAG  Image tag for adapters (default: latest)"
 	@echo "  CHART_ORG          GitHub org for helm chart repos (default: openshift-hyperfleet)"
-	@echo "  API_CHART_REF      Git ref for API helm chart source (default: API_IMAGE_TAG)"
-	@echo "  SENTINEL_CHART_REF Git ref for sentinel helm chart source (default: SENTINEL_IMAGE_TAG)"
-	@echo "  ADAPTER_CHART_REF  Git ref for adapter helm chart source (default: ADAPTER_IMAGE_TAG)"
+	@echo "  API_CHART_REF      Git ref for API helm chart source (default: main)"
+	@echo "  SENTINEL_CHART_REF Git ref for sentinel helm chart source (default: main)"
+	@echo "  ADAPTER_CHART_REF  Git ref for adapter helm chart source (default: main)"
 	@echo "  MAESTRO_CONSUMER Maestro consumer name (default: cluster1)"
 	@echo "  DRY_RUN          Set to true or 1 for Helm dry-run mode (default: empty)"
 	@echo "  AUTO_APPROVE     Set to true or 1 for non-interactive Terraform (default: empty)"

@@ -68,7 +68,7 @@ sentinel:
     type: ${BROKER_TYPE}
     topic: ${NS}-${resource_type}
     googlepubsub:
-      project_id: ${PROJECT_ID}
+      projectId: ${PROJECT_ID}
 EOF
     echo "  wrote ${file}"
   done

@@ -141,11 +141,13 @@ Override with `VAR=value`, e.g. `make install-hyperfleet BROKER_TYPE=rabbitmq`:
 | `MAESTRO_NS` | `maestro` | Kubernetes namespace for Maestro |
 | `BROKER_TYPE` | `googlepubsub` | Message broker type (`googlepubsub` or `rabbitmq`) |
 | `RABBITMQ_URL` | `amqp://guest:guest@rabbitmq:5672/` | RabbitMQ connection URL (only used when `BROKER_TYPE=rabbitmq`) |
-| `REGISTRY` | `quay.io/openshift-hyperfleet` | Override image registry for API, Sentinels, and Adapters (e.g. `quay.io/myuser`) |
-| `IMAGE_TAG` | `v0.1.0` | Default image tag for all components (API, Sentinels, Adapters) |
-| `API_TAG` | `IMAGE_TAG` | Override image tag for the API only |
-| `SENTINEL_TAG` | `IMAGE_TAG` | Override image tag for Sentinels only |
-| `ADAPTER_TAG` | `IMAGE_TAG` | Override image tag for Adapters only |
+| `REGISTRY` | `registry.ci.openshift.org` | Override image registry for all components |
+| `API_REPOSITORY` | `ci/hyperfleet-api` | Override API image repository |
+| `SENTINEL_REPOSITORY` | `ci/hyperfleet-sentinel` | Override sentinel image repository |
+| `ADAPTER_REPOSITORY` | `ci/hyperfleet-adapter` | Override adapter image repository |
+| `API_IMAGE_TAG` | `latest` | Override image tag for the API |
+| `SENTINEL_IMAGE_TAG` | `latest` | Override image tag for Sentinels |
+| `ADAPTER_IMAGE_TAG` | `latest` | Override image tag for Adapters |
 | `MAESTRO_CONSUMER` | `cluster1` | Maestro consumer name for `create-maestro-consumer` |
 
 ## Repository Structure
