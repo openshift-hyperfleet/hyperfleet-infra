@@ -157,7 +157,6 @@ install-api: check-helm check-kubectl check-namespace ## Install HyperFleet API
 		--namespace $(NAMESPACE) \
 		--kubeconfig $(KUBECONFIG) \
 		$(if $(REGISTRY),--set hyperfleet-api.image.registry=$(REGISTRY)) \
-		$(if $(REGISTRY),--set hyperfleet-api.image.repository=hyperfleet-api) \
 		--set hyperfleet-api.image.tag=$(API_IMAGE_TAG)
 
 .PHONY: install-sentinel-clusters
@@ -304,7 +303,6 @@ endef
 validate-helm-charts: check-helm ## Render all Helm charts with helm template (no cluster required)
 	$(call validate-chart,api,$(API_CHART_REF),\
 		$(if $(REGISTRY),--set hyperfleet-api.image.registry=$(REGISTRY)) \
-		$(if $(REGISTRY),--set hyperfleet-api.image.repository=hyperfleet-api) \
 		--set hyperfleet-api.image.tag=$(API_IMAGE_TAG))
 
 	$(call validate-chart,sentinel-clusters,$(SENTINEL_CHART_REF),\
