@@ -132,14 +132,19 @@ install-maestro: check-helm check-kubectl check-maestro-namespace ## Install Mae
 .PHONY: create-maestro-consumer
 create-maestro-consumer: check-kubectl ## Create a Maestro consumer (requires Maestro server running)
 	@echo "Creating Maestro consumer '$(MAESTRO_CONSUMER)'..."
-	@kubectl run maestro-consumer-create --rm -i --restart=Never \
+	@kubectl delete pod maestro-consumer-create --namespace $(MAESTRO_NS) --kubeconfig $(KUBECONFIG) --ignore-not-found >/dev/null 2>&1
+	@kubectl run maestro-consumer-create --restart=Never \
 		--namespace $(MAESTRO_NS) \
 		--kubeconfig $(KUBECONFIG) \
 		--image=curlimages/curl:latest -- \
-		curl -s -X POST \
+		curl -sf -X POST \
 		-H "Content-Type: application/json" \
 		http://maestro.$(MAESTRO_NS).svc.cluster.local:8000/api/maestro/v1/consumers \
 		-d '{"name": "$(MAESTRO_CONSUMER)"}'
+	@kubectl wait --for=condition=Ready pod/maestro-consumer-create --namespace $(MAESTRO_NS) --kubeconfig $(KUBECONFIG) --timeout=60s 2>/dev/null || true
+	@kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/maestro-consumer-create --namespace $(MAESTRO_NS) --kubeconfig $(KUBECONFIG) --timeout=60s
+	@kubectl logs maestro-consumer-create --namespace $(MAESTRO_NS) --kubeconfig $(KUBECONFIG)
+	@kubectl delete pod maestro-consumer-create --namespace $(MAESTRO_NS) --kubeconfig $(KUBECONFIG) --ignore-not-found >/dev/null 2>&1
 	@echo ""
 	@echo "OK: consumer '$(MAESTRO_CONSUMER)' created"
 
@@ -367,9 +372,19 @@ ci-dry-run: ci-validate ## Layer 2: Static + dry-run validation (no credentials 
 .PHONY: health-check
 health-check: check-kubectl ## Verify all HyperFleet components are healthy
 	@echo "Checking HyperFleet components..."
-	@kubectl wait --for=condition=ready pods --all --namespace $(NAMESPACE) --kubeconfig $(KUBECONFIG) --timeout=300s
+	@deploys=$$(kubectl get deployments --namespace $(NAMESPACE) --kubeconfig $(KUBECONFIG) -o name) && \
+		[ -n "$$deploys" ] || { echo "ERROR: no deployments found in namespace $(NAMESPACE)"; exit 1; }; \
+		for deploy in $$deploys; do \
+			echo "  Waiting for $$deploy..."; \
+			kubectl rollout status $$deploy --namespace $(NAMESPACE) --kubeconfig $(KUBECONFIG) --timeout=300s || exit 1; \
+		done
 	@echo "Checking Maestro components..."
-	@kubectl wait --for=condition=ready pods --all --namespace $(MAESTRO_NS) --kubeconfig $(KUBECONFIG) --timeout=300s
+	@deploys=$$(kubectl get deployments --namespace $(MAESTRO_NS) --kubeconfig $(KUBECONFIG) -o name) && \
+		[ -n "$$deploys" ] || { echo "ERROR: no deployments found in namespace $(MAESTRO_NS)"; exit 1; }; \
+		for deploy in $$deploys; do \
+			echo "  Waiting for $$deploy..."; \
+			kubectl rollout status $$deploy --namespace $(MAESTRO_NS) --kubeconfig $(KUBECONFIG) --timeout=300s || exit 1; \
+		done
 	@echo "OK: all components healthy"
 
 .PHONY: destroy-terraform
