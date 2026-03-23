@@ -134,13 +134,13 @@ create-maestro-consumer: check-kubectl ## Create a Maestro consumer (requires Ma
 	@echo "Creating Maestro consumer '$(MAESTRO_CONSUMER)'..."
 	@for i in 1 2 3 4 5; do \
 		exists=$$(kubectl exec deploy/maestro --namespace $(MAESTRO_NS) --kubeconfig $(KUBECONFIG) -- \
-			curl -sS http://maestro.$(MAESTRO_NS).svc.cluster.local:8000/api/maestro/v1/consumers \
-			2>/dev/null | grep -c '"name":"$(MAESTRO_CONSUMER)"') 2>/dev/null || true; \
+			curl -sS --connect-timeout 5 --max-time 10 http://maestro.$(MAESTRO_NS).svc.cluster.local:8000/api/maestro/v1/consumers \
+			2>/dev/null | grep -F -c -- '"name":"$(MAESTRO_CONSUMER)"') 2>/dev/null || true; \
 		if [ "$$exists" -gt 0 ]; then \
 			echo "OK: consumer '$(MAESTRO_CONSUMER)' already exists"; exit 0; \
 		fi; \
 		status=$$(kubectl exec deploy/maestro --namespace $(MAESTRO_NS) --kubeconfig $(KUBECONFIG) -- \
-			curl -sS -o /dev/null -w '%{http_code}' -X POST \
+			curl -sS --connect-timeout 5 --max-time 10 -o /dev/null -w '%{http_code}' -X POST \
 			-H "Content-Type: application/json" \
 			http://maestro.$(MAESTRO_NS).svc.cluster.local:8000/api/maestro/v1/consumers \
 			-d '{"name": "$(MAESTRO_CONSUMER)"}' 2>/dev/null) 2>/dev/null || status="error"; \
