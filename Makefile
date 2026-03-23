@@ -133,13 +133,22 @@ install-maestro: check-helm check-kubectl check-maestro-namespace ## Install Mae
 create-maestro-consumer: check-kubectl ## Create a Maestro consumer (requires Maestro server running)
 	@echo "Creating Maestro consumer '$(MAESTRO_CONSUMER)'..."
 	@for i in 1 2 3 4 5; do \
-		kubectl exec deploy/maestro --namespace $(MAESTRO_NS) --kubeconfig $(KUBECONFIG) -- \
-			curl -sSf -X POST \
+		exists=$$(kubectl exec deploy/maestro --namespace $(MAESTRO_NS) --kubeconfig $(KUBECONFIG) -- \
+			curl -sS --connect-timeout 5 --max-time 10 http://maestro.$(MAESTRO_NS).svc.cluster.local:8000/api/maestro/v1/consumers \
+			2>/dev/null | grep -F -c -- '"name":"$(MAESTRO_CONSUMER)"') 2>/dev/null || true; \
+		if [ "$$exists" -gt 0 ]; then \
+			echo "OK: consumer '$(MAESTRO_CONSUMER)' already exists"; exit 0; \
+		fi; \
+		status=$$(kubectl exec deploy/maestro --namespace $(MAESTRO_NS) --kubeconfig $(KUBECONFIG) -- \
+			curl -sS --connect-timeout 5 --max-time 10 -o /dev/null -w '%{http_code}' -X POST \
 			-H "Content-Type: application/json" \
 			http://maestro.$(MAESTRO_NS).svc.cluster.local:8000/api/maestro/v1/consumers \
-			-d '{"name": "$(MAESTRO_CONSUMER)"}' && { echo ""; echo "OK: consumer '$(MAESTRO_CONSUMER)' created"; exit 0; }; \
-		echo "  Attempt $$i failed, retrying in 5s..."; \
-		sleep 5; \
+			-d '{"name": "$(MAESTRO_CONSUMER)"}' 2>/dev/null) 2>/dev/null || status="error"; \
+		case "$$status" in \
+			201) echo "OK: consumer '$(MAESTRO_CONSUMER)' created"; exit 0;; \
+			409) echo "WARNING: consumer '$(MAESTRO_CONSUMER)' already exists (race condition)"; exit 0;; \
+			*) echo "  Attempt $$i failed (status: $$status), retrying in 5s..."; sleep 5;; \
+		esac; \
 	done; \
 	echo "ERROR: failed to create Maestro consumer after 5 attempts"; exit 1
 
