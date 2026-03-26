@@ -8,4 +8,4 @@ appVersion: "0.0.0-dev"
 dependencies:
   - name: hyperfleet-sentinel
     version: "1.0.0"
-    repository: "git+https://github.com/openshift-hyperfleet/hyperfleet-sentinel@charts?ref=main"
+    repository: "git+https://github.com/openshift-hyperfleet/hyperfleet-sentinel@charts?ref=release-0.2"

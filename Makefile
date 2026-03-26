@@ -16,9 +16,9 @@ REGISTRY             ?= registry.ci.openshift.org
 API_REPOSITORY       ?= ci/hyperfleet-api
 SENTINEL_REPOSITORY  ?= ci/hyperfleet-sentinel
 ADAPTER_REPOSITORY   ?= ci/hyperfleet-adapter
-API_IMAGE_TAG        ?= latest
-SENTINEL_IMAGE_TAG   ?= latest
-ADAPTER_IMAGE_TAG    ?= latest
+API_IMAGE_TAG        ?= release-0.2
+SENTINEL_IMAGE_TAG   ?= release-0.2
+ADAPTER_IMAGE_TAG    ?= release-0.2
 DRY_RUN            ?=
 AUTO_APPROVE       ?=
 # Derived flags from boolean variables (only true/1 are treated as truthy)
@@ -30,12 +30,12 @@ AUTO_APPROVE_FLAG := $(if $(filter $(TRUTHY_VALUES),$(strip $(AUTO_APPROVE))),-a
 # Chart refs are independent of image tags so that overriding an image tag
 # (e.g., make install-api API_IMAGE_TAG=dev-abc123) does not retarget charts.
 # Override chart refs explicitly when needed:
-#   make install-adapter1 ADAPTER_CHART_REF=main
+#   make install-adapter1 ADAPTER_CHART_REF=release-0.2
 #   make install-adapter1 CHART_ORG=myuser
 CHART_ORG          ?= openshift-hyperfleet
-API_CHART_REF      ?= main
-SENTINEL_CHART_REF ?= main
-ADAPTER_CHART_REF  ?= main
+API_CHART_REF      ?= release-0.2
+SENTINEL_CHART_REF ?= release-0.2
+ADAPTER_CHART_REF  ?= release-0.2
 
 HELM_DIR         := helm
 TF_DIR           ?= terraform
@@ -482,13 +482,13 @@ help: ## Print available targets
 	@echo "  API_REPOSITORY     Override API image repository (default: ci/hyperfleet-api)"
 	@echo "  SENTINEL_REPOSITORY Override sentinel image repository (default: ci/hyperfleet-sentinel)"
 	@echo "  ADAPTER_REPOSITORY Override adapter image repository (default: ci/hyperfleet-adapter)"
-	@echo "  API_IMAGE_TAG      Image tag for API (default: latest)"
-	@echo "  SENTINEL_IMAGE_TAG Image tag for sentinels (default: latest)"
-	@echo "  ADAPTER_IMAGE_TAG  Image tag for adapters (default: latest)"
+	@echo "  API_IMAGE_TAG      Image tag for API (default: release-0.2)"
+	@echo "  SENTINEL_IMAGE_TAG Image tag for sentinels (default: release-0.2)"
+	@echo "  ADAPTER_IMAGE_TAG  Image tag for adapters (default: release-0.2)"
 	@echo "  CHART_ORG          GitHub org for helm chart repos (default: openshift-hyperfleet)"
-	@echo "  API_CHART_REF      Git ref for API helm chart source (default: main)"
-	@echo "  SENTINEL_CHART_REF Git ref for sentinel helm chart source (default: main)"
-	@echo "  ADAPTER_CHART_REF  Git ref for adapter helm chart source (default: main)"
+	@echo "  API_CHART_REF      Git ref for API helm chart source (default: release-0.2)"
+	@echo "  SENTINEL_CHART_REF Git ref for sentinel helm chart source (default: release-0.2)"
+	@echo "  ADAPTER_CHART_REF  Git ref for adapter helm chart source (default: release-0.2)"
 	@echo "  MAESTRO_CONSUMER Maestro consumer name (default: cluster1)"
 	@echo "  DRY_RUN          Set to true or 1 for Helm dry-run mode (default: empty)"
 	@echo "  AUTO_APPROVE     Set to true or 1 for non-interactive Terraform (default: empty)"
