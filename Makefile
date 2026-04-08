@@ -1,12 +1,14 @@
 
 .DEFAULT_GOAL := help
 
-# Possible envs are gcp, e2e-gcp, kind, e2e-kind
+# Possible envs are gcp, e2e-gcp, kind, e2e-kind, oci
 # Default to gcp
 HELMFILE_ENV ?= gcp
 
 
-ifeq ($(findstring gcp,$(HELMFILE_ENV)),)
+ifeq ($(HELMFILE_ENV),oci)
+	-include env.oci
+else ifeq ($(findstring gcp,$(HELMFILE_ENV)),)
 	-include env.kind
 else
 	-include env.gcp
@@ -273,8 +275,9 @@ check-helmfile-env-generated: ## Check that the generated directory exists based
 	elif [ "$(HELMFILE_ENV)" = "kind" ]; then \
 		test -d $(GENERATED_RABBITMQ_DIR) || { echo "ERROR: generated-values-rabbitmq directory does not exist"; exit 1; }; \
 		echo "OK: generated-values-rabbitmq directory exists"; \
+	else \
+		echo "OK: no generated values needed for environment: $(HELMFILE_ENV)"; \
 	fi
-	@echo "OK: Did not need to validate generated values for environment: $(HELMFILE_ENV)"
 
 
 .PHONY: check-kubectl-context
@@ -299,9 +302,12 @@ check-kubectl-context: check-kubectl ## Verify kubectl context matches HELMFILE_
 				exit 1; \
 			fi \
 			;; \
+		oci) \
+			echo "OK: connected to OCI/OKE cluster (context: $$CONTEXT)"; \
+			;; \
 		*) \
 			echo "ERROR: invalid HELMFILE_ENV: $(HELMFILE_ENV)"; \
-			echo "       Valid values: gcp, e2e-gcp, kind, e2e-kind"; \
+			echo "       Valid values: gcp, e2e-gcp, kind, e2e-kind, oci"; \
 			exit 1 \
 			;; \
 	esac \
@@ -372,7 +378,7 @@ help: ## Show this help message
 	@echo ""
 	@echo "Usage: make [target] [VARIABLE=value ...]"
 	@echo ""
-	@echo "Environment: HELMFILE_ENV=$(HELMFILE_ENV) (gcp|kind|e2e-gcp|e2e-kind)"
+	@echo "Environment: HELMFILE_ENV=$(HELMFILE_ENV) (gcp|kind|e2e-gcp|e2e-kind|oci)"
 	@echo ""
 	@awk '/^# ====/ { \
 		section = $$0; \
@@ -396,6 +402,16 @@ help: ## Show this help message
 	}' $(MAKEFILE_LIST)
 
 
+
+# ==== OCI/OKE Deployment Targets ====
+
+.PHONY: install-all-oci
+install-all-oci: check-helmfile-env ## Full OCI/OKE install (rabbitmq + api + sentinel + adapter1 via helmfile)
+	helmfile -f helmfile/helmfile.yaml.gotmpl -e $(HELMFILE_ENV) apply
+
+.PHONY: uninstall-all-oci
+uninstall-all-oci: check-helmfile-env ## Uninstall all OCI components
+	helmfile -f helmfile/helmfile.yaml.gotmpl -e $(HELMFILE_ENV) destroy
 
 # ==== CI Targets ====
 # ci-dry-run: validation on terraform and helm plugins and maestro helm chart

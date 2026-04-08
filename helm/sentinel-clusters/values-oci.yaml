@@ -1,0 +1,24 @@
+# OCI/OKE overrides for Sentinel (v0.2.0 config format)
+# The v0.2.0 binary uses flat config (hyperfleetApi under config, not clients)
+
+hyperfleet-sentinel:
+  config:
+    resourceType: clusters
+    resourceSelector: []
+
+    hyperfleetApi:
+      baseUrl: http://hyperfleet-api:8000
+      timeout: 5s
+
+  broker:
+    type: rabbitmq
+    topic: hyperfleet-clusters
+    rabbitmq:
+      url: amqp://guest:guest@rabbitmq:5672/
+      exchangeType: topic
+
+  monitoring:
+    podMonitoring:
+      enabled: false
+    prometheusRule:
+      enabled: false

@@ -1,0 +1,5 @@
+sentinels:
+  - name: clusters
+    values:
+      - config:
+          resourceType: clusters
