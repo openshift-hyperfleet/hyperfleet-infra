@@ -1,0 +1,65 @@
+# Values for adapter-hypershift
+# Creates HostedCluster resources on a remote HyperShift management cluster
+
+hyperfleet-adapter:
+  image:
+    registry: CHANGE_ME
+    repository: CHANGE_ME
+    tag: latest
+
+  adapterConfig:
+    create: true
+    log:
+      level: debug
+
+  adapterTaskConfig:
+    create: true
+
+  broker:
+    type: googlepubsub
+    googlepubsub:
+      projectId: CHANGE_ME
+      subscriptionId: CHANGE_ME
+      topic: CHANGE_ME
+      deadLetterTopic: ""
+      createTopicIfMissing: true
+      createSubscriptionIfMissing: true
+    rabbitmq:
+      url: CHANGE_ME
+      queue: ""
+      exchange: ""
+      routingKey: ""
+
+  env:
+    - name: NAMESPACE
+      valueFrom:
+        fieldRef:
+          fieldPath: metadata.namespace
+    - name: CLUSTERS_NAMESPACE
+      value: clusters
+    - name: OCI_REGION
+      value: us-sanjose-1
+    - name: OCI_COMPARTMENT_ID
+      value: ocid1.compartment.oc1..aaaaaaaazgovbe2qxduadk3bmj5dobvoe5wnengzavax5pwsfr3bqbdrrcqa
+    - name: OPENSHIFT_RELEASE_IMAGE
+      value: "quay.io/openshift-release-dev/ocp-release:4.20.2-x86_64"
+    - name: BASE_DOMAIN
+      value: hyperfleet.local
+    - name: CPO_IMAGE
+      value: "quay.io/vkareh/control-plane-operator:1775859030"
+
+  # Mount the management cluster kubeconfig
+  extraVolumeMounts:
+    - name: hypershift-kubeconfig
+      mountPath: /etc/hypershift
+      readOnly: true
+
+  extraVolumes:
+    - name: hypershift-kubeconfig
+      secret:
+        secretName: hypershift-mgmt-kubeconfig
+
+  # RBAC is for the local CLM cluster only; remote access uses the mounted kubeconfig
+  rbac:
+    resources:
+      - configmaps
