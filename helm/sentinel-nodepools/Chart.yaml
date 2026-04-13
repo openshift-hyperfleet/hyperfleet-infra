@@ -3,7 +3,7 @@ name: sentinel-nodepools
 description: Sentinel deployment for nodepool lifecycle events
 type: application
 version: 0.1.0
-appVersion: "0.0.0-dev"
+appVersion: "0.2.1"
 
 dependencies:
   - name: hyperfleet-sentinel
