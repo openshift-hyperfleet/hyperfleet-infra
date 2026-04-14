@@ -1,0 +1,28 @@
+apiVersion: hypershift.openshift.io/v1beta1
+kind: NodePool
+metadata:
+  name: "{{ .clusterName }}-{{ .nodepoolName }}"
+  namespace: "{{ .namespace }}"
+  labels:
+    hyperfleet.io/cluster-id: "{{ .clusterId }}"
+    hyperfleet.io/cluster-name: "{{ .clusterName }}"
+    hyperfleet.io/nodepool-id: "{{ .nodepoolId }}"
+    hyperfleet.io/nodepool-name: "{{ .nodepoolName }}"
+spec:
+  clusterName: "{{ .clusterName }}"
+  replicas: {{ index .nodepoolSpec "replicas" | default 2 }}
+  management:
+    autoRepair: true
+    upgradeType: Replace
+  platform:
+    type: OCI
+    oci:
+      instanceShape: "{{ index .nodepoolSpec "instanceShape" | default .ociShape }}"
+      instanceShapeConfig:
+        ocpus: {{ index .nodepoolSpec "ocpus" | default .ociOcpus }}
+        memoryInGBs: {{ index .nodepoolSpec "memoryInGBs" | default .ociMemoryGBs }}
+      availabilityDomain: "{{ index .nodepoolSpec "availabilityDomain" | default .ociAD }}"
+      subnetId: "{{ index .nodepoolSpec "subnetId" | default .ociSubnetId }}"
+      bootVolumeSize: {{ index .nodepoolSpec "bootVolumeSize" | default .ociBootVolumeGB }}
+  release:
+    image: "{{ index .nodepoolSpec "releaseImage" | default "quay.io/openshift-release-dev/ocp-release:4.20.2-x86_64" }}"

@@ -1,0 +1,206 @@
+# HyperShift NodePool adapter task configuration
+# Creates a NodePool resource on the remote management cluster
+params:
+
+  - name: "nodepoolId"
+    source: "event.id"
+    type: "string"
+    required: true
+
+  - name: "clusterId"
+    source: "event.owner_references.id"
+    type: "string"
+    required: true
+
+  - name: "generation"
+    source: "event.generation"
+    type: "int"
+    required: true
+
+  - name: "namespace"
+    source: "env.CLUSTERS_NAMESPACE"
+    type: "string"
+
+  - name: "ociAD"
+    source: "env.OCI_AD"
+    type: "string"
+
+  - name: "ociSubnetId"
+    source: "env.OCI_SUBNET_ID"
+    type: "string"
+
+  - name: "ociShape"
+    source: "env.OCI_SHAPE"
+    type: "string"
+
+  - name: "ociOcpus"
+    source: "env.OCI_OCPUS"
+    type: "string"
+
+  - name: "ociMemoryGBs"
+    source: "env.OCI_MEMORY_GBS"
+    type: "string"
+
+  - name: "ociBootVolumeGB"
+    source: "env.OCI_BOOT_VOLUME_GB"
+    type: "string"
+
+# Preconditions: look up nodepool and parent cluster from the API
+preconditions:
+
+  # Fetch nodepool details (name, spec, status)
+  - name: "nodepoolDetails"
+    api_call:
+      method: "GET"
+      url: "/clusters/{{ .clusterId }}/nodepools/{{ .nodepoolId }}"
+      timeout: 10s
+      retry_attempts: 3
+      retry_backoff: "exponential"
+    capture:
+      - name: "nodepoolName"
+        field: "name"
+      - name: "generation"
+        field: "generation"
+      - name: "nodepoolSpec"
+        field: "spec"
+      - name: "nodepoolNotReady"
+        expression: |
+          status.conditions.filter(c, c.type == "Ready").size() > 0
+            ? status.conditions.filter(c, c.type == "Ready")[0].status != "True"
+            : true
+
+  # Fetch parent cluster details (need the cluster name for clusterName ref)
+  - name: "clusterDetails"
+    api_call:
+      method: "GET"
+      url: "/clusters/{{ .clusterId }}"
+      timeout: 10s
+      retry_attempts: 3
+      retry_backoff: "exponential"
+    capture:
+      - name: "clusterName"
+        field: "name"
+
+  # Check if HostedCluster is Available via adapter-hypershift status
+  - name: "clusterAdapterStatus"
+    api_call:
+      method: "GET"
+      url: "/clusters/{{ .clusterId }}/statuses"
+      timeout: 10s
+      retry_attempts: 3
+      retry_backoff: "exponential"
+    capture:
+      - name: "clusterAvailable"
+        expression: |
+          items.filter(s, s.adapter == "adapter-hypershift").size() > 0 ? (items.filter(s, s.adapter == "adapter-hypershift")[0].conditions.filter(c, c.type == "Available").size() > 0 ? items.filter(s, s.adapter == "adapter-hypershift")[0].conditions.filter(c, c.type == "Available")[0].status == "True" : false) : false
+
+  - name: "validationCheck"
+    # Only proceed if nodepool is NOT Ready AND HostedCluster adapter reports Available
+    expression: |
+      nodepoolNotReady && clusterAvailable
+
+# Resources: NodePool on the remote management cluster
+resources:
+
+  - name: "nodePool"
+    transport:
+      client: "kubernetes"
+    manifest:
+      apiVersion: hypershift.openshift.io/v1beta1
+      kind: NodePool
+      metadata:
+        name: "{{ .clusterName }}-{{ .nodepoolName }}"
+        namespace: "{{ .namespace }}"
+        labels:
+          hyperfleet.io/cluster-id: "{{ .clusterId }}"
+          hyperfleet.io/cluster-name: "{{ .clusterName }}"
+          hyperfleet.io/nodepool-id: "{{ .nodepoolId }}"
+          hyperfleet.io/nodepool-name: "{{ .nodepoolName }}"
+      spec:
+        clusterName: "{{ .clusterName }}"
+        replicas: 2
+        management:
+          autoRepair: true
+          upgradeType: Replace
+        platform:
+          type: OCI
+          oci:
+            instanceShape: "{{ .ociShape }}"
+            instanceShapeConfig:
+              ocpus: 4
+              memoryInGBs: 16
+            availabilityDomain: "{{ .ociAD }}"
+            subnetId: "{{ .ociSubnetId }}"
+            bootVolumeSize: 120
+        release:
+          image: "quay.io/openshift-release-dev/ocp-release:4.20.2-x86_64"
+    discovery:
+      namespace: "{{ .namespace }}"
+      by_selectors:
+        label_selector:
+          hyperfleet.io/nodepool-id: "{{ .nodepoolId }}"
+
+# Post-processing: report NodePool status back to API
+post:
+  payloads:
+    - name: "statusPayload"
+      build:
+        adapter: "{{ .adapter.name }}"
+        conditions:
+          - type: "Applied"
+            status:
+              expression: |
+                has(resources.nodePool.metadata.creationTimestamp) ? "True" : "False"
+            reason:
+              expression: |
+                has(resources.nodePool.metadata.creationTimestamp) ? "NodePoolCreated" : "NodePoolPending"
+            message:
+              expression: |
+                has(resources.nodePool.metadata.creationTimestamp)
+                ? "NodePool has been created on the management cluster"
+                : "NodePool is pending creation"
+          - type: "Available"
+            status:
+              expression: |
+                has(resources.nodePool.status) && has(resources.nodePool.status.conditions)
+                ? (resources.nodePool.status.conditions.filter(c, c.type == "Ready").size() > 0
+                   ? resources.nodePool.status.conditions.filter(c, c.type == "Ready")[0].status
+                   : "False")
+                : "False"
+            reason:
+              expression: |
+                has(resources.nodePool.status) && has(resources.nodePool.status.conditions)
+                ? (resources.nodePool.status.conditions.filter(c, c.type == "Ready").size() > 0
+                   ? resources.nodePool.status.conditions.filter(c, c.type == "Ready")[0].reason
+                   : "WaitingForNodes")
+                : "WaitingForNodes"
+            message:
+              expression: |
+                has(resources.nodePool.status) && has(resources.nodePool.status.conditions)
+                ? (resources.nodePool.status.conditions.filter(c, c.type == "Ready").size() > 0
+                   ? resources.nodePool.status.conditions.filter(c, c.type == "Ready")[0].message
+                   : "Waiting for worker nodes to be provisioned")
+                : "Waiting for worker nodes to be provisioned"
+          - type: "Health"
+            status:
+              expression: |
+                adapter.?executionStatus.orValue("") == "success" ? "True" : (adapter.?executionStatus.orValue("") == "failed" ? "False" : "Unknown")
+            reason:
+              expression: |
+                adapter.?errorReason.orValue("") != "" ? adapter.?errorReason.orValue("") : "Healthy"
+            message:
+              expression: |
+                adapter.?errorMessage.orValue("") != "" ? adapter.?errorMessage.orValue("") : "Adapter executed successfully"
+        observed_generation:
+          expression: "generation"
+        observed_time: "{{ now | date \"2006-01-02T15:04:05Z07:00\" }}"
+
+  post_actions:
+    - name: "reportNodepoolStatus"
+      api_call:
+        method: "POST"
+        url: "/clusters/{{ .clusterId }}/nodepools/{{ .nodepoolId }}/statuses"
+        headers:
+          - name: "Content-Type"
+            value: "application/json"
+        body: "{{ .statusPayload }}"
