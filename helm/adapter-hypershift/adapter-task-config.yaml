@@ -36,9 +36,6 @@ params:
     source: "env.CPO_IMAGE"
     type: "string"
 
-  - name: "workerNodeIP"
-    source: "env.WORKER_NODE_IP"
-    type: "string"
 
 # Preconditions: check cluster details from API
 preconditions:
@@ -118,14 +115,10 @@ resources:
         services:
           - service: Ignition
             servicePublishingStrategy:
-              type: NodePort
-              nodePort:
-                address: "{{ .workerNodeIP }}"
+              type: Route
           - service: OAuthServer
             servicePublishingStrategy:
-              type: NodePort
-              nodePort:
-                address: "{{ .workerNodeIP }}"
+              type: Route
           - service: APIServer
             servicePublishingStrategy:
               type: LoadBalancer
