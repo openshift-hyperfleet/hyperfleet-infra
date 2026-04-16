@@ -53,9 +53,11 @@ preconditions:
         field: "generation"
       - name: "clusterNotReady"
         expression: |
-          status.conditions.filter(c, c.type == "Ready").size() > 0
-            ? status.conditions.filter(c, c.type == "Ready")[0].status != "True"
-            : true
+          !has(status) || !has(status.conditions)
+            ? true
+            : (status.conditions.filter(c, c.type == "Ready").size() > 0
+                ? status.conditions.filter(c, c.type == "Ready")[0].status != "True"
+                : true)
 
   - name: "validationCheck"
     expression: |

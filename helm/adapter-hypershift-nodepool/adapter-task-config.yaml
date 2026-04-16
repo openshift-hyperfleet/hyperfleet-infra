@@ -65,9 +65,11 @@ preconditions:
         field: "spec"
       - name: "nodepoolNotReady"
         expression: |
-          status.conditions.filter(c, c.type == "Ready").size() > 0
-            ? status.conditions.filter(c, c.type == "Ready")[0].status != "True"
-            : true
+          !has(status) || !has(status.conditions)
+            ? true
+            : (status.conditions.filter(c, c.type == "Ready").size() > 0
+                ? status.conditions.filter(c, c.type == "Ready")[0].status != "True"
+                : true)
 
   # Fetch parent cluster details (need the cluster name for clusterName ref)
   - name: "clusterDetails"
@@ -118,22 +120,22 @@ resources:
           hyperfleet.io/nodepool-name: "{{ .nodepoolName }}"
       spec:
         clusterName: "{{ .clusterName }}"
-        replicas: 2
+        replicas: {{ index .nodepoolSpec "replicas" | default 2 }}
         management:
           autoRepair: true
           upgradeType: Replace
         platform:
           type: OCI
           oci:
-            instanceShape: "{{ .ociShape }}"
+            instanceShape: "{{ index .nodepoolSpec "instanceShape" | default .ociShape }}"
             instanceShapeConfig:
-              ocpus: 4
-              memoryInGBs: 16
-            availabilityDomain: "{{ .ociAD }}"
-            subnetId: "{{ .ociSubnetId }}"
-            bootVolumeSize: 120
+              ocpus: {{ index .nodepoolSpec "ocpus" | default .ociOcpus }}
+              memoryInGBs: {{ index .nodepoolSpec "memoryInGBs" | default .ociMemoryGBs }}
+            availabilityDomain: "{{ index .nodepoolSpec "availabilityDomain" | default .ociAD }}"
+            subnetId: "{{ index .nodepoolSpec "subnetId" | default .ociSubnetId }}"
+            bootVolumeSize: {{ index .nodepoolSpec "bootVolumeSize" | default .ociBootVolumeGB }}
         release:
-          image: "quay.io/openshift-release-dev/ocp-release:4.20.2-x86_64"
+          image: "{{ index .nodepoolSpec "releaseImage" | default "quay.io/openshift-release-dev/ocp-release:4.20.2-x86_64" }}"
     discovery:
       namespace: "{{ .namespace }}"
       by_selectors:
