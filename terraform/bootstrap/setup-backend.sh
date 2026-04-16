@@ -102,10 +102,10 @@ gsutil uniformbucketlevelaccess set on "gs://$BUCKET_NAME"
 success "Uniform bucket-level access enabled"
 echo
 
-# Grant object-level permissions to project owners and editors
+# Grant object-level permissions to project owners, editors, and CI service accounts.
 # Required because uniform bucket-level access disables legacy ACLs
-# and legacyBucketOwner/legacyBucketReader don't include object permissions
-log "Granting IAM permissions to project owners, editors, and viewers"
+# and legacyBucketOwner/legacyBucketReader don't include object permissions.
+log "Granting IAM permissions to project owners, editors, viewers, and CI service accounts"
 
 # Note: gsutil iam ch doesn't support project convenience groups (projectOwner, etc.)
 # with legacy roles, so we must use gsutil iam set. To avoid overwriting existing
@@ -113,6 +113,9 @@ log "Granting IAM permissions to project owners, editors, and viewers"
 
 # Fetch current IAM policy
 CURRENT_POLICY=$(gsutil iam get "gs://$BUCKET_NAME")
+
+# CI service account used by Prow for integration tests
+CI_SERVICE_ACCOUNT="serviceAccount:hyperfleet-e2e-prow@${PROJECT_ID}.iam.gserviceaccount.com"
 
 # Required bindings for Terraform state management
 REQUIRED_BINDINGS='[
@@ -126,7 +129,7 @@ REQUIRED_BINDINGS='[
   },
   {
     "role": "roles/storage.objectAdmin",
-    "members": ["projectOwner:'$PROJECT_ID'", "projectEditor:'$PROJECT_ID'"]
+    "members": ["projectOwner:'$PROJECT_ID'", "projectEditor:'$PROJECT_ID'", "'$CI_SERVICE_ACCOUNT'"]
   }
 ]'
 
@@ -153,7 +156,7 @@ MERGED_POLICY=$(echo "$CURRENT_POLICY" | jq --argjson required "$REQUIRED_BINDIN
 # Apply the merged policy
 echo "$MERGED_POLICY" | gsutil iam set /dev/stdin "gs://$BUCKET_NAME"
 
-success "IAM permissions granted to project owners and editors"
+success "IAM permissions granted to project owners, editors, and CI service accounts"
 echo
 
 # Set lifecycle policy to clean up old versions
@@ -211,4 +214,10 @@ echo "     terraform init -backend-config=envs/gke/dev-<your-name>.tfbackend"
 echo
 echo "For shared environments (e.g., Prow cluster):"
 echo "     terraform init -backend-config=envs/gke/dev-prow.tfbackend"
+echo
+echo "For CI service accounts that need to create GKE clusters, also grant:"
+echo "  gcloud iam service-accounts add-iam-policy-binding \\"
+echo "    \$(gcloud iam service-accounts list --filter='email:compute@developer' --format='value(email)') \\"
+echo "    --member='serviceAccount:<SA_NAME>@${PROJECT_ID}.iam.gserviceaccount.com' \\"
+echo "    --role='roles/iam.serviceAccountUser' --project=${PROJECT_ID}"
 echo
