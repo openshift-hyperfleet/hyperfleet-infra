@@ -94,7 +94,13 @@ preconditions:
     capture:
       - name: "clusterAvailable"
         expression: |
-          items.filter(s, s.adapter == "adapter-hypershift").size() > 0 ? (items.filter(s, s.adapter == "adapter-hypershift")[0].conditions.filter(c, c.type == "Available").size() > 0 ? items.filter(s, s.adapter == "adapter-hypershift")[0].conditions.filter(c, c.type == "Available")[0].status == "True" : false) : false
+          items.filter(s, s.adapter == "adapter-hypershift").size() > 0
+            ? (has(items.filter(s, s.adapter == "adapter-hypershift")[0].conditions)
+                ? (items.filter(s, s.adapter == "adapter-hypershift")[0].conditions.filter(c, c.type == "Available").size() > 0
+                    ? items.filter(s, s.adapter == "adapter-hypershift")[0].conditions.filter(c, c.type == "Available")[0].status == "True"
+                    : false)
+                : false)
+            : false
 
   - name: "validationCheck"
     # Only proceed if nodepool is NOT Ready AND HostedCluster adapter reports Available
@@ -127,15 +133,15 @@ resources:
         platform:
           type: OCI
           oci:
-            instanceShape: "{{ index .nodepoolSpec "instanceShape" | default .ociShape }}"
+            instanceShape: '{{ index .nodepoolSpec "instanceShape" | default .ociShape }}'
             instanceShapeConfig:
               ocpus: {{ index .nodepoolSpec "ocpus" | default .ociOcpus }}
               memoryInGBs: {{ index .nodepoolSpec "memoryInGBs" | default .ociMemoryGBs }}
-            availabilityDomain: "{{ index .nodepoolSpec "availabilityDomain" | default .ociAD }}"
-            subnetId: "{{ index .nodepoolSpec "subnetId" | default .ociSubnetId }}"
+            availabilityDomain: '{{ index .nodepoolSpec "availabilityDomain" | default .ociAD }}'
+            subnetId: '{{ index .nodepoolSpec "subnetId" | default .ociSubnetId }}'
             bootVolumeSize: {{ index .nodepoolSpec "bootVolumeSize" | default .ociBootVolumeGB }}
         release:
-          image: "{{ index .nodepoolSpec "releaseImage" | default "quay.io/openshift-release-dev/ocp-release:4.20.2-x86_64" }}"
+          image: '{{ index .nodepoolSpec "releaseImage" | default "quay.io/openshift-release-dev/ocp-release:4.20.2-x86_64" }}'
     discovery:
       namespace: "{{ .namespace }}"
       by_selectors:
