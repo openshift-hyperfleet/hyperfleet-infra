@@ -19,6 +19,7 @@ ADAPTER_REPOSITORY   ?= ci/hyperfleet-adapter
 API_IMAGE_TAG        ?= latest
 SENTINEL_IMAGE_TAG   ?= latest
 ADAPTER_IMAGE_TAG    ?= latest
+SENTINEL_EXTRA_ARGS ?=
 DRY_RUN            ?=
 AUTO_APPROVE       ?=
 # Derived flags from boolean variables (only true/1 are treated as truthy)
@@ -183,7 +184,8 @@ install-sentinel-clusters: check-helm check-kubectl check-namespace ## Install S
 		$(if $(REGISTRY),--set hyperfleet-sentinel.image.registry=$(REGISTRY)) \
 		$(if $(SENTINEL_REPOSITORY),--set hyperfleet-sentinel.image.repository=$(SENTINEL_REPOSITORY)) \
 		--set hyperfleet-sentinel.image.tag=$(SENTINEL_IMAGE_TAG) \
-		$(if $(wildcard $(GENERATED_DIR)/sentinel-clusters.yaml),--values $(GENERATED_DIR)/sentinel-clusters.yaml)
+		$(if $(wildcard $(GENERATED_DIR)/sentinel-clusters.yaml),--values $(GENERATED_DIR)/sentinel-clusters.yaml) \
+		$(SENTINEL_EXTRA_ARGS)
 
 .PHONY: install-sentinel-nodepools
 install-sentinel-nodepools: check-helm check-kubectl check-namespace ## Install Sentinel for nodepools
@@ -267,6 +269,34 @@ install-all: install-terraform get-credentials tf-helm-values install-maestro cr
 .PHONY: install-all-rabbitmq
 install-all-rabbitmq: BROKER_TYPE = rabbitmq
 install-all-rabbitmq: install-rabbitmq tf-helm-values install-hyperfleet install-maestro create-maestro-consumer ## Full RabbitMQ install (rabbitmq + hyperfleet + maestro, no terraform)
+
+# ──────────────────────────────────────────────
+# OCI/OKE deployment targets
+# ──────────────────────────────────────────────
+
+.PHONY: install-hyperfleet-oci
+install-hyperfleet-oci: install-api install-sentinel-clusters install-adapter1 ## Install API + sentinel + adapter1 for OCI
+
+.PHONY: install-all-oci
+install-all-oci: ## Full OCI/OKE install (rabbitmq + api + sentinel + adapter1)
+install-all-oci: BROKER_TYPE = rabbitmq
+install-all-oci: REGISTRY = quay.io
+install-all-oci: API_REPOSITORY = openshift-hyperfleet/hyperfleet-api
+install-all-oci: SENTINEL_REPOSITORY = openshift-hyperfleet/hyperfleet-sentinel
+install-all-oci: ADAPTER_REPOSITORY = openshift-hyperfleet/hyperfleet-adapter
+install-all-oci: API_IMAGE_TAG = v0.2.0
+install-all-oci: SENTINEL_IMAGE_TAG = v0.2.0
+install-all-oci: ADAPTER_IMAGE_TAG = v0.2.0
+install-all-oci: SENTINEL_CHART_REF = v0.2.0
+install-all-oci: SENTINEL_EXTRA_ARGS = --values $(HELM_DIR)/sentinel-clusters/values-oci.yaml
+install-all-oci: install-rabbitmq tf-helm-values install-hyperfleet-oci
+
+.PHONY: uninstall-all-oci
+uninstall-all-oci: ## Uninstall all OCI components
+	-helm uninstall $(NAMESPACE)-adapter1 --namespace $(NAMESPACE) --kubeconfig $(KUBECONFIG)
+	-helm uninstall $(NAMESPACE)-sentinel-clusters --namespace $(NAMESPACE) --kubeconfig $(KUBECONFIG)
+	-helm uninstall $(NAMESPACE)-api --namespace $(NAMESPACE) --kubeconfig $(KUBECONFIG)
+	$(MAKE) uninstall-rabbitmq
 
 # ──────────────────────────────────────────────
 # CI validation targets

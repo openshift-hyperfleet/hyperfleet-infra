@@ -1,0 +1,23 @@
+# OCI/OKE overrides for Sentinel nodepools (v0.2.0 config format)
+
+hyperfleet-sentinel:
+  config:
+    resourceType: nodepools
+    resourceSelector: []
+
+    hyperfleetApi:
+      baseUrl: http://hyperfleet-api:8000
+      timeout: 5s
+
+  broker:
+    type: rabbitmq
+    topic: hyperfleet-nodepools
+    rabbitmq:
+      url: amqp://guest:guest@rabbitmq:5672/
+      exchangeType: topic
+
+  monitoring:
+    podMonitoring:
+      enabled: false
+    prometheusRule:
+      enabled: false
