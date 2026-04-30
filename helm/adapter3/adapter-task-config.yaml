@@ -146,19 +146,29 @@ post:
           - type: "Finalized"
             status:
               expression: |
-                is_deleting && adapter.?executionStatus.orValue("") == "success"
-                  ? (!resources.?resource0.hasValue() ? "True" : "False")
-                  : "False"
+                !is_deleting
+                  ? "False"
+                  : (!resources.?resource0.hasValue()
+                      ? "True"
+                      : "False")
             reason:
               expression: |
-                is_deleting && adapter.?executionStatus.orValue("") == "success"
-                  ? (!resources.?resource0.hasValue() ? "CleanupConfirmed" : "CleanupInProgress")
-                  : "ResourceActive"
+                !is_deleting
+                  ? "ResourceActive"
+                  : (!resources.?resource0.hasValue()
+                      ? "CleanupConfirmed"
+                      : (adapter.?executionStatus.orValue("") == "failed"
+                          ? "CleanupFailed"
+                          : "CleanupInProgress"))
             message:
               expression: |
-                is_deleting && adapter.?executionStatus.orValue("") == "success"
-                  ? (!resources.?resource0.hasValue() ? "All resources deleted successfully" : "Deletion in progress")
-                  : "Resource is active, not scheduled for deletion"
+                !is_deleting
+                  ? "Resource is active, not scheduled for deletion"
+                  : (!resources.?resource0.hasValue()
+                      ? "All resources deleted successfully"
+                      : (adapter.?executionStatus.orValue("") == "failed"
+                          ? "Deletion failed during adapter execution"
+                          : "Deletion in progress"))
         # Event generation ID metadata field needs to use expression to avoid interpolation issues
         observed_generation:
           expression: "generation"

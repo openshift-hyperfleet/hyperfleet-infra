@@ -303,28 +303,35 @@ post:
           - type: "Finalized"
             status:
               expression: |
-                is_deleting && adapter.?executionStatus.orValue("") == "success"
-                  ? (!resources.?resource0.hasValue()
+                !is_deleting
+                  ? "False"
+                  : (!resources.?resource0.hasValue()
                       && !resources.?namespace0.hasValue()
                       && !resources.?configmap0.hasValue()
-                    ? "True" : "False")
-                  : "False"
+                      ? "True"
+                      : "False")
             reason:
               expression: |
-                is_deleting && adapter.?executionStatus.orValue("") == "success"
-                  ? (!resources.?resource0.hasValue()
+                !is_deleting
+                  ? "ResourceActive"
+                  : (!resources.?resource0.hasValue()
                       && !resources.?namespace0.hasValue()
                       && !resources.?configmap0.hasValue()
-                    ? "CleanupConfirmed" : "CleanupInProgress")
-                  : "ResourceActive"
+                      ? "CleanupConfirmed"
+                      : (adapter.?executionStatus.orValue("") == "failed"
+                          ? "CleanupFailed"
+                          : "CleanupInProgress"))
             message:
               expression: |
-                is_deleting && adapter.?executionStatus.orValue("") == "success"
-                  ? (!resources.?resource0.hasValue()
+                !is_deleting
+                  ? "Resource is active, not scheduled for deletion"
+                  : (!resources.?resource0.hasValue()
                       && !resources.?namespace0.hasValue()
                       && !resources.?configmap0.hasValue()
-                    ? "ManifestWork and all nested resources deleted successfully" : "Deletion in progress")
-                  : "Resource is active, not scheduled for deletion"
+                      ? "ManifestWork and all nested resources deleted successfully"
+                      : (adapter.?executionStatus.orValue("") == "failed"
+                          ? "Deletion failed during adapter execution"
+                          : "Deletion in progress"))
 
         observed_generation:
           expression: "generation"
