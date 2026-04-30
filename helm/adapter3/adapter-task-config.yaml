@@ -34,6 +34,8 @@ preconditions:
         field: "name"
       - name: "generation"
         field: "generation"
+      - name: "is_deleting"
+        expression: "nodepoolStatus.?deleted_time.hasValue()"
       - name: "nodepoolNotReady"
         expression: |
           status.conditions.filter(c, c.type == "Ready").size() > 0
@@ -48,9 +50,9 @@ preconditions:
           )).getSeconds() > 300
 
   - name: "validationCheck"
-    # Precondition passes if nodepool is NOT Ready OR if nodepool is Ready and stable for >300 seconds since last transition (enables self-healing)
+    # Precondition passes if nodepool is NOT Ready OR if nodepool is Ready and stable for >300 seconds since last transition (enables self-healing) OR if nodepool is being deleted
     expression: |
-      nodepoolNotReady || nodepoolReadyTTL
+      nodepoolNotReady || nodepoolReadyTTL || is_deleting
 
 # Resources with valid K8s manifests
 resources:
@@ -78,6 +80,11 @@ resources:
         label_selector:
           hyperfleet.io/nodepool-id: "{{ .nodepoolId }}"
           hyperfleet.io/nodepool-name: "{{ .nodepoolName }}"
+    lifecycle:
+      delete:
+        propagationPolicy: "Background"
+        when:
+          expression: "is_deleting"
 
 # Post-processing with valid CEL expressions
 post:
@@ -90,51 +97,68 @@ post:
           - type: "Applied"
             status:
               expression: |
-                has(resources.resource0.metadata.creationTimestamp)
-                ? "True"
-                : "False"
+                is_deleting
+                  ? "False"
+                  : (resources.?resource0.?metadata.?creationTimestamp.hasValue() ? "True" : "False")
             reason:
               expression: |
-                has(resources.resource0.metadata.creationTimestamp)
-                  ? "ConfigMap manifest applied successfully"
-                  : "ConfigMap is pending to be applied"
+                is_deleting
+                  ? "ResourceDeleted"
+                  : (resources.?resource0.?metadata.?creationTimestamp.hasValue() ? "ConfigMapApplied" : "ConfigMapPending")
             message:
               expression: |
-                has(resources.resource0.metadata.creationTimestamp)
-                  ? "ConfigMap manifest applied successfully"
-                  : "ConfigMap is pending to be applied"
+                is_deleting
+                  ? "ConfigMap has been deleted"
+                  : (resources.?resource0.?metadata.?creationTimestamp.hasValue()
+                      ? "ConfigMap has been applied correctly"
+                      : "ConfigMap is pending to be applied")
           # Available: Check job status conditions
           - type: "Available"
             status:
               expression: |
-                has(resources.resource0.data.nodepoolId)
-                  ? "True"
-                  : "False"
+                is_deleting
+                  ? "False"
+                  : (resources.?resource0.?data.?nodepoolId.hasValue() ? "True" : "False")
             reason:
               expression: |
-                has(resources.resource0.data.nodepoolId)
-                  ? "ConfigMap data available"
-                  : "ConfigMap data not yet available"
+                is_deleting
+                  ? "ResourceDeleted"
+                  : (resources.?resource0.?data.?nodepoolId.hasValue() ? "ConfigMapDataAvailable" : "ConfigMapDataNotYetAvailable")
             message:
               expression: |
-                has(resources.resource0.data.nodepoolId)
-                  ? "ConfigMap data available"
-                  : "ConfigMap data not yet available"
+                is_deleting
+                  ? "ConfigMap data no longer available"
+                  : (resources.?resource0.?data.?nodepoolId.hasValue()
+                    ? "ConfigMap data available"
+                    : "ConfigMap data not yet available")
           # Health: Adapter execution status (runtime)
           - type: "Health"
             status:
               expression: |
-                has(resources.resource0.data.nodepoolId)
-                  ? "True"
+                adapter.?executionStatus.orValue("") == "success" ? "True" : (adapter.?executionStatus.orValue("") == "failed" ? "False" : "Unknown")
+            reason:
+              expression: |
+                adapter.?errorReason.orValue("") != "" ? adapter.?errorReason.orValue("") : "Healthy"
+            message:
+              expression: |
+                adapter.?errorMessage.orValue("") != "" ? adapter.?errorMessage.orValue("") : "All adapter operations completed successfully"
+          # Finalized: Deletion lifecycle completion
+          - type: "Finalized"
+            status:
+              expression: |
+                is_deleting && adapter.?executionStatus.orValue("") == "success"
+                  ? (!resources.?resource0.hasValue() ? "True" : "False")
                   : "False"
             reason:
               expression: |
-                has(resources.resource0.data.nodepoolId)
-                  ? "ConfigMap data available"
-                  : "ConfigMap data not yet available"
+                is_deleting && adapter.?executionStatus.orValue("") == "success"
+                  ? (!resources.?resource0.hasValue() ? "CleanupConfirmed" : "CleanupInProgress")
+                  : "ResourceActive"
             message:
               expression: |
-                toJson(resources.resource0)
+                is_deleting && adapter.?executionStatus.orValue("") == "success"
+                  ? (!resources.?resource0.hasValue() ? "All resources deleted successfully" : "Deletion in progress")
+                  : "Resource is active, not scheduled for deletion"
         # Event generation ID metadata field needs to use expression to avoid interpolation issues
         observed_generation:
           expression: "generation"

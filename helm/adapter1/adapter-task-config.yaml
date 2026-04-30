@@ -29,6 +29,8 @@ preconditions:
         field: "name"
       - name: "generation"
         field: "generation"
+      - name: "is_deleting"
+        expression: "clusterStatus.?deleted_time.hasValue()"
       - name: "clusterNotReady"
         expression: |
           status.conditions.filter(c, c.type == "Ready").size() > 0
@@ -43,9 +45,9 @@ preconditions:
           )).getSeconds() > 300
 
   - name: "validationCheck"
-    # Precondition passes if cluster is NOT Ready OR if cluster is Ready and stable for >300 seconds since last transition (enables self-healing)
+    # Precondition passes if cluster is NOT Ready OR if cluster is Ready and stable for >300 seconds since last transition (enables self-healing) OR if cluster is being deleted
     expression: |
-      clusterNotReady || clusterReadyTTL
+      clusterNotReady || clusterReadyTTL || is_deleting
 
 # Resources with valid K8s manifests
 resources:
@@ -69,12 +71,19 @@ resources:
           app.kubernetes.io/transport: kubernetes
           hyperfleet.io/cluster-id: "{{ .clusterId }}"
           hyperfleet.io/cluster-name: "{{ .clusterName }}"
+        annotations:
+          hyperfleet.io/generation: "{{ .generation }}"
     discovery:
       namespace: "{{ .namespace }}"
       by_selectors:
         label_selector:
           hyperfleet.io/cluster-id: "{{ .clusterId }}"
           hyperfleet.io/cluster-name: "{{ .clusterName }}"
+    lifecycle:
+      delete:
+        propagationPolicy: "Background"
+        when:
+          expression: "is_deleting"
 
 # Post-processing with valid CEL expressions
 # This example contains multiple resources, we will only report on the conditions of the jobNamespace not to overcomplicate the example
@@ -88,30 +97,42 @@ post:
           - type: "Applied"
             status:
               expression: |
-                has(resources.resource0.metadata.creationTimestamp) ? "True" : "False"
+                is_deleting
+                  ? "False"
+                  : (resources.?resource0.hasValue() ? "True" : "False")
             reason:
               expression: |
-                has(resources.resource0.metadata.creationTimestamp) ? "ConfigMapApplied" : "ConfigMapPending"
+                is_deleting
+                  ? "ResourceDeleted"
+                  : (resources.?resource0.hasValue() ? "ConfigMapApplied" : "ConfigMapPending")
             message:
               expression: |
-                has(resources.resource0.metadata.creationTimestamp)
-                ? "ConfigMap has been applied correctly"
-                : "ConfigMap is pending to be applied"
+                is_deleting
+                  ? "ConfigMap has been deleted"
+                  : (resources.?resource0.hasValue()
+                      ? "ConfigMap has been applied correctly"
+                      : "ConfigMap is pending to be applied")
           # Available: Check job status conditions
           - type: "Available"
             status:
               expression: |
-                has(resources.resource0.data.cluster_id) ? "True" : "False"
+                is_deleting
+                  ? "False"
+                  : (resources.?resource0.?data.?cluster_id.hasValue() ? "True" : "False")
             reason:
               expression: |
-                has(resources.resource0.data.cluster_id)
-                  ? "ConfigMap data available"
-                  : "ConfigMap data not yet available"
+                is_deleting
+                  ? "ResourceDeleted"
+                  : (resources.?resource0.?data.?cluster_id.hasValue()
+                      ? "ConfigMapDataAvailable"
+                      : "ConfigMapDataNotYetAvailable")
             message:
               expression: |
-                has(resources.resource0.data.cluster_id)
-                  ? "ConfigMap data available"
-                  : "ConfigMap data not yet available"
+                is_deleting
+                  ? "ConfigMap data no longer available"
+                  : (resources.?resource0.?data.?cluster_id.hasValue()
+                      ? "ConfigMap data available"
+                      : "ConfigMap data not yet available")
           # Health: Adapter execution status (runtime)
           - type: "Health"
             status:
@@ -123,6 +144,23 @@ post:
             message:
               expression: |
                 adapter.?errorMessage.orValue("") != "" ? adapter.?errorMessage.orValue("") : "All adapter operations completed successfully"
+          # Finalized: Deletion lifecycle completion
+          - type: "Finalized"
+            status:
+              expression: |
+                is_deleting && adapter.?executionStatus.orValue("") == "success"
+                  ? (!resources.?resource0.hasValue() ? "True" : "False")
+                  : "False"
+            reason:
+              expression: |
+                is_deleting && adapter.?executionStatus.orValue("") == "success"
+                  ? (!resources.?resource0.hasValue() ? "CleanupConfirmed" : "CleanupInProgress")
+                  : "ResourceActive"
+            message:
+              expression: |
+                is_deleting && adapter.?executionStatus.orValue("") == "success"
+                  ? (!resources.?resource0.hasValue() ? "All resources deleted successfully" : "Deletion in progress")
+                  : "Resource is active, not scheduled for deletion"
         # Event generation ID metadata field needs to use expression to avoid interpolation issues
         observed_generation:
           expression: "generation"

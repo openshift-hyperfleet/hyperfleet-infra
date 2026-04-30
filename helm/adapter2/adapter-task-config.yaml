@@ -31,6 +31,8 @@ preconditions:
         field: "generation"
       - name: "timestamp"
         field: "created_time"
+      - name: "is_deleting"
+        expression: "clusterStatus.?deleted_time.hasValue()"
       - name: "readyConditionStatus"
         expression: |
           status.conditions.filter(c, c.type == "Ready").size() > 0
@@ -46,9 +48,9 @@ preconditions:
         value: "False"
 
   - name: "validationCheck"
-    # Valid CEL expression
+    # Precondition passes if cluster is NOT Ready OR if cluster is being deleted
     expression: |
-      readyConditionStatus == "False"
+      readyConditionStatus == "False" || is_deleting
 
 # Resources with valid K8s manifests
 resources:
@@ -208,6 +210,15 @@ resources:
         discovery:
           by_name: "{{ .clusterId | lower }}-{{ .adapter.name }}-configmap"
 
+    # Deletion lifecycle - ManifestWork deletion cascades to nested resources
+    lifecycle:
+      delete:
+        # Foreground propagation ensures nested resources (namespace, configmap) are deleted
+        # before the parent ManifestWork is removed, preventing orphaned resources
+        propagationPolicy: "Foreground"
+        when:
+          expression: "is_deleting"
+
 post:
   payloads:
     - name: "statusPayload"
@@ -287,6 +298,33 @@ post:
                 : adapter.?resourcesSkipped.orValue(false)
                   ? "Resources skipped: " + adapter.?skipReason.orValue("unknown reason")
                   : "Adapter execution completed successfully"
+
+          # Finalized: Deletion lifecycle completion
+          - type: "Finalized"
+            status:
+              expression: |
+                is_deleting && adapter.?executionStatus.orValue("") == "success"
+                  ? (!resources.?resource0.hasValue()
+                      && !resources.?namespace0.hasValue()
+                      && !resources.?configmap0.hasValue()
+                    ? "True" : "False")
+                  : "False"
+            reason:
+              expression: |
+                is_deleting && adapter.?executionStatus.orValue("") == "success"
+                  ? (!resources.?resource0.hasValue()
+                      && !resources.?namespace0.hasValue()
+                      && !resources.?configmap0.hasValue()
+                    ? "CleanupConfirmed" : "CleanupInProgress")
+                  : "ResourceActive"
+            message:
+              expression: |
+                is_deleting && adapter.?executionStatus.orValue("") == "success"
+                  ? (!resources.?resource0.hasValue()
+                      && !resources.?namespace0.hasValue()
+                      && !resources.?configmap0.hasValue()
+                    ? "ManifestWork and all nested resources deleted successfully" : "Deletion in progress")
+                  : "Resource is active, not scheduled for deletion"
 
         observed_generation:
           expression: "generation"
