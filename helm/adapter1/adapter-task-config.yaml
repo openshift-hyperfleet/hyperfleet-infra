@@ -81,6 +81,8 @@ resources:
           hyperfleet.io/cluster-name: "{{ .clusterName }}"
     lifecycle:
       delete:
+        # Background propagation is appropriate for simple ConfigMap resources
+        # without nested dependencies - allows faster deletion without waiting
         propagationPolicy: "Background"
         when:
           expression: "is_deleting"

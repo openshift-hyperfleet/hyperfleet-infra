@@ -74,6 +74,8 @@ resources:
           app.kubernetes.io/version: 1.0.0
           hyperfleet.io/nodepool-id: "{{ .nodepoolId }}"
           hyperfleet.io/nodepool-name: "{{ .nodepoolName }}"
+        annotations:
+          hyperfleet.io/generation: "{{ .generation }}"
     discovery:
       namespace: "{{ .namespace }}"
       by_selectors:
@@ -82,6 +84,8 @@ resources:
           hyperfleet.io/nodepool-name: "{{ .nodepoolName }}"
     lifecycle:
       delete:
+        # Background propagation is appropriate for simple ConfigMap resources
+        # without nested dependencies - allows faster deletion without waiting
         propagationPolicy: "Background"
         when:
           expression: "is_deleting"
