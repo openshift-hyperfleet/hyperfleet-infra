@@ -31,24 +31,24 @@ preconditions:
         field: "generation"
       - name: "timestamp"
         field: "created_time"
-      - name: "readyConditionStatus"
+      - name: "reconciledConditionStatus"
         expression: |
-          status.conditions.filter(c, c.type == "Ready").size() > 0
-            ? status.conditions.filter(c, c.type == "Ready")[0].status
+          status.conditions.filter(c, c.type == "Reconciled").size() > 0
+            ? status.conditions.filter(c, c.type == "Reconciled")[0].status
             : "False"
       - name: "placementClusterName"
         expression: "\"cluster1\""  # TBC coming from placement adapter
 
     # Structured conditions with valid operators
     conditions:
-      - field: "readyConditionStatus"
+      - field: "reconciledConditionStatus"
         operator: "equals"
         value: "False"
 
   - name: "validationCheck"
     # Valid CEL expression
     expression: |
-      readyConditionStatus == "False"
+      reconciledConditionStatus == "False"
 
 # Resources with valid K8s manifests
 resources:

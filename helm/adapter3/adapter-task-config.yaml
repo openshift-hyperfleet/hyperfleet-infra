@@ -34,23 +34,23 @@ preconditions:
         field: "name"
       - name: "generation"
         field: "generation"
-      - name: "nodepoolNotReady"
+      - name: "nodepoolNotReconciled"
         expression: |
-          status.conditions.filter(c, c.type == "Ready").size() > 0
-            ? status.conditions.filter(c, c.type == "Ready")[0].status != "True"
+          status.conditions.filter(c, c.type == "Reconciled").size() > 0
+            ? status.conditions.filter(c, c.type == "Reconciled")[0].status != "True"
             : true
-      - name: "nodepoolReadyTTL"
+      - name: "nodepoolReconciledTTL"
         expression: |
           (timestamp(now()) - timestamp(
-            status.conditions.filter(c, c.type == "Ready").size() > 0
-              ? status.conditions.filter(c, c.type == "Ready")[0].last_transition_time
+            status.conditions.filter(c, c.type == "Reconciled").size() > 0
+              ? status.conditions.filter(c, c.type == "Reconciled")[0].last_transition_time
               : now()
           )).getSeconds() > 300
 
   - name: "validationCheck"
-    # Precondition passes if nodepool is NOT Ready OR if nodepool is Ready and stable for >300 seconds since last transition (enables self-healing)
+    # Precondition passes if nodepool is NOT Reconciled OR if nodepool is Reconciled and stable for >300 seconds since last transition (enables self-healing)
     expression: |
-      nodepoolNotReady || nodepoolReadyTTL
+      nodepoolNotReconciled || nodepoolReconciledTTL
 
 # Resources with valid K8s manifests
 resources:
