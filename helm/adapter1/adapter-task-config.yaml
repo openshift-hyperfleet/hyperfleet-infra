@@ -99,42 +99,30 @@ post:
           - type: "Applied"
             status:
               expression: |
-                is_deleting
-                  ? "False"
-                  : (resources.?resource0.hasValue() ? "True" : "False")
+                resources.?resource0.?metadata.?creationTimestamp.hasValue() ? "True" : "False"
             reason:
               expression: |
-                is_deleting
-                  ? "ResourceDeleted"
-                  : (resources.?resource0.hasValue() ? "ConfigMapApplied" : "ConfigMapPending")
+                resources.?resource0.?metadata.?creationTimestamp.hasValue() ? "ConfigMapApplied" : "ConfigMapPending"
             message:
               expression: |
-                is_deleting
-                  ? "ConfigMap has been deleted"
-                  : (resources.?resource0.hasValue()
-                      ? "ConfigMap has been applied correctly"
-                      : "ConfigMap is pending to be applied")
+                resources.?resource0.?metadata.?creationTimestamp.hasValue()
+                  ? "ConfigMap has been applied correctly"
+                  : "ConfigMap is pending to be applied"
           # Available: Check job status conditions
           - type: "Available"
             status:
               expression: |
-                is_deleting
-                  ? "False"
-                  : (resources.?resource0.?data.?cluster_id.hasValue() ? "True" : "False")
+                resources.?resource0.?data.?cluster_id.hasValue() ? "True" : "False"
             reason:
               expression: |
-                is_deleting
-                  ? "ResourceDeleted"
-                  : (resources.?resource0.?data.?cluster_id.hasValue()
-                      ? "ConfigMapDataAvailable"
-                      : "ConfigMapDataNotYetAvailable")
+                resources.?resource0.?data.?cluster_id.hasValue()
+                  ? "ConfigMapDataAvailable"
+                  : "ConfigMapDataNotYetAvailable"
             message:
               expression: |
-                is_deleting
-                  ? "ConfigMap data no longer available"
-                  : (resources.?resource0.?data.?cluster_id.hasValue()
-                      ? "ConfigMap data available"
-                      : "ConfigMap data not yet available")
+                resources.?resource0.?data.?cluster_id.hasValue()
+                  ? "ConfigMap data available"
+                  : "ConfigMap data not yet available"
           # Health: Adapter execution status (runtime)
           - type: "Health"
             status:
@@ -152,7 +140,7 @@ post:
               expression: |
                 !is_deleting
                   ? "False"
-                  : (!resources.?resource0.hasValue()
+                  : (adapter.?executionStatus.orValue("") == "success" && !resources.?resource0.hasValue()
                       ? "True"
                       : "False")
             reason:
