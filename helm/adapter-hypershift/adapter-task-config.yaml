@@ -1,0 +1,203 @@
+# HyperShift adapter task configuration
+# Creates a HostedCluster + required secrets on the remote management cluster
+params:
+
+  - name: "clusterId"
+    source: "event.id"
+    type: "string"
+    required: true
+
+  - name: "generation"
+    source: "event.generation"
+    type: "int"
+    required: true
+
+  - name: "namespace"
+    source: "env.CLUSTERS_NAMESPACE"
+    type: "string"
+
+  - name: "ociRegion"
+    source: "env.OCI_REGION"
+    type: "string"
+
+  - name: "ociCompartmentId"
+    source: "env.OCI_COMPARTMENT_ID"
+    type: "string"
+
+  - name: "releaseImage"
+    source: "env.OPENSHIFT_RELEASE_IMAGE"
+    type: "string"
+
+  - name: "baseDomain"
+    source: "env.BASE_DOMAIN"
+    type: "string"
+
+  - name: "cpoImage"
+    source: "env.CPO_IMAGE"
+    type: "string"
+
+
+# Preconditions: check cluster details from API
+preconditions:
+  - name: "clusterStatus"
+    api_call:
+      method: "GET"
+      url: "/clusters/{{ .clusterId }}"
+      timeout: 10s
+      retry_attempts: 3
+      retry_backoff: "exponential"
+    capture:
+      - name: "clusterName"
+        field: "name"
+      - name: "generation"
+        field: "generation"
+      - name: "clusterNotReady"
+        expression: |
+          !has(status) || !has(status.conditions)
+            ? true
+            : (status.conditions.filter(c, c.type == "Ready").size() > 0
+                ? status.conditions.filter(c, c.type == "Ready")[0].status != "True"
+                : true)
+
+  - name: "validationCheck"
+    expression: |
+      clusterNotReady
+
+# Resources: Namespace + HostedCluster on the remote management cluster
+resources:
+
+  # Ensure the clusters namespace exists on the management cluster
+  - name: "clustersNamespace"
+    transport:
+      client: "kubernetes"
+    manifest:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ .namespace }}"
+    discovery:
+      by_name: "{{ .namespace }}"
+
+  # Create the HostedCluster resource
+  - name: "hostedCluster"
+    transport:
+      client: "kubernetes"
+    manifest:
+      apiVersion: hypershift.openshift.io/v1beta1
+      kind: HostedCluster
+      metadata:
+        name: "{{ .clusterName }}"
+        namespace: "{{ .namespace }}"
+        annotations:
+          hypershift.openshift.io/pod-security-admission-label-override: "privileged"
+          hypershift.openshift.io/control-plane-operator-image: "{{ .cpoImage }}"
+          hypershift.openshift.io/disable-monitoring-services: "true"
+        labels:
+          hyperfleet.io/cluster-id: "{{ .clusterId }}"
+          hyperfleet.io/cluster-name: "{{ .clusterName }}"
+      spec:
+        platform:
+          type: OCI
+          oci:
+            identityRef:
+              name: oci-credentials
+            region: "{{ .ociRegion }}"
+            compartmentId: "{{ .ociCompartmentId }}"
+        controllerAvailabilityPolicy: SingleReplica
+        pullSecret:
+          name: pull-secret
+        sshKey:
+          name: ssh-key
+        networking:
+          clusterNetwork:
+            - cidr: 10.132.0.0/14
+          serviceNetwork:
+            - cidr: 172.31.0.0/16
+          networkType: OVNKubernetes
+        services:
+          - service: Ignition
+            servicePublishingStrategy:
+              type: Route
+          - service: OAuthServer
+            servicePublishingStrategy:
+              type: Route
+          - service: APIServer
+            servicePublishingStrategy:
+              type: LoadBalancer
+          - service: Konnectivity
+            servicePublishingStrategy:
+              type: LoadBalancer
+        release:
+          image: "{{ .releaseImage }}"
+        dns:
+          baseDomain: "{{ .baseDomain }}"
+    discovery:
+      namespace: "{{ .namespace }}"
+      by_selectors:
+        label_selector:
+          hyperfleet.io/cluster-id: "{{ .clusterId }}"
+
+# Post-processing: report HostedCluster status back to API
+post:
+  payloads:
+    - name: "statusPayload"
+      build:
+        adapter: "{{ .adapter.name }}"
+        conditions:
+          - type: "Applied"
+            status:
+              expression: |
+                has(resources.hostedCluster.metadata.creationTimestamp) ? "True" : "False"
+            reason:
+              expression: |
+                has(resources.hostedCluster.metadata.creationTimestamp) ? "HostedClusterCreated" : "HostedClusterPending"
+            message:
+              expression: |
+                has(resources.hostedCluster.metadata.creationTimestamp)
+                ? "HostedCluster has been created on the management cluster"
+                : "HostedCluster is pending creation"
+          - type: "Available"
+            status:
+              expression: |
+                has(resources.hostedCluster.status) && has(resources.hostedCluster.status.conditions)
+                ? (resources.hostedCluster.status.conditions.filter(c, c.type == "Available").size() > 0
+                   ? resources.hostedCluster.status.conditions.filter(c, c.type == "Available")[0].status
+                   : "False")
+                : "False"
+            reason:
+              expression: |
+                has(resources.hostedCluster.status) && has(resources.hostedCluster.status.conditions)
+                ? (resources.hostedCluster.status.conditions.filter(c, c.type == "Available").size() > 0
+                   ? resources.hostedCluster.status.conditions.filter(c, c.type == "Available")[0].reason
+                   : "WaitingForControlPlane")
+                : "WaitingForControlPlane"
+            message:
+              expression: |
+                has(resources.hostedCluster.status) && has(resources.hostedCluster.status.conditions)
+                ? (resources.hostedCluster.status.conditions.filter(c, c.type == "Available").size() > 0
+                   ? resources.hostedCluster.status.conditions.filter(c, c.type == "Available")[0].message
+                   : "Waiting for hosted control plane to become available")
+                : "Waiting for hosted control plane to become available"
+          - type: "Health"
+            status:
+              expression: |
+                adapter.?executionStatus.orValue("") == "success" ? "True" : (adapter.?executionStatus.orValue("") == "failed" ? "False" : "Unknown")
+            reason:
+              expression: |
+                adapter.?errorReason.orValue("") != "" ? adapter.?errorReason.orValue("") : "Healthy"
+            message:
+              expression: |
+                adapter.?errorMessage.orValue("") != "" ? adapter.?errorMessage.orValue("") : "Adapter executed successfully"
+        observed_generation:
+          expression: "generation"
+        observed_time: "{{ now | date \"2006-01-02T15:04:05Z07:00\" }}"
+
+  post_actions:
+    - name: "reportClusterStatus"
+      api_call:
+        method: "POST"
+        url: "/clusters/{{ .clusterId }}/statuses"
+        headers:
+          - name: "Content-Type"
+            value: "application/json"
+        body: "{{ .statusPayload }}"
