@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "rabbitmq.fullname" . }}
+  labels:
+    {{- include "rabbitmq.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    {{- include "rabbitmq.selectorLabels" . | nindent 4 }}
+  ports:
+  - name: amqp
+    port: {{ .Values.service.amqpPort }}
+    targetPort: amqp
+  - name: management
+    port: {{ .Values.service.managementPort }}
+    targetPort: management

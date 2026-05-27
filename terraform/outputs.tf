@@ -90,3 +90,43 @@ output "external_api_note" {
   description = "Instructions for external API access"
   value       = var.enable_external_api ? "External API access is ENABLED. Deploy with: helm install hyperfleet charts/hyperfleet-gcp --set base.hyperfleet-api.service.type=LoadBalancer -n hyperfleet-system" : "External API access is DISABLED. Set enable_external_api=true to enable."
 }
+
+# =============================================================================
+# Helm Values (ready to use with helm install --values)
+# =============================================================================
+
+output "helm_values" {
+  description = "Helm values for all HyperFleet components (use with terraform output -json helm_values | jq -r '.adapters.adapter1')"
+  value = var.use_pubsub ? {
+    # Sentinel values (publishers)
+    sentinels = {
+      for topic_name, topic_data in module.pubsub[0].pubsub_config.topics : topic_name => yamlencode({
+        hyperfleet-sentinel = {
+          broker = {
+            type  = "googlepubsub"
+            topic = topic_data.topic_name
+            googlepubsub = {
+              projectId = var.gcp_project_id
+            }
+          }
+        }
+      })
+    }
+
+    # Adapter values (subscribers) - organized by subscription key
+    adapters = {
+      for sub_key, sub_data in module.pubsub[0].pubsub_config.subscriptions : sub_data.adapter_name => yamlencode({
+        hyperfleet-adapter = {
+          broker = {
+            type = "googlepubsub"
+            googlepubsub = {
+              projectId      = var.gcp_project_id
+              subscriptionId = sub_data.subscription_name
+              topic          = sub_data.topic_name
+            }
+          }
+        }
+      })
+    }
+  } : null
+}

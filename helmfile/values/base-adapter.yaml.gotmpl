@@ -1,0 +1,32 @@
+# Values that get applied to all adapter charts
+
+image:
+  registry: {{ env "REGISTRY" | default "registry.ci.openshift.org" }}
+  repository: {{ env "ADAPTER_REPOSITORY" | default "ci/hyperfleet-adapter" }}
+  tag: {{ env "ADAPTER_IMAGE_TAG" | default "latest" }}
+  pullPolicy: {{ env "IMAGE_PULL_POLICY" | default "IfNotPresent" }}
+
+adapterConfig:
+  log:
+    level: debug
+
+broker:
+  type: {{ .Values.brokerType }}
+  {{ if eq .Values.brokerType "googlepubsub" }}
+  googlepubsub:
+    projectId: {{ .Values.projectId }}
+    deadLetterTopic: ""
+    createTopicIfMissing: true
+    createSubscriptionIfMissing: true
+  {{ end }}
+  {{ if eq .Values.brokerType "rabbitmq" }}
+  rabbitmq:
+    url: {{ env "RABBITMQ_URL" | default "amqp://guest:guest@rabbitmq:5672" }}
+  {{ end }}
+env:
+  - name: SIMULATE_RESULT
+    value: success
+  - name: NAMESPACE
+    valueFrom:
+      fieldRef:
+        fieldPath: metadata.namespace

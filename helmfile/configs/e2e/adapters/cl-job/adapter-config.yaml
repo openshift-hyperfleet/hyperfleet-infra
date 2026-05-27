@@ -1,0 +1,23 @@
+adapter:
+  name: cl-job
+  #version: "0.1.0"
+
+# Log the full merged configuration after load (default: false)
+debug_config: false
+log:
+  level: debug
+
+clients:
+  hyperfleet_api:
+    base_url: CHANGE_ME
+    version: v1
+    timeout: 2s
+    retry_attempts: 3
+    retry_backoff: exponential
+
+  broker:
+    subscription_id: CHANGE_ME
+    topic: CHANGE_ME
+
+  kubernetes:
+    api_version: "v1"

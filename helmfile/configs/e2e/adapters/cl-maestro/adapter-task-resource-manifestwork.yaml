@@ -1,0 +1,144 @@
+# Go template — rendered by the adapter engine before YAML parsing
+apiVersion: work.open-cluster-management.io/v1
+kind: ManifestWork
+metadata:
+  # ManifestWork name - must be unique within consumer namespace
+  name: "{{ .clusterId }}-{{ .adapter.name }}"
+
+  # Labels for identification, filtering, and management
+  labels:
+    # HyperFleet tracking labels
+    hyperfleet.io/cluster-id: "{{ .clusterId }}"
+    hyperfleet.io/adapter: "{{ .adapter.name }}"
+    hyperfleet.io/component: "infrastructure"
+    hyperfleet.io/generation: "{{ .generation }}"
+    hyperfleet.io/resource-group: "cluster-setup"
+
+    # Maestro-specific labels
+    maestro.io/source-id: "{{ .adapter.name }}"
+    maestro.io/resource-type: "manifestwork"
+    maestro.io/priority: "normal"
+
+    # Standard Kubernetes application labels
+    app.kubernetes.io/name: "aro-hcp-cluster"
+    app.kubernetes.io/instance: "{{ .clusterId }}"
+    app.kubernetes.io/version: "v1.0.0"
+    app.kubernetes.io/component: "infrastructure"
+    app.kubernetes.io/part-of: "hyperfleet"
+    app.kubernetes.io/managed-by: "cl-maestro"
+    app.kubernetes.io/created-by: "{{ .adapter.name }}"
+{{ if .platformType }}
+    hyperfleet.io/platform-type: "{{ .platformType }}"
+{{ end }}
+
+  # Annotations for metadata and operational information
+  annotations:
+    # Tracking and lifecycle
+    hyperfleet.io/created-by: "cl-maestro-framework"
+    hyperfleet.io/managed-by: "{{ .adapter.name }}"
+    hyperfleet.io/generation: "{{ .generation }}"
+    hyperfleet.io/cluster-id: "{{ .clusterId }}"
+    hyperfleet.io/cluster-name: "{{ .clusterName }}"
+    hyperfleet.io/deployment-time: "{{ .timestamp }}"
+
+    # Maestro-specific annotations
+    maestro.io/applied-time: "{{ .timestamp }}"
+    maestro.io/source-adapter: "{{ .adapter.name }}"
+
+    # Documentation
+    description: "Complete cluster setup including namespace, configuration, and RBAC"
+
+# ManifestWork specification
+spec:
+  # ============================================================================
+  # Workload - Contains the Kubernetes manifests to deploy
+  # ============================================================================
+  workload:
+    # Kubernetes manifests array - injected by framework from business logic config
+    manifests:
+    - apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ .clusterId | lower }}-{{ .adapter.name }}-namespace"
+        labels:
+          app.kubernetes.io/component: adapter-task-config
+          app.kubernetes.io/instance: "{{ .adapter.name }}"
+          app.kubernetes.io/name: cl-maestro
+          app.kubernetes.io/transport: maestro
+        annotations:
+          hyperfleet.io/generation: "{{ .generation }}"
+    - apiVersion: v1
+      kind: ConfigMap
+      data:
+        cluster_id: "{{ .clusterId }}"
+        cluster_name: "{{ .clusterName }}"
+{{ if eq .platformType "gcp" }}
+        platform_tier: "cloud"
+{{ else }}
+        platform_tier: "onprem"
+{{ end }}
+{{ range $i, $subnet := .subnets }}
+        subnet_{{ $subnet.id }}_name: "{{ $subnet.name }}"
+        subnet_{{ $subnet.id }}_cidr: "{{ $subnet.cidr }}"
+        subnet_{{ $subnet.id }}_role: "{{ $subnet.role }}"
+{{ end }}
+      metadata:
+        name: "{{ .clusterId | lower }}-{{ .adapter.name }}-configmap"
+        namespace: "{{ .clusterId | lower }}-{{ .adapter.name }}-namespace"
+        labels:
+          app.kubernetes.io/component: adapter-task-config
+          app.kubernetes.io/instance: "{{ .adapter.name }}"
+          app.kubernetes.io/name: cl-maestro
+          app.kubernetes.io/version: 1.0.0
+          app.kubernetes.io/transport: maestro
+        annotations:
+          hyperfleet.io/generation: "{{ .generation }}"
+
+  # ============================================================================
+  # Delete Options - How resources should be removed
+  # ============================================================================
+  deleteOption:
+    # Propagation policy for resource deletion
+    # - "Foreground": Wait for dependent resources to be deleted first
+    # - "Background": Delete immediately, let cluster handle dependents
+    # - "Orphan": Leave resources on cluster when ManifestWork is deleted
+    propagationPolicy: "Foreground"
+
+    # Grace period for graceful deletion (seconds)
+    gracePeriodSeconds: 30
+
+  # ============================================================================
+  # Manifest Configurations - Per-resource settings for update and feedback
+  # ============================================================================
+  manifestConfigs:
+    - resourceIdentifier:
+        group: ""                           # Core API group (empty for v1 resources)
+        resource: "namespaces"              # Resource type
+        name: "{{ .clusterId | lower }}-{{ .adapter.name }}-namespace"    # Specific resource name
+      updateStrategy:
+        type: "ServerSideApply"             # Use server-side apply for namespaces
+      feedbackRules:
+        - type: "JSONPaths"                 # Use JSON path expressions for status feedback
+          jsonPaths:
+            - name: "phase"
+              path: ".status.phase"
+    # ========================================================================
+    # Configuration for ConfigMap resources
+    # ========================================================================
+    - resourceIdentifier:
+        group: ""                           # Core API group (empty for v1 resources)
+        resource: "configmaps"              # Resource type
+        name: "{{ .clusterId | lower }}-{{ .adapter.name }}-configmap"    # Specific resource name
+        namespace: "{{ .clusterId | lower }}-{{ .adapter.name }}-namespace"
+      updateStrategy:
+        type: "ServerSideApply"             # Use server-side apply for namespaces
+        serverSideApply:
+          fieldManager: "cl-maestro" # Field manager name for conflict resolution
+          force: false                      # Don't force conflicts (fail on conflicts)
+      feedbackRules:
+        - type: "JSONPaths"                 # Use JSON path expressions for status feedback
+          jsonPaths:
+            - name: "data"
+              path: ".data"
+            - name: "resourceVersion"
+              path: ".metadata.resourceVersion"

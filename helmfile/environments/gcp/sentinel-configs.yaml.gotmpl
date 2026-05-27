@@ -1,0 +1,17 @@
+sentinels:
+  - name: clusters
+    values:
+      - config:
+          resourceType: clusters
+      - {{ readFile "../../../generated-values-from-terraform/sentinel-clusters.yaml" | fromYaml | toYaml | nindent 8 }}
+
+  - name: nodepools
+    values:
+      - config:
+          resourceType: nodepools
+          messageData:
+            owner_references:
+              id: "resource.owner_references.id"
+              href: "resource.owner_references.href"
+              kind: "resource.owner_references.kind"
+      - {{ readFile "../../../generated-values-from-terraform/sentinel-nodepools.yaml" | fromYaml | toYaml | nindent 8 }}

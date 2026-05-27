@@ -1,0 +1,178 @@
+# Simple valid HyperFleet Adapter Configuration for testing
+
+# Parameters with all required variables
+params:
+  - name: "clusterId"
+    source: "event.owner_references.id"
+    type: "string"
+    required: true
+  - name: "nodepoolId"
+    source: "event.id"
+    type: "string"
+    required: true
+
+# Preconditions with valid operators and CEL expressions
+preconditions:
+  - name: "nodepoolStatus"
+    api_call:
+      method: "GET"
+      url: "/clusters/{{ .clusterId }}/nodepools/{{ .nodepoolId }}"
+      timeout: 10s
+      retry_attempts: 3
+      retry_backoff: "exponential"
+    capture:
+      - name: "nodepoolName"
+        field: "name"
+      - name: "generationSpec"
+        field: "generation"
+      - name: "is_deleting"
+        expression: "has(nodepoolStatus.deleted_time)"
+      - name: "nodepoolNotReconciled"
+        expression: |
+          status.conditions.filter(c, c.type == "Reconciled").size() > 0
+            ? status.conditions.filter(c, c.type == "Reconciled")[0].status != "True"
+            : true
+      - name: "nodepoolReconciledTTL"
+        expression: |
+          (timestamp(now()) - timestamp(
+            status.conditions.filter(c, c.type == "Reconciled").size() > 0
+              ? status.conditions.filter(c, c.type == "Reconciled")[0].last_transition_time
+              : now()
+          )).getSeconds() > 300
+
+  - name: "clusterAdapterStatus"
+    api_call:
+      method: "GET"
+      url: "/clusters/{{ .clusterId }}/statuses"
+      timeout: 10s
+      retry_attempts: 3
+      retry_backoff: "exponential"
+    capture:
+      - name: "clusterNamespaceStatus"
+        field: "{.items[?(@.adapter=='cl-namespace')].data.namespace.status}"
+
+  - name: "validationCheck"
+    # Precondition passes if deleting OR (namespace active AND (nodepool not reconciled OR reconciled TTL expired))
+    expression: |
+      is_deleting || (clusterNamespaceStatus == "Active" && (nodepoolNotReconciled || nodepoolReconciledTTL))
+
+# Resources with valid K8s manifests
+resources:
+  - name: "nodepoolConfigMap"
+    transport:
+      client: "kubernetes"
+    manifest:
+      ref: "/etc/adapter/configmap.yaml"
+    discovery:
+      namespace: "{{ .clusterId }}"
+      by_selectors:
+        label_selector:
+          hyperfleet.io/resource-type: "configmap"
+          hyperfleet.io/cluster-id: "{{ .clusterId }}"
+          hyperfleet.io/nodepool-id: "{{ .nodepoolId }}"
+    lifecycle:
+      delete:
+        propagationPolicy: Background
+        when:
+          expression: "is_deleting"
+
+# Post-processing with valid CEL expressions
+post:
+  payloads:
+    - name: "nodepoolStatusPayload"
+      build:
+        adapter: "{{ .adapter.name }}"
+        conditions:
+          # Applied: ConfigMap successfully created
+          - type: "Applied"
+            status:
+              expression: |
+                has(resources.nodepoolConfigMap) ? "True" : "False"
+            reason:
+              expression: |
+                has(resources.nodepoolConfigMap)
+                  ? "ConfigMapApplied"
+                  : "ConfigMapPending"
+            message:
+              expression: |
+                has(resources.nodepoolConfigMap)
+                  ? "nodepoolConfigMap manifest applied successfully"
+                  : "nodepoolConfigMap is pending to be applied"
+          # Available: Check configmap exists
+          - type: "Available"
+            status:
+              expression: |
+                has(resources.nodepoolConfigMap) && has(resources.nodepoolConfigMap.data) ? "True" : "False"
+            reason:
+              expression: |
+                has(resources.nodepoolConfigMap) && has(resources.nodepoolConfigMap.data)
+                  ? "ConfigMapReady"
+                  : "ConfigMapNotReady"
+            message:
+              expression: |
+                has(resources.nodepoolConfigMap) && has(resources.nodepoolConfigMap.data)
+                  ? "ConfigMap is available and contains data"
+                  : "ConfigMap is not yet available"
+          # Health: Adapter execution status (runtime)
+          - type: "Health"
+            status:
+              expression: |
+                adapter.?executionStatus.orValue("") == "success"
+                  && !adapter.?resourcesSkipped.orValue(false)
+                ? "True"
+                : "False"
+            reason:
+              expression: |
+                adapter.?executionStatus.orValue("") != "success"
+                ? "ExecutionFailed:" + adapter.?executionError.?phase.orValue("unknown")
+                : adapter.?resourcesSkipped.orValue(false)
+                  ? "ResourcesSkipped"
+                  : "Healthy"
+            message:
+              expression: |
+                adapter.?executionStatus.orValue("") != "success"
+                ? "Adapter failed at phase ["
+                    + adapter.?executionError.?phase.orValue("unknown")
+                    + "] step ["
+                    + adapter.?executionError.?step.orValue("unknown")
+                    + "]: "
+                    + adapter.?executionError.?message.orValue(adapter.?errorMessage.orValue("no details"))
+                : adapter.?resourcesSkipped.orValue(false)
+                  ? "Resources skipped: " + adapter.?skipReason.orValue("unknown reason")
+                  : "Adapter execution completed successfully"
+          # Finalized: True once configmap is confirmed deleted during deletion
+          - type: "Finalized"
+            status:
+              expression: |
+                is_deleting
+                  && adapter.?executionStatus.orValue("") == "success"
+                  && !adapter.?resourcesSkipped.orValue(false)
+                  && !resources.?nodepoolConfigMap.hasValue()
+                ? "True"
+                : "False"
+            reason:
+              expression: |
+                !is_deleting ? "NotDeleting"
+                : !resources.?nodepoolConfigMap.hasValue()
+                  ? "CleanupConfirmed"
+                  : "CleanupInProgress"
+            message:
+              expression: |
+                !is_deleting ? "Resource not marked for deletion"
+                : !resources.?nodepoolConfigMap.hasValue()
+                  ? "All resources deleted; cleanup confirmed"
+                  : "Deletion in progress; waiting for configmap to be removed"
+        # Event generation ID metadata field needs to use expression to avoid interpolation issues
+        observed_generation:
+          expression: "generationSpec"
+        observed_time: "{{ now | date \"2006-01-02T15:04:05Z07:00\" }}"
+
+  post_actions:
+    - name: "reportNodepoolStatus"
+      api_call:
+        method: "PUT"
+        url: "/clusters/{{ .clusterId }}/nodepools/{{ .nodepoolId }}/statuses"
+        headers:
+          - name: "Content-Type"
+            value: "application/json"
+        body: "{{ .nodepoolStatusPayload }}"

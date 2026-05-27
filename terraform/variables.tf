@@ -156,6 +156,14 @@ variable "pubsub_topic_configs" {
         sentinel = {}
       }
     }
+    nodepools = {
+      subscribers = {
+        adapter3 = {}
+      }
+      publishers = {
+        sentinel = {}
+      }
+    }
   }
 }
 

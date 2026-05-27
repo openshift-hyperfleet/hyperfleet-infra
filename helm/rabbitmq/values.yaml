@@ -1,0 +1,36 @@
+# Default values for rabbitmq
+# This is a SIMPLE chart for development only
+# For production, use the official Bitnami RabbitMQ chart
+
+image:
+  repository: rabbitmq
+  tag: 3.13-management-alpine
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+auth:
+  username: guest
+  password: guest
+
+service:
+  type: ClusterIP
+  amqpPort: 5672
+  managementPort: 15672
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+probes:
+  readiness:
+    initialDelaySeconds: 10
+    periodSeconds: 5
+  liveness:
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    failureThreshold: 3

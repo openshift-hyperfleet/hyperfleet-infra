@@ -1,0 +1,45 @@
+# RabbitMQ for development use only.
+# For production, use a StatefulSet with PersistentVolumeClaim and Kubernetes Secrets.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "rabbitmq.fullname" . }}
+  labels:
+    {{- include "rabbitmq.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "rabbitmq.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "rabbitmq.selectorLabels" . | nindent 8 }}
+    spec:
+      containers:
+      - name: rabbitmq
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        ports:
+        - containerPort: {{ .Values.service.amqpPort }}
+          name: amqp
+        - containerPort: {{ .Values.service.managementPort }}
+          name: management
+        env:
+        - name: RABBITMQ_DEFAULT_USER
+          value: {{ .Values.auth.username | quote }}
+        - name: RABBITMQ_DEFAULT_PASS
+          value: {{ .Values.auth.password | quote }}
+        resources:
+          {{- toYaml .Values.resources | nindent 10 }}
+        readinessProbe:
+          tcpSocket:
+            port: {{ .Values.service.amqpPort }}
+          initialDelaySeconds: {{ .Values.probes.readiness.initialDelaySeconds }}
+          periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
+        livenessProbe:
+          tcpSocket:
+            port: {{ .Values.service.amqpPort }}
+          initialDelaySeconds: {{ .Values.probes.liveness.initialDelaySeconds }}
+          periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
+          failureThreshold: {{ .Values.probes.liveness.failureThreshold }}

@@ -47,6 +47,7 @@ plan.md
 
 generated
 generated-values-from-terraform
+generated-values-rabbitmq
 terraform/envs/gke/dev.tfbackend
 terraform/envs/gke/dev.tfvars
 helm/adapter1/charts/*

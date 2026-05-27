@@ -1,61 +1,310 @@
-# HyperFleet CLM - Full Installation Makefile
-# Usage: make help
 
 .DEFAULT_GOAL := help
 
-NAMESPACE        ?= hyperfleet
-MAESTRO_NS       ?= maestro
-KUBECONFIG       ?= $(HOME)/.kube/config
+# Possible envs are gcp, e2e-gcp, kind, e2e-kind
+# Default to gcp
+HELMFILE_ENV ?= gcp
+
+
+ifeq ($(findstring gcp,$(HELMFILE_ENV)),)
+	-include env.kind
+else
+	-include env.gcp
+endif
+
+export
+GIT_SHA ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 TF_ENV           ?= dev
 TF_BACKEND       ?= envs/gke/$(TF_ENV).tfbackend
 TF_VARS          ?= envs/gke/$(TF_ENV).tfvars
-GCP_PROJECT_ID   ?= hcm-hyperfleet
-BROKER_TYPE      ?= googlepubsub
-RABBITMQ_URL     ?= amqp://guest:guest@rabbitmq:5672/
-REGISTRY             ?= registry.ci.openshift.org
-API_REPOSITORY       ?= ci/hyperfleet-api
-SENTINEL_REPOSITORY  ?= ci/hyperfleet-sentinel
-ADAPTER_REPOSITORY   ?= ci/hyperfleet-adapter
-API_IMAGE_TAG        ?= latest
-SENTINEL_IMAGE_TAG   ?= latest
-ADAPTER_IMAGE_TAG    ?= latest
+
 DRY_RUN            ?=
 AUTO_APPROVE       ?=
 # Derived flags from boolean variables (only true/1 are treated as truthy)
 TRUTHY_VALUES     := true 1
 DRY_RUN_FLAG      := $(if $(filter $(TRUTHY_VALUES),$(strip $(DRY_RUN))),--dry-run)
 AUTO_APPROVE_FLAG := $(if $(filter $(TRUTHY_VALUES),$(strip $(AUTO_APPROVE))),-auto-approve)
+BUILD_IMAGES_ENABLED := $(if $(filter $(TRUTHY_VALUES),$(strip $(BUILD_IMAGES))),1,)
 
-# Chart source configuration (helm-git plugin)
-# Chart refs are independent of image tags so that overriding an image tag
-# (e.g., make install-api API_IMAGE_TAG=dev-abc123) does not retarget charts.
-# Override chart refs explicitly when needed:
-#   make install-adapter1 ADAPTER_CHART_REF=main
-#   make install-adapter1 CHART_ORG=myuser
-CHART_ORG          ?= openshift-hyperfleet
-API_CHART_REF      ?= main
-SENTINEL_CHART_REF ?= main
-ADAPTER_CHART_REF  ?= main
 
-HELM_DIR         := helm
+# Default Dirs
+MANIFESTS_DIR    ?= manifests
+HELM_DIR         ?= helm
 TF_DIR           ?= terraform
-GENERATED_DIR    := generated-values-from-terraform
 
-# ──────────────────────────────────────────────
-# Prerequisite checks
-# ──────────────────────────────────────────────
+GENERATED_RABBITMQ_DIR ?= generated-values-rabbitmq
+GENERATED_DIR ?= generated-values-from-terraform
+RABBITMQ_URL ?=  "amqp://guest:guest@rabbitmq:5672"
+MAESTRO_CONSUMER ?= cluster1
+MAESTRO_NAMESPACE ?= maestro
+KUBECONFIG ?= $(HOME)/.kube/config
 
+# ==== Terraform Targets ====
+.PHONY: install-terraform
+install-terraform: check-terraform check-tf-files ## Run Terraform init and apply
+	cd $(TF_DIR) && terraform init -backend-config=$(TF_BACKEND)
+	cd $(TF_DIR) && terraform apply -var-file=$(TF_VARS) $(AUTO_APPROVE_FLAG) -lock=false
+
+.PHONY: plan-terraform
+plan-terraform: check-terraform check-tf-files ## Run terraform plan (preview only, no apply)
+	cd $(TF_DIR) && terraform init -backend-config=$(TF_BACKEND)
+	cd $(TF_DIR) && terraform plan -var-file=$(TF_VARS)
+
+.PHONY: destroy-terraform
+destroy-terraform: check-terraform check-tf-files ## Destroy Terraform-managed infrastructure
+	cd $(TF_DIR) && terraform init -backend-config=$(TF_BACKEND)
+	# Always use -auto-approve to prevent CI cleanup from hanging on interactive prompt
+	cd $(TF_DIR) && terraform destroy -var-file=$(TF_VARS) -auto-approve -lock=false
+
+.PHONY: get-credentials
+get-credentials: check-terraform ## Configure kubectl credentials from Terraform outputs
+	@echo "Fetching cluster credentials..."
+	@eval $$(cd $(TF_DIR) && terraform output -raw connect_command)
+	@echo "OK: kubectl configured"
+
+
+# ==== Kind Targets ====
+.PHONY: create-kind-cluster
+create-kind-cluster: check-kind ## Create a new kind cluster or export kubeconfig if exists
+	@if kind get clusters 2>/dev/null | grep -q "^$(KIND_CLUSTER_NAME)$$"; then \
+		echo "kind cluster '$(KIND_CLUSTER_NAME)' already exists ..."; \
+	else \
+		echo "Creating new kind cluster '$(KIND_CLUSTER_NAME)'..."; \
+		kind create cluster --name $(KIND_CLUSTER_NAME); \
+	fi
+	@kind export kubeconfig --name $(KIND_CLUSTER_NAME) --kubeconfig $(KUBECONFIG)
+	@kubectl config use-context kind-$(KIND_CLUSTER_NAME) --kubeconfig $(KUBECONFIG)
+	@echo "OK: kubeconfig exported and context set for cluster $(KIND_CLUSTER_NAME)" \
+
+.PHONY: delete-kind-cluster
+delete-kind-cluster: ## Delete the kind cluster
+	kind delete cluster --name $(KIND_CLUSTER_NAME)
+	@echo "OK: deleted kind cluster $(KIND_CLUSTER_NAME)"
+
+.PHONY: kind-build-images
+kind-build-images: check-kind check-kubectl-context ## Build and load images to kind (skipped if BUILD_IMAGES=true in env.kind)
+ifeq ($(BUILD_IMAGES), true)
+	@./scripts/kind-build-images.sh
+else
+	@echo ""
+	@echo "[NOTE: Skipping building images for kind cluster]"
+	@echo "To enable kind image builds set BUILD_IMAGES=true in env.kind"
+endif
+
+# ==== Helmfile Targets ====
+.PHONY: template-helmfile
+template-helmfile: check-helmfile ## Template the helmfile for the current environment
+	helmfile -f helmfile/helmfile.yaml.gotmpl -e $(HELMFILE_ENV) template
+
+.PHONY: build-helmfile
+build-helmfile: check-helmfile ## Build the helmfile for the current environment
+	helmfile -f helmfile/helmfile.yaml.gotmpl -e $(HELMFILE_ENV) build
+
+.PHONY: lint-helmfile
+lint-helmfile: check-helmfile ## Lint the helmfile for the current environment
+	helmfile -f helmfile/helmfile.yaml.gotmpl -e $(HELMFILE_ENV) lint
+
+# ==== Maestro Targets ====
+# NOTE: This is a workaround to install the AppliedManifestWorks CRD manually if there are issues installing via Helm - https://github.com/openshift-online/maestro/blob/main/charts/maestro-agent/templates/crd.yaml is not working as expected
+.PHONY: install-applied-manifest-crd
+install-applied-manifest-crd: check-kubectl ## Install AppliedManifestWorks CRD (for Maestro)
+	@echo "Installing AppliedManifestWorks CRD..."
+	@kubectl apply -f https://raw.githubusercontent.com/open-cluster-management-io/api/main/work/v1/0000_01_work.open-cluster-management.io_appliedmanifestworks.crd.yaml
+	@echo "OK: AppliedManifestWorks CRD installed"
+
+.PHONY: install-maestro
+install-maestro: check-helm check-kubectl check-maestro-namespace install-applied-manifest-crd ## Install Maestro (server + agent)
+	helm dependency update $(HELM_DIR)/maestro
+	@echo "Installing Maestro..."
+	if ! helm upgrade --install $(DRY_RUN_FLAG) $(MAESTRO_NAMESPACE)-maestro $(HELM_DIR)/maestro \
+		--namespace $(MAESTRO_NAMESPACE) \
+		--set agent.installWorkCRDs=false \
+		--set agent.messageBroker.mqtt.host=maestro-mqtt.$(MAESTRO_NAMESPACE) \
+		--wait --timeout 5m ; then \
+		echo "Warning: maestro install failed on cluster; continuing"; \
+	fi; 
+	@echo "Waiting for Maestro pods to be ready..."
+	@kubectl wait --for=condition=ready pod -l app.kubernetes.io/instance=$(MAESTRO_NAMESPACE)-maestro --namespace $(MAESTRO_NAMESPACE) --timeout=180s || true
+	@echo "OK: Maestro pods are ready"
+
+
+.PHONY: create-maestro-consumer
+create-maestro-consumer: check-kubectl check-maestro-namespace check-jq ## Create a Maestro consumer (requires Maestro server running)
+	@echo "Validating MAESTRO_CONSUMER name..."
+	@if ! echo "$(MAESTRO_CONSUMER)" | grep -qE '^[a-zA-Z0-9_-]+$$'; then \
+		echo "ERROR: MAESTRO_CONSUMER='$(MAESTRO_CONSUMER)' contains invalid characters"; \
+		echo "       Only alphanumerics, dashes, and underscores are allowed"; \
+		exit 1; \
+	fi
+	@echo "Creating Maestro consumer '$(MAESTRO_CONSUMER)'..."
+	@payload=$$(echo '{}' | jq -c --arg name "$(MAESTRO_CONSUMER)" '{name: $$name}'); \
+	for i in 1 2 3 4 5; do \
+		exists=$$(kubectl exec deploy/maestro --namespace $(MAESTRO_NAMESPACE) -- \
+			curl -sS --connect-timeout 5 --max-time 10 http://maestro.$(MAESTRO_NAMESPACE).svc.cluster.local:8000/api/maestro/v1/consumers \
+			2>/dev/null | jq --arg name "$(MAESTRO_CONSUMER)" '[.items[]? | select(.name == $$name)] | length') 2>/dev/null || exists=0; \
+		if [ "$$exists" -gt 0 ]; then \
+			echo "OK: consumer '$(MAESTRO_CONSUMER)' already exists"; exit 0; \
+		fi; \
+		status=$$(kubectl exec deploy/maestro --namespace $(MAESTRO_NAMESPACE) --kubeconfig $(KUBECONFIG) -- \
+			curl -sS --connect-timeout 5 --max-time 10 -o /dev/null -w '%{http_code}' -X POST \
+			-H "Content-Type: application/json" \
+			http://maestro.$(MAESTRO_NAMESPACE).svc.cluster.local:8000/api/maestro/v1/consumers \
+			-d "$$payload" 2>/dev/null) 2>/dev/null || status="error"; \
+		case "$$status" in \
+			201) echo "OK: consumer '$(MAESTRO_CONSUMER)' created"; exit 0;; \
+			409) echo "WARNING: consumer '$(MAESTRO_CONSUMER)' already exists (race condition)"; exit 0;; \
+			*) echo "  Attempt $$i failed (status: $$status), retrying in 5s..."; sleep 5;; \
+		esac; \
+	done; \
+	echo "ERROR: failed to create Maestro consumer after 5 attempts"; exit 1
+
+.PHONY: install-maestro-all
+install-maestro-all: install-maestro create-maestro-consumer ## Install Maestro (server + agent + consumer)
+	@echo "OK: Maestro installed and consumer created"
+
+.PHONY: uninstall-applied-manifest-crd
+uninstall-applied-manifest-crd: check-kubectl ## Uninstall AppliedManifestWorks CRD (for Maestro)
+	@echo "Uninstalling AppliedManifestWorks CRD..."
+	@kubectl delete -f https://raw.githubusercontent.com/open-cluster-management-io/api/main/work/v1/0000_01_work.open-cluster-management.io_appliedmanifestworks.crd.yaml
+	@echo "OK: AppliedManifestWorks CRD uninstalled"
+
+.PHONY: uninstall-maestro
+uninstall-maestro: check-helm uninstall-applied-manifest-crd ## Uninstall Maestro
+	helm uninstall $(MAESTRO_NAMESPACE)-maestro --namespace $(MAESTRO_NAMESPACE) || true
+
+
+# ==== RabbitMQ Components ====
+.PHONY: generate-rabbitmq-values
+generate-rabbitmq-values: ## Generate Helm values for RabbitMQ deployments (HELMFILE_ENV=kind only)
+ifeq ($(HELMFILE_ENV),kind)
+	./scripts/generate-rabbitmq-values.sh \
+		--rabbitmq-url $(RABBITMQ_URL) \
+		--namespace $(NAMESPACE)
+else
+	@echo "OK: generate-rabbitmq-values is not supported for HELMFILE_ENV=$(HELMFILE_ENV)"
+endif
+
+
+# ==== Hyperfleet Targets ====
+# add-helm-repo: add a helm repo for a component
+# Usage: $(call add-helm-repo,<component-name>,<chart-ref>)
+define add-helm-repo
+	helm repo add hyperfleet-$(1) "git+https://github.com/$(CHART_ORG)/hyperfleet-$(1)@charts?ref=$(2)&sparse=0"
+	helm repo update hyperfleet-$(1)
+endef
+
+.PHONY: install-repos
+install-repos: check-helmfile-env ## Add all hyperfleet helm repos
+	$(call add-helm-repo,api,$(API_CHART_REF))
+	$(call add-helm-repo,sentinel,$(SENTINEL_CHART_REF))
+	$(call add-helm-repo,adapter,$(ADAPTER_CHART_REF))
+
+.PHONY: install-hyperfleet
+install-hyperfleet: check-helmfile-env ## Install all HyperFleet components
+	helmfile -f helmfile/helmfile.yaml.gotmpl -e $(HELMFILE_ENV) apply
+
+.PHONY: install-api
+install-api: check-helmfile-env ## Install HyperFleet API
+	helmfile apply -f helmfile/helmfile.yaml.gotmpl -e $(HELMFILE_ENV) -l component=api
+
+.PHONY: install-sentinels
+install-sentinels: check-helmfile-env ## Install Hyperfleet Sentinels
+	helmfile apply -f helmfile/helmfile.yaml.gotmpl -e $(HELMFILE_ENV) -l component=sentinel
+
+.PHONY: install-adapters
+install-adapters: check-helmfile-env ## Install Hyperfleet Adapters
+	helmfile apply -f helmfile/helmfile.yaml.gotmpl -e $(HELMFILE_ENV) -l component=adapter
+
+.PHONY: uninstall-hyperfleet
+uninstall-hyperfleet: check-kubectl-context ## Uninstall all HyperFleet components
+	helmfile -f helmfile/helmfile.yaml.gotmpl -e $(HELMFILE_ENV) destroy
+
+.PHONY: uninstall-hyperfleet-api
+uninstall-hyperfleet-api: check-kubectl-context ## Uninstall Hyperfleet API
+	helmfile -f helmfile/helmfile.yaml.gotmpl -e $(HELMFILE_ENV) -l component=api destroy
+
+.PHONY: uninstall-hyperfleet-sentinels
+uninstall-hyperfleet-sentinels: check-kubectl-context ## Uninstall Hyperfleet Sentinels
+	helmfile -f helmfile/helmfile.yaml.gotmpl -e $(HELMFILE_ENV) -l component=sentinel destroy
+
+.PHONY: uninstall-hyperfleet-adapters
+uninstall-hyperfleet-adapters: check-kubectl-context ## Uninstall Hyperfleet Adapters
+	helmfile -f helmfile/helmfile.yaml.gotmpl -e $(HELMFILE_ENV) -l component=adapter destroy
+
+
+# ==== Prerequisite/Utility Targets ====
 .PHONY: check-helm
 check-helm: ## Verify helm and helm-git plugin are installed
 	@command -v helm >/dev/null 2>&1 || { echo "ERROR: helm is not installed"; exit 1; }
 	@helm plugin list | grep -q "helm-git" || { echo "ERROR: helm-git plugin is not installed. Install with: helm plugin install https://github.com/aslafy-z/helm-git"; exit 1; }
 	@echo "OK: helm and helm-git plugin found"
 
+.PHONY: check-helmfile
+check-helmfile: check-helm ## Verify helmfile is installed
+	@command -v helmfile >/dev/null 2>&1 || { echo "ERROR: helmfile is not installed"; exit 1; }
+	@echo "OK: helmfile found"
+	@helm diff version >/dev/null 2>&1 || { echo "ERROR: helm diff plugin is not installed. Install with: helm plugin install https://github.com/databus23/helm-diff --verify=false"; exit 1; }
+	@echo "OK: helm diff plugin found"
+
+.PHONY: check-kind
+check-kind: ## Verify kind is installed
+	@command -v kind >/dev/null 2>&1 || { echo "ERROR: kind is not installed"; exit 1; }
+	@echo "OK: kind found"
+
 .PHONY: check-kubectl
 check-kubectl: ## Verify kubectl is installed and context is set
 	@command -v kubectl >/dev/null 2>&1 || { echo "ERROR: kubectl is not installed"; exit 1; }
 	@kubectl config current-context >/dev/null 2>&1 || { echo "ERROR: no kubectl context set"; exit 1; }
 	@echo "OK: kubectl found, context: $$(kubectl config current-context)"
+
+.PHONY: check-jq
+check-jq: ## Verify jq is installed
+	@command -v jq >/dev/null 2>&1 || { echo "ERROR: jq is not installed. Install with: brew install jq"; exit 1; }
+	@echo "OK: jq found"
+
+.PHONY: check-helmfile-env
+check-helmfile-env: check-helmfile check-kubectl-context check-helmfile-env-generated ## Verify kubectl context and generated values directory exists
+
+.PHONY: check-helmfile-env-generated
+check-helmfile-env-generated: ## Check that the generated directory exists based on HELMFILE_ENV
+	@if [ "$(HELMFILE_ENV)" = "gcp" ]; then \
+		test -d $(GENERATED_DIR) || { echo "ERROR: generated-values-from-terraform directory does not exist"; exit 1; }; \
+		echo "OK: generated-values-from-terraform directory exists"; \
+	elif [ "$(HELMFILE_ENV)" = "kind" ]; then \
+		test -d $(GENERATED_RABBITMQ_DIR) || { echo "ERROR: generated-values-rabbitmq directory does not exist"; exit 1; }; \
+		echo "OK: generated-values-rabbitmq directory exists"; \
+	fi
+	@echo "OK: Did not need to validate generated values for environment: $(HELMFILE_ENV)"
+
+
+.PHONY: check-kubectl-context
+check-kubectl-context: check-kubectl ## Verify kubectl context matches HELMFILE_ENV
+	@CONTEXT=$$(kubectl config current-context); \
+	case "$(HELMFILE_ENV)" in \
+		gcp|e2e-gcp) \
+			if echo "$$CONTEXT" | grep -q "gke_"; then \
+				echo "OK: connected to GKE cluster (context: $$CONTEXT)"; \
+			else \
+				echo "WARNING: current context '$$CONTEXT' does not appear to be a GKE cluster"; \
+				echo "         Expected context name containing 'gke_'"; \
+				exit 1; \
+			fi \
+			;; \
+		kind|e2e-kind) \
+			if echo "$$CONTEXT" | grep -q "kind-"; then \
+				echo "OK: connected to kind cluster (context: $$CONTEXT)"; \
+			else \
+				echo "WARNING: current context '$$CONTEXT' does not appear to be a kind cluster"; \
+				echo "         Expected context name containing 'kind-'"; \
+				exit 1; \
+			fi \
+			;; \
+		*) \
+			echo "ERROR: invalid HELMFILE_ENV: $(HELMFILE_ENV)"; \
+			echo "       Valid values: gcp, e2e-gcp, kind, e2e-kind"; \
+			exit 1 \
+			;; \
+	esac \
 
 .PHONY: check-terraform
 check-terraform: ## Verify terraform is installed
@@ -68,221 +317,105 @@ check-tf-files: ## Verify terraform env files exist
 	@test -f $(TF_DIR)/$(TF_VARS) || { echo "ERROR: tfvars file not found: $(TF_DIR)/$(TF_VARS)";  echo "Create a copy from $(TF_DIR)/$(TF_VARS).example and customize it"; exit 1; }
 	@echo "OK: terraform env files found for $(TF_ENV)"
 
-.PHONY: check-namespace
-check-namespace: check-kubectl ## Create namespace if it doesn't exist
-	@kubectl get namespace $(NAMESPACE) >/dev/null 2>&1 || kubectl create namespace $(NAMESPACE)
-	@echo "OK: namespace $(NAMESPACE) ready"
-
-.PHONY: check-maestro-namespace
-check-maestro-namespace: check-kubectl ## Create maestro namespace if it doesn't exist
-	@kubectl get namespace $(MAESTRO_NS) >/dev/null 2>&1 || kubectl create namespace $(MAESTRO_NS)
-	@echo "OK: namespace $(MAESTRO_NS) ready"
-
-# ──────────────────────────────────────────────
-# Terraform → cluster credentials & Helm values
-# ──────────────────────────────────────────────
-
-.PHONY: get-credentials
-get-credentials: check-terraform ## Configure kubectl credentials from Terraform outputs
-	@echo "Fetching cluster credentials..."
-	@eval $$(cd $(TF_DIR) && terraform output -raw connect_command)
-	@echo "OK: kubectl configured"
-
-.PHONY: tf-helm-values
-tf-helm-values: $(if $(filter googlepubsub,$(BROKER_TYPE)),check-terraform) ## Generate Helm override values (from Terraform for googlepubsub, from variables for rabbitmq)
-	./scripts/tf-helm-values.sh --out-dir $(GENERATED_DIR) --broker-type $(BROKER_TYPE) \
-		$(if $(filter googlepubsub,$(BROKER_TYPE)),--tf-dir $(TF_DIR)) \
-		$(if $(filter rabbitmq,$(BROKER_TYPE)),--rabbitmq-url $(RABBITMQ_URL) --namespace $(NAMESPACE))
-
-.PHONY: clean-generated
-clean-generated: ## Remove generated Helm values
-	rm -rf $(GENERATED_DIR)
-	@echo "OK: cleaned generated values"
-
-# ──────────────────────────────────────────────
-# Component install targets
-# ──────────────────────────────────────────────
-
-MAESTRO_CONSUMER ?= cluster1
-MANIFESTS_DIR    := manifests
-
-.PHONY: install-rabbitmq
-install-rabbitmq: check-kubectl check-namespace ## Install RabbitMQ (dev only, for BROKER_TYPE=rabbitmq)
-	kubectl apply -f $(MANIFESTS_DIR)/rabbitmq.yaml --namespace $(NAMESPACE) --kubeconfig $(KUBECONFIG)
-	@echo "Waiting for RabbitMQ to be ready..."
-	@kubectl wait --for=condition=ready pod -l app=rabbitmq --namespace $(NAMESPACE) --kubeconfig $(KUBECONFIG) --timeout=120s
-	@echo "OK: RabbitMQ is ready"
-
-.PHONY: install-maestro
-install-maestro: check-helm check-kubectl check-maestro-namespace ## Install Maestro (server + agent)
-	helm dependency update $(HELM_DIR)/maestro
-	@echo "Installing Maestro..."
-	
-	if ! helm upgrade --install $(DRY_RUN_FLAG) $(MAESTRO_NS)-maestro $(HELM_DIR)/maestro \
-		--namespace $(MAESTRO_NS) \
-		--kubeconfig $(KUBECONFIG) \
-		--set agent.messageBroker.mqtt.host=maestro-mqtt.$(MAESTRO_NS) \
-		--wait --timeout 5m ; then \
-		echo "Warning: maestro install failed on kind cluster; continuing"; \
-	fi; 
-	@echo "Waiting for Maestro pods to be ready..."
-	@kubectl wait --for=condition=ready pod -l app.kubernetes.io/instance=$(MAESTRO_NS)-maestro --namespace $(MAESTRO_NS) --kubeconfig $(KUBECONFIG) --timeout=180s || true
-	@echo "OK: Maestro pods are ready"
-
-.PHONY: create-maestro-consumer
-create-maestro-consumer: check-kubectl ## Create a Maestro consumer (requires Maestro server running)
-	@echo "Creating Maestro consumer '$(MAESTRO_CONSUMER)'..."
-	@for i in 1 2 3 4 5; do \
-		exists=$$(kubectl exec deploy/maestro --namespace $(MAESTRO_NS) --kubeconfig $(KUBECONFIG) -- \
-			curl -sS --connect-timeout 5 --max-time 10 http://maestro.$(MAESTRO_NS).svc.cluster.local:8000/api/maestro/v1/consumers \
-			2>/dev/null | grep -F -c -- '"name":"$(MAESTRO_CONSUMER)"') 2>/dev/null || true; \
-		if [ "$$exists" -gt 0 ]; then \
-			echo "OK: consumer '$(MAESTRO_CONSUMER)' already exists"; exit 0; \
-		fi; \
-		status=$$(kubectl exec deploy/maestro --namespace $(MAESTRO_NS) --kubeconfig $(KUBECONFIG) -- \
-			curl -sS --connect-timeout 5 --max-time 10 -o /dev/null -w '%{http_code}' -X POST \
-			-H "Content-Type: application/json" \
-			http://maestro.$(MAESTRO_NS).svc.cluster.local:8000/api/maestro/v1/consumers \
-			-d '{"name": "$(MAESTRO_CONSUMER)"}' 2>/dev/null) 2>/dev/null || status="error"; \
-		case "$$status" in \
-			201) echo "OK: consumer '$(MAESTRO_CONSUMER)' created"; exit 0;; \
-			409) echo "WARNING: consumer '$(MAESTRO_CONSUMER)' already exists (race condition)"; exit 0;; \
-			*) echo "  Attempt $$i failed (status: $$status), retrying in 5s..."; sleep 5;; \
-		esac; \
-	done; \
-	echo "ERROR: failed to create Maestro consumer after 5 attempts"; exit 1
-
-# set-chart-ref: update the ?ref= and org in a Chart.yaml dependency URL
-# Usage: $(call set-chart-ref,<chart-dir>,<ref>)
-define set-chart-ref
-	@sed -i.bak 's|github.com/[^/]*/|github.com/$(CHART_ORG)/|' $(1)/Chart.yaml
-	@sed -i.bak 's|\(?ref=\)[^"]*"|\1$(2)"|' $(1)/Chart.yaml
-	@rm -f $(1)/Chart.yaml.bak
-	@rm -rf $(1)/charts $(1)/Chart.lock
+# check-namespace: check if a namespace exists and create it if it doesn't
+# Usage: $(call check-namespace,<namespace-name>)
+define check-namespace
+	@kubectl get namespace $(1) >/dev/null 2>&1 || kubectl create namespace $(1) || { echo "ERROR: failed to create namespace $(1)"; exit 1; }
+	@echo "OK: namespace $(1) ready"
 endef
 
-.PHONY: install-api
-install-api: check-helm check-kubectl check-namespace ## Install HyperFleet API
-	$(call set-chart-ref,$(HELM_DIR)/api,$(API_CHART_REF))
-	helm dependency update $(HELM_DIR)/api
-	helm upgrade --install $(DRY_RUN_FLAG) $(NAMESPACE)-api $(HELM_DIR)/api \
-		--namespace $(NAMESPACE) \
-		--kubeconfig $(KUBECONFIG) \
-		$(if $(REGISTRY),--set hyperfleet-api.image.registry=$(REGISTRY)) \
-		$(if $(API_REPOSITORY),--set hyperfleet-api.image.repository=$(API_REPOSITORY)) \
-		--set hyperfleet-api.image.tag=$(API_IMAGE_TAG)
+.PHONY: check-hyperfleet-namespace
+check-hyperfleet-namespace: ## Create Hyperfleet namespace if it doesn't exist
+	$(call check-namespace,$(NAMESPACE))
 
-.PHONY: install-sentinel-clusters
-install-sentinel-clusters: check-helm check-kubectl check-namespace ## Install Sentinel for clusters
-	$(call set-chart-ref,$(HELM_DIR)/sentinel-clusters,$(SENTINEL_CHART_REF))
-	helm dependency update $(HELM_DIR)/sentinel-clusters
-	helm upgrade --install $(DRY_RUN_FLAG) $(NAMESPACE)-sentinel-clusters $(HELM_DIR)/sentinel-clusters \
-		--namespace $(NAMESPACE) \
-		--kubeconfig $(KUBECONFIG) \
-		--set hyperfleet-sentinel.broker.type=$(BROKER_TYPE) \
-		$(if $(REGISTRY),--set hyperfleet-sentinel.image.registry=$(REGISTRY)) \
-		$(if $(SENTINEL_REPOSITORY),--set hyperfleet-sentinel.image.repository=$(SENTINEL_REPOSITORY)) \
-		--set hyperfleet-sentinel.image.tag=$(SENTINEL_IMAGE_TAG) \
-		$(if $(wildcard $(GENERATED_DIR)/sentinel-clusters.yaml),--values $(GENERATED_DIR)/sentinel-clusters.yaml)
+.PHONY: check-maestro-namespace
+check-maestro-namespace: ## Create Maestro namespace if it doesn't exist
+	$(call check-namespace,$(MAESTRO_NAMESPACE))
 
-.PHONY: install-sentinel-nodepools
-install-sentinel-nodepools: check-helm check-kubectl check-namespace ## Install Sentinel for nodepools
-	$(call set-chart-ref,$(HELM_DIR)/sentinel-nodepools,$(SENTINEL_CHART_REF))
-	helm dependency update $(HELM_DIR)/sentinel-nodepools
-	helm upgrade --install $(DRY_RUN_FLAG) $(NAMESPACE)-sentinel-nodepools $(HELM_DIR)/sentinel-nodepools \
-		--namespace $(NAMESPACE) \
-		--kubeconfig $(KUBECONFIG) \
-		--set hyperfleet-sentinel.broker.type=$(BROKER_TYPE) \
-		$(if $(REGISTRY),--set hyperfleet-sentinel.image.registry=$(REGISTRY)) \
-		$(if $(SENTINEL_REPOSITORY),--set hyperfleet-sentinel.image.repository=$(SENTINEL_REPOSITORY)) \
-		--set hyperfleet-sentinel.image.tag=$(SENTINEL_IMAGE_TAG) \
-		$(if $(wildcard $(GENERATED_DIR)/sentinel-nodepools.yaml),--values $(GENERATED_DIR)/sentinel-nodepools.yaml)
+.PHONY: check-gke-context
+check-gke-context: check-kubectl ## Verify kubectl context points to GKE cluster
+	@CONTEXT=$$(kubectl config current-context); \
+	if echo "$$CONTEXT" | grep -q "gke_"; then \
+		echo "OK: connected to GKE cluster (context: $$CONTEXT)"; \
+	else \
+		echo "WARNING: current context '$$CONTEXT' does not appear to be a GKE cluster"; \
+		echo "         Expected context name containing 'gke_'"; \
+		echo "         Continuing anyway, but verify your cluster is correct"; \
+	fi
 
-.PHONY: install-adapter1
-install-adapter1: check-helm check-kubectl check-namespace ## Install adapter1
-	$(call set-chart-ref,$(HELM_DIR)/adapter1,$(ADAPTER_CHART_REF))
-	helm dependency update $(HELM_DIR)/adapter1
-	helm upgrade --install $(DRY_RUN_FLAG) $(NAMESPACE)-adapter1 $(HELM_DIR)/adapter1 \
-		--namespace $(NAMESPACE) \
-		--kubeconfig $(KUBECONFIG) \
-		--set hyperfleet-adapter.broker.type=$(BROKER_TYPE) \
-		$(if $(REGISTRY),--set hyperfleet-adapter.image.registry=$(REGISTRY)) \
-		$(if $(ADAPTER_REPOSITORY),--set hyperfleet-adapter.image.repository=$(ADAPTER_REPOSITORY)) \
-		--set hyperfleet-adapter.image.tag=$(ADAPTER_IMAGE_TAG) \
-		--set-file hyperfleet-adapter.adapterConfig.yaml=$(HELM_DIR)/adapter1/adapter-config.yaml \
-		--set-file hyperfleet-adapter.adapterTaskConfig.yaml=$(HELM_DIR)/adapter1/adapter-task-config.yaml \
-		$(if $(wildcard $(GENERATED_DIR)/adapter1.yaml),--values $(GENERATED_DIR)/adapter1.yaml)
+.PHONY: clean-generated
+clean-generated: ## Remove generated dir
+	rm -rf $(GENERATED_DIR)
+	rm -rf $(GENERATED_RABBITMQ_DIR)
+	@echo "OK: cleaned generated terraform values"
 
-.PHONY: install-adapter2
-install-adapter2: check-helm check-kubectl check-namespace ## Install adapter2
-	$(call set-chart-ref,$(HELM_DIR)/adapter2,$(ADAPTER_CHART_REF))
-	helm dependency update $(HELM_DIR)/adapter2
-	helm upgrade --install $(DRY_RUN_FLAG) $(NAMESPACE)-adapter2 $(HELM_DIR)/adapter2 \
-		--namespace $(NAMESPACE) \
-		--kubeconfig $(KUBECONFIG) \
-		--set hyperfleet-adapter.broker.type=$(BROKER_TYPE) \
-		$(if $(REGISTRY),--set hyperfleet-adapter.image.registry=$(REGISTRY)) \
-		$(if $(ADAPTER_REPOSITORY),--set hyperfleet-adapter.image.repository=$(ADAPTER_REPOSITORY)) \
-		--set hyperfleet-adapter.image.tag=$(ADAPTER_IMAGE_TAG) \
-		--set-file hyperfleet-adapter.adapterConfig.yaml=$(HELM_DIR)/adapter2/adapter-config.yaml \
-		--set-file hyperfleet-adapter.adapterTaskConfig.yaml=$(HELM_DIR)/adapter2/adapter-task-config.yaml \
-		$(if $(wildcard $(GENERATED_DIR)/adapter2.yaml),--values $(GENERATED_DIR)/adapter2.yaml)
+.PHONY: helm-deps
+helm-deps: check-helm ## Run helm dependency update for all charts
+	@for chart in $(HELM_DIR)/*/; do \
+		echo "Updating dependencies for $$chart..."; \
+		helm dependency update "$$chart"; \
+	done
 
-.PHONY: install-adapter3
-install-adapter3: check-helm check-kubectl check-namespace ## Install adapter3
-	$(call set-chart-ref,$(HELM_DIR)/adapter3,$(ADAPTER_CHART_REF))
-	helm dependency update $(HELM_DIR)/adapter3
-	helm upgrade --install $(DRY_RUN_FLAG) $(NAMESPACE)-adapter3 $(HELM_DIR)/adapter3 \
-		--namespace $(NAMESPACE) \
-		--kubeconfig $(KUBECONFIG) \
-		--set hyperfleet-adapter.broker.type=$(BROKER_TYPE) \
-		$(if $(REGISTRY),--set hyperfleet-adapter.image.registry=$(REGISTRY)) \
-		$(if $(ADAPTER_REPOSITORY),--set hyperfleet-adapter.image.repository=$(ADAPTER_REPOSITORY)) \
-		--set hyperfleet-adapter.image.tag=$(ADAPTER_IMAGE_TAG) \
-		--set-file hyperfleet-adapter.adapterConfig.yaml=$(HELM_DIR)/adapter3/adapter-config.yaml \
-		--set-file hyperfleet-adapter.adapterTaskConfig.yaml=$(HELM_DIR)/adapter3/adapter-task-config.yaml \
-		$(if $(wildcard $(GENERATED_DIR)/adapter3.yaml),--values $(GENERATED_DIR)/adapter3.yaml)
+.PHONY: status
+status: check-kubectl check-helmfile-env ## Show helm releases and pod status
+	@echo "=== Helm Releases ==="
+	@helm list --namespace $(NAMESPACE) 2>/dev/null || true
+	@helm list --namespace $(MAESTRO_NAMESPACE) 2>/dev/null || true
+	@echo ""
+	@echo "=== Pods ==="
+	@kubectl get pods --namespace $(NAMESPACE) 2>/dev/null || true
+	@kubectl get pods --namespace $(MAESTRO_NAMESPACE) 2>/dev/null || true
 
-.PHONY: install-terraform
-install-terraform: check-terraform check-tf-files ## Run Terraform init and apply
-	cd $(TF_DIR) && terraform init -backend-config=$(TF_BACKEND)
-	cd $(TF_DIR) && terraform apply -var-file=$(TF_VARS) $(AUTO_APPROVE_FLAG)
+.PHONY: help
+help: ## Show this help message
+	@echo "HyperFleet Infrastructure - Available Make Targets"
+	@echo ""
+	@echo "Usage: make [target] [VARIABLE=value ...]"
+	@echo ""
+	@echo "Environment: HELMFILE_ENV=$(HELMFILE_ENV) (gcp|kind|e2e-gcp|e2e-kind)"
+	@echo ""
+	@awk '/^# ====/ { \
+		section = $$0; \
+		sub(/^# ==== /, "", section); \
+		sub(/ ====$$/,"", section); \
+		next; \
+	} \
+	/^[a-zA-Z_-]+:.*?## / { \
+		if (section) { \
+			if (!(section in seen)) { \
+				if (count > 0) print ""; \
+				printf "\033[1m%s:\033[0m\n", section; \
+				seen[section] = 1; \
+				count++; \
+			} \
+			split($$0, parts, ":"); \
+			target = parts[1]; \
+			sub(/.*## /, "", $$0); \
+			printf "  \033[36m%-35s\033[0m %s\n", target, $$0; \
+		} \
+	}' $(MAKEFILE_LIST)
 
-# ──────────────────────────────────────────────
-# Aggregate install targets
-# ──────────────────────────────────────────────
 
-.PHONY: install-sentinels
-install-sentinels: install-sentinel-clusters install-sentinel-nodepools ## Install all sentinels
 
-.PHONY: install-adapters
-install-adapters: install-adapter1 install-adapter2 install-adapter3 ## Install all adapters
+# ==== CI Targets ====
+# ci-dry-run: validation on terraform and helm plugins and maestro helm chart
+# ci-test: Run terraform install + maestro install + health check on maestro
+# ci-cleanup: Uninstall maestro and destroy terraform resources
 
-.PHONY: install-hyperfleet
-install-hyperfleet: install-api install-sentinels install-adapters ## Install API + sentinels + adapters (no maestro, no terraform)
+# TODO: HYPERFLEET-1067 - Will add more complete helmfile linting and validation
+# Currently only linting, validating and installing via terrafrom and installing the maestro chart
 
-.PHONY: install-all
-install-all: install-terraform get-credentials tf-helm-values install-maestro create-maestro-consumer install-hyperfleet ## Full GCP install (terraform + googlepubsub + hyperfleet + maestro)
 
-.PHONY: install-all-rabbitmq
-install-all-rabbitmq: BROKER_TYPE = rabbitmq
-install-all-rabbitmq: install-rabbitmq tf-helm-values install-hyperfleet install-maestro create-maestro-consumer ## Full RabbitMQ install (rabbitmq + hyperfleet + maestro, no terraform)
-
-# ──────────────────────────────────────────────
-# CI validation targets
-# ──────────────────────────────────────────────
-
-# --- Layer 1: Static validation ---
-
+# CI-DRY-RUN
 .PHONY: validate-terraform
 validate-terraform: check-terraform ## Validate Terraform syntax and formatting
 	cd $(TF_DIR) && \
-		terraform init -backend=false && \
-		terraform fmt -check -recursive -diff && \
-		terraform validate
+	terraform init -backend=false && \
+	terraform fmt -check -recursive -diff && \
+	terraform validate
 
 .PHONY: lint-helm
-lint-helm: check-helm deps ## Lint all Helm charts
+lint-helm: check-helm helm-deps ## Lint all Helm charts
 	@for chart in $(HELM_DIR)/*/; do \
 		echo "Linting $$chart..."; \
 		helm lint "$$chart" || exit 1; \
@@ -297,213 +430,51 @@ lint-shellcheck: ## Validate shell scripts with shellcheck
 	else \
 		echo "WARN: shellcheck not installed, skipping"; \
 	fi
-
-.PHONY: ci-validate
-ci-validate: validate-terraform lint-helm lint-shellcheck ## Layer 1: Static validation
-
-# --- Layer 2: Dry-run validation ---
-
-.PHONY: plan-terraform
-plan-terraform: check-terraform check-tf-files ## Run terraform plan (preview only, no apply)
-	cd $(TF_DIR) && terraform init -backend-config=$(TF_BACKEND)
-	cd $(TF_DIR) && terraform plan -var-file=$(TF_VARS)
-
-# validate-chart: validate a single Helm chart with helm template
-# Usage: $(call validate-chart,<chart-name>,<chart-ref>,<helm-template-args>)
-define validate-chart
-	@echo "Validating $(1) chart..."
-	$(call set-chart-ref,$(HELM_DIR)/$(1),$(2))
-	helm dependency update $(HELM_DIR)/$(1)
-	helm template $(NAMESPACE)-$(1) $(HELM_DIR)/$(1) $(3) > /dev/null
-endef
-
-.PHONY: validate-helm-charts
-validate-helm-charts: check-helm ## Render all Helm charts with helm template (no cluster required)
-	$(call validate-chart,api,$(API_CHART_REF),\
-		$(if $(REGISTRY),--set hyperfleet-api.image.registry=$(REGISTRY)) \
-		$(if $(API_REPOSITORY),--set hyperfleet-api.image.repository=$(API_REPOSITORY)) \
-		--set hyperfleet-api.image.tag=$(API_IMAGE_TAG))
-
-	$(call validate-chart,sentinel-clusters,$(SENTINEL_CHART_REF),\
-		--set hyperfleet-sentinel.broker.type=$(BROKER_TYPE) \
-		$(if $(REGISTRY),--set hyperfleet-sentinel.image.registry=$(REGISTRY)) \
-		$(if $(SENTINEL_REPOSITORY),--set hyperfleet-sentinel.image.repository=$(SENTINEL_REPOSITORY)) \
-		--set hyperfleet-sentinel.image.tag=$(SENTINEL_IMAGE_TAG))
-
-	$(call validate-chart,sentinel-nodepools,$(SENTINEL_CHART_REF),\
-		--set hyperfleet-sentinel.broker.type=$(BROKER_TYPE) \
-		$(if $(REGISTRY),--set hyperfleet-sentinel.image.registry=$(REGISTRY)) \
-		$(if $(SENTINEL_REPOSITORY),--set hyperfleet-sentinel.image.repository=$(SENTINEL_REPOSITORY)) \
-		--set hyperfleet-sentinel.image.tag=$(SENTINEL_IMAGE_TAG))
-
-	$(call validate-chart,adapter1,$(ADAPTER_CHART_REF),\
-		--set hyperfleet-adapter.broker.type=$(BROKER_TYPE) \
-		$(if $(REGISTRY),--set hyperfleet-adapter.image.registry=$(REGISTRY)) \
-		$(if $(ADAPTER_REPOSITORY),--set hyperfleet-adapter.image.repository=$(ADAPTER_REPOSITORY)) \
-		--set hyperfleet-adapter.image.tag=$(ADAPTER_IMAGE_TAG) \
-		$(if $(filter rabbitmq,$(BROKER_TYPE)),--set hyperfleet-adapter.broker.rabbitmq.url=amqp://stub:5672/ \
-			--set hyperfleet-adapter.broker.rabbitmq.queue=validate-adapter1 \
-			--set hyperfleet-adapter.broker.rabbitmq.exchange=validate-clusters \
-			--set 'hyperfleet-adapter.broker.rabbitmq.routingKey=\#') \
-		--set-file hyperfleet-adapter.adapterConfig.yaml=$(HELM_DIR)/adapter1/adapter-config.yaml \
-		--set-file hyperfleet-adapter.adapterTaskConfig.yaml=$(HELM_DIR)/adapter1/adapter-task-config.yaml)
-
-	$(call validate-chart,adapter2,$(ADAPTER_CHART_REF),\
-		--set hyperfleet-adapter.broker.type=$(BROKER_TYPE) \
-		$(if $(REGISTRY),--set hyperfleet-adapter.image.registry=$(REGISTRY)) \
-		$(if $(ADAPTER_REPOSITORY),--set hyperfleet-adapter.image.repository=$(ADAPTER_REPOSITORY)) \
-		--set hyperfleet-adapter.image.tag=$(ADAPTER_IMAGE_TAG) \
-		$(if $(filter rabbitmq,$(BROKER_TYPE)),--set hyperfleet-adapter.broker.rabbitmq.url=amqp://stub:5672/ \
-			--set hyperfleet-adapter.broker.rabbitmq.queue=validate-adapter2 \
-			--set hyperfleet-adapter.broker.rabbitmq.exchange=validate-clusters \
-			--set 'hyperfleet-adapter.broker.rabbitmq.routingKey=\#') \
-		--set-file hyperfleet-adapter.adapterConfig.yaml=$(HELM_DIR)/adapter2/adapter-config.yaml \
-		--set-file hyperfleet-adapter.adapterTaskConfig.yaml=$(HELM_DIR)/adapter2/adapter-task-config.yaml)
-
-	$(call validate-chart,adapter3,$(ADAPTER_CHART_REF),\
-		--set hyperfleet-adapter.broker.type=$(BROKER_TYPE) \
-		$(if $(REGISTRY),--set hyperfleet-adapter.image.registry=$(REGISTRY)) \
-		$(if $(ADAPTER_REPOSITORY),--set hyperfleet-adapter.image.repository=$(ADAPTER_REPOSITORY)) \
-		--set hyperfleet-adapter.image.tag=$(ADAPTER_IMAGE_TAG) \
-		$(if $(filter rabbitmq,$(BROKER_TYPE)),--set hyperfleet-adapter.broker.rabbitmq.url=amqp://stub:5672/ \
-			--set hyperfleet-adapter.broker.rabbitmq.queue=validate-adapter3 \
-			--set hyperfleet-adapter.broker.rabbitmq.exchange=validate-nodepools \
-			--set 'hyperfleet-adapter.broker.rabbitmq.routingKey=\#') \
-		--set-file hyperfleet-adapter.adapterConfig.yaml=$(HELM_DIR)/adapter3/adapter-config.yaml \
-		--set-file hyperfleet-adapter.adapterTaskConfig.yaml=$(HELM_DIR)/adapter3/adapter-task-config.yaml)
-
+.PHONY: validate-maestro
+validate-maestro: check-helm ## Validate Maestro Helm chart rendering
 	helm dependency update $(HELM_DIR)/maestro
 	@echo "Validating maestro chart..."
-	helm template $(MAESTRO_NS)-maestro $(HELM_DIR)/maestro \
-		--set agent.messageBroker.mqtt.host=maestro-mqtt.$(MAESTRO_NS) > /dev/null
+	helm template $(MAESTRO_NAMESPACE)-maestro $(HELM_DIR)/maestro \
+		--set agent.messageBroker.mqtt.host=maestro-mqtt.$(MAESTRO_NAMESPACE) > /dev/null
 	@echo "OK: all Helm charts rendered successfully"
 
+.PHONY: ci-validate
+ci-validate: validate-terraform lint-helm lint-shellcheck ## Ci validate: validate terraform + lint helm + lint shellcheck
+
 .PHONY: ci-dry-run
-ci-dry-run: ci-validate ## Layer 2: Static + dry-run validation (no credentials required)
-	$(MAKE) validate-helm-charts BROKER_TYPE=rabbitmq
-	$(MAKE) validate-helm-charts BROKER_TYPE=googlepubsub
+ci-dry-run: ci-validate ## Ci dry-run: ci-validate + validate maestro
+	$(MAKE) validate-maestro
 
-# --- Layer 3: Full integration test ---
-
-.PHONY: health-check
-health-check: check-kubectl ## Verify all HyperFleet components are healthy
-	@echo "Checking HyperFleet components..."
-	@deploys=$$(kubectl get deployments --namespace $(NAMESPACE) --kubeconfig $(KUBECONFIG) -o name) && \
-		[ -n "$$deploys" ] || { echo "ERROR: no deployments found in namespace $(NAMESPACE)"; exit 1; }; \
-		for deploy in $$deploys; do \
-			echo "  Waiting for $$deploy..."; \
-			kubectl rollout status $$deploy --namespace $(NAMESPACE) --kubeconfig $(KUBECONFIG) --timeout=300s || exit 1; \
-		done
+.PHONY: health-check-maestro
+health-check-maestro: check-kubectl ## Verify Maestro Components
 	@echo "Checking Maestro components..."
-	@deploys=$$(kubectl get deployments --namespace $(MAESTRO_NS) --kubeconfig $(KUBECONFIG) -o name) && \
-		[ -n "$$deploys" ] || { echo "ERROR: no deployments found in namespace $(MAESTRO_NS)"; exit 1; }; \
+	@deploys=$$(kubectl get deployments --namespace $(MAESTRO_NAMESPACE) --kubeconfig $(KUBECONFIG) -o name) && \
+		[ -n "$$deploys" ] || { echo "ERROR: no deployments found in namespace $(MAESTRO_NAMESPACE)"; exit 1; }; \
 		for deploy in $$deploys; do \
 			echo "  Waiting for $$deploy..."; \
-			kubectl rollout status $$deploy --namespace $(MAESTRO_NS) --kubeconfig $(KUBECONFIG) --timeout=300s || exit 1; \
+			kubectl rollout status $$deploy --namespace $(MAESTRO_NAMESPACE) --kubeconfig $(KUBECONFIG) --timeout=300s || exit 1; \
 		done
 	@echo "OK: all components healthy"
 
-.PHONY: destroy-terraform
-destroy-terraform: check-terraform check-tf-files ## Destroy Terraform-managed infrastructure
-	cd $(TF_DIR) && terraform init -backend-config=$(TF_BACKEND)
-	# Always use -auto-approve to prevent CI cleanup from hanging on interactive prompt
-	cd $(TF_DIR) && terraform destroy -var-file=$(TF_VARS) -auto-approve
-
 .PHONY: ci-test
-ci-test: install-all health-check ## Layer 3: Full integration test
+ci-test: install-terraform get-credentials install-maestro create-maestro-consumer health-check-maestro ## Ci test: install terraform + get credentials + install maestro + create maestro consumer + health check maestro
 
+# CI-CLEANUP
 .PHONY: ci-cleanup
-ci-cleanup: uninstall-all destroy-terraform ## Layer 3: Cleanup after integration test
+ci-cleanup: uninstall-maestro destroy-terraform ## Ci cleanup: uninstall maestro + destroy terraform
 
-# ──────────────────────────────────────────────
-# Uninstall targets
-# ──────────────────────────────────────────────
+# ==== Full Deployment Targets ====
+# Kind targets
 
-.PHONY: uninstall-rabbitmq
-uninstall-rabbitmq: check-kubectl ## Uninstall RabbitMQ
-	kubectl delete -f $(MANIFESTS_DIR)/rabbitmq.yaml --namespace $(NAMESPACE) --kubeconfig $(KUBECONFIG) --ignore-not-found
+.PHONY: local-up-kind
+local-up-kind: create-kind-cluster kind-build-images install-maestro-all generate-rabbitmq-values install-hyperfleet ## Full local kind setup (cluster + images + maestro + hyperfleet)
 
-.PHONY: uninstall-maestro
-uninstall-maestro: ## Uninstall Maestro
-	helm uninstall $(MAESTRO_NS)-maestro --namespace $(MAESTRO_NS) --kubeconfig $(KUBECONFIG) || true
+.PHONY: local-down-kind
+local-down-kind: uninstall-hyperfleet uninstall-maestro delete-kind-cluster ## Tear down kind: uninstall all + delete cluster
 
-.PHONY: uninstall-api
-uninstall-api: ## Uninstall HyperFleet API
-	helm uninstall $(NAMESPACE)-api --namespace $(NAMESPACE) --kubeconfig $(KUBECONFIG) || true
+# GKE targets
+.PHONY: local-up-gcp
+local-up-gcp: install-terraform get-credentials install-maestro-all install-hyperfleet ## Full gke setup (cluster + maestro + hyperfleet)
 
-.PHONY: uninstall-sentinel-clusters
-uninstall-sentinel-clusters: ## Uninstall Sentinel for clusters
-	helm uninstall $(NAMESPACE)-sentinel-clusters --namespace $(NAMESPACE) --kubeconfig $(KUBECONFIG) || true
-
-.PHONY: uninstall-sentinel-nodepools
-uninstall-sentinel-nodepools: ## Uninstall Sentinel for nodepools
-	helm uninstall $(NAMESPACE)-sentinel-nodepools --namespace $(NAMESPACE) --kubeconfig $(KUBECONFIG) || true
-
-.PHONY: uninstall-adapter1
-uninstall-adapter1: ## Uninstall adapter1
-	helm uninstall $(NAMESPACE)-adapter1 --namespace $(NAMESPACE) --kubeconfig $(KUBECONFIG) || true
-
-.PHONY: uninstall-adapter2
-uninstall-adapter2: ## Uninstall adapter2
-	helm uninstall $(NAMESPACE)-adapter2 --namespace $(NAMESPACE) --kubeconfig $(KUBECONFIG) || true
-
-.PHONY: uninstall-adapter3
-uninstall-adapter3: ## Uninstall adapter3
-	helm uninstall $(NAMESPACE)-adapter3 --namespace $(NAMESPACE) --kubeconfig $(KUBECONFIG) || true
-
-.PHONY: uninstall-hyperfleet
-uninstall-hyperfleet: uninstall-api uninstall-sentinel-clusters uninstall-sentinel-nodepools uninstall-adapter1 uninstall-adapter2 uninstall-adapter3 ## Uninstall API + sentinels + adapters (no maestro)
-
-.PHONY: uninstall-all
-uninstall-all: uninstall-maestro uninstall-hyperfleet ## Uninstall everything
-
-# ──────────────────────────────────────────────
-# Utility targets
-# ──────────────────────────────────────────────
-
-.PHONY: deps
-deps: check-helm ## Run helm dependency update for all charts
-	@for chart in $(HELM_DIR)/*/; do \
-		echo "Updating dependencies for $$chart..."; \
-		helm dependency update "$$chart"; \
-	done
-
-.PHONY: status
-status: check-kubectl ## Show helm releases and pod status
-	@echo "=== Helm Releases ==="
-	@helm list --namespace $(NAMESPACE) --kubeconfig $(KUBECONFIG) 2>/dev/null || true
-	@helm list --namespace $(MAESTRO_NS) --kubeconfig $(KUBECONFIG) 2>/dev/null || true
-	@echo ""
-	@echo "=== Pods ==="
-	@kubectl get pods --namespace $(NAMESPACE) --kubeconfig $(KUBECONFIG) 2>/dev/null || true
-	@kubectl get pods --namespace $(MAESTRO_NS) --kubeconfig $(KUBECONFIG) 2>/dev/null || true
-
-.PHONY: help
-help: ## Print available targets
-	@echo "HyperFleet CLM - Full Installation"
-	@echo ""
-	@echo "Variables (override with VAR=value):"
-	@echo "  NAMESPACE        Kubernetes namespace for HyperFleet components (default: hyperfleet)"
-	@echo "  MAESTRO_NS       Kubernetes namespace for Maestro (default: maestro)"
-	@echo "  KUBECONFIG       Path to kubeconfig (default: ~/.kube/config)"
-	@echo "  TF_ENV           Terraform environment (default: dev)"
-	@echo "  GCP_PROJECT_ID   GCP project ID (default: hcm-hyperfleet)"
-	@echo "  BROKER_TYPE      Message broker type: googlepubsub or rabbitmq (default: googlepubsub)"
-	@echo "  RABBITMQ_URL     RabbitMQ connection URL (default: amqp://guest:guest@rabbitmq:5672/)"
-	@echo "  REGISTRY           Override image registry for all components (default: registry.ci.openshift.org)"
-	@echo "  API_REPOSITORY     Override API image repository (default: ci/hyperfleet-api)"
-	@echo "  SENTINEL_REPOSITORY Override sentinel image repository (default: ci/hyperfleet-sentinel)"
-	@echo "  ADAPTER_REPOSITORY Override adapter image repository (default: ci/hyperfleet-adapter)"
-	@echo "  API_IMAGE_TAG      Image tag for API (default: latest)"
-	@echo "  SENTINEL_IMAGE_TAG Image tag for sentinels (default: latest)"
-	@echo "  ADAPTER_IMAGE_TAG  Image tag for adapters (default: latest)"
-	@echo "  CHART_ORG          GitHub org for helm chart repos (default: openshift-hyperfleet)"
-	@echo "  API_CHART_REF      Git ref for API helm chart source (default: main)"
-	@echo "  SENTINEL_CHART_REF Git ref for sentinel helm chart source (default: main)"
-	@echo "  ADAPTER_CHART_REF  Git ref for adapter helm chart source (default: main)"
-	@echo "  MAESTRO_CONSUMER Maestro consumer name (default: cluster1)"
-	@echo "  DRY_RUN          Set to true or 1 for Helm dry-run mode (default: empty)"
-	@echo "  AUTO_APPROVE     Set to true or 1 for non-interactive Terraform (default: empty)"
-	@echo ""
-	@echo "Targets:"
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-28s\033[0m %s\n", $$1, $$2}'
+.PHONY: local-down-gcp
+local-down-gcp: get-credentials uninstall-maestro uninstall-hyperfleet destroy-terraform ## Tear down gke: (cluster + maestro + hyperfleet)

@@ -1,0 +1,29 @@
+# Test deployment template
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: "test-nginx-{{ .clusterId }}"
+  namespace: "{{ .clusterId }}"
+  labels:
+    hyperfleet.io/cluster-id: "{{ .clusterId }}"
+    hyperfleet.io/resource-type: "deployment"
+  annotations:
+    hyperfleet.io/generation: "{{ .generationSpec }}"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: test
+      hyperfleet.io/cluster-id: "{{ .clusterId }}"
+  template:
+    metadata:
+      labels:
+        app: test
+        hyperfleet.io/cluster-id: "{{ .clusterId }}"
+    spec:
+      containers:
+        - name: test
+          image: nginx:latest
+          ports:
+            - containerPort: 80
+

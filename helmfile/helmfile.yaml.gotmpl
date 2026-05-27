@@ -1,0 +1,118 @@
+# Helmfile configuration
+# Documentation: https://helmfile.readthedocs.io/
+
+# Common Helm defaults applied to all releases
+helmDefaults:
+  createNamespace: true
+  wait: true
+  timeout: 300
+  cleanupOnFail: true
+
+# Base values for all environments
+values:
+  - namespace: {{ requiredEnv "NAMESPACE" }}
+  - chartOrg: {{ env "CHART_ORG" | default "openshift-hyperfleet" }}
+  - charts:
+      api:
+        chartRef: {{ env "API_CHART_REF" | default "main" }}
+      sentinel:
+        chartRef: {{ env "SENTINEL_CHART_REF" | default "main" }}
+      adapter:
+        chartRef: {{ env "ADAPTER_CHART_REF" | default "main" }}
+
+# Environment configurations - e2e, e2e-kind, kind, gcp
+environments:
+  e2e-gcp:
+    values:
+      - projectId: {{ env "PROJECT_ID" | default "hcm-hyperfleet" }}
+        brokerType: googlepubsub
+        serviceType: {{ env "API_SERVICE_TYPE" | default "LoadBalancer" }}
+      - environments/e2e-gcp/adapter-configs.yaml.gotmpl
+      - environments/e2e-gcp/sentinel-configs.yaml
+  e2e-kind:
+    values:
+      - brokerType: rabbitmq
+        serviceType: {{ env "API_SERVICE_TYPE" | default "ClusterIP" }}
+      - environments/e2e-kind/adapter-configs.yaml.gotmpl
+      - environments/e2e-kind/sentinel-configs.yaml
+  kind:
+    values:
+      - brokerType: rabbitmq
+        serviceType: {{ env "API_SERVICE_TYPE" | default "ClusterIP" }}
+      - environments/kind/adapter-configs.yaml.gotmpl
+      - environments/kind/sentinel-configs.yaml.gotmpl
+  gcp:
+    values:
+      - projectId: {{ env "PROJECT_ID" | default "hcm-hyperfleet" }}
+        brokerType: googlepubsub
+        serviceType: {{ env "API_SERVICE_TYPE" | default "LoadBalancer" }}
+      - environments/gcp/adapter-configs.yaml.gotmpl
+      - environments/gcp/sentinel-configs.yaml.gotmpl
+
+commonLabels:
+  group: hyperfleet
+
+---
+
+repositories:
+  - name: hyperfleet-api
+    url: git+https://github.com/{{ .Values.chartOrg }}/hyperfleet-api@charts?ref={{ .Values.charts.api.chartRef }}&sparse=0
+  - name: hyperfleet-sentinel
+    url: git+https://github.com/{{ .Values.chartOrg }}/hyperfleet-sentinel@charts?ref={{ .Values.charts.sentinel.chartRef }}&sparse=0
+  - name: hyperfleet-adapter
+    url: git+https://github.com/{{ .Values.chartOrg }}/hyperfleet-adapter@charts?ref={{ .Values.charts.adapter.chartRef }}&sparse=0
+
+releases:
+{{ if eq .Values.brokerType "rabbitmq" }}
+  - name: rabbitmq
+    namespace: {{ .Values.namespace }}
+    chart: ../helm/rabbitmq
+    labels:
+      component: rabbitmq
+{{ end }}
+
+  # HyperFleet API
+  - name: hyperfleet-api
+    namespace: {{ .Values.namespace }}
+    chart: hyperfleet-api/hyperfleet-api 
+    labels:
+      component: api
+    values:
+      - values/base-api.yaml.gotmpl
+
+{{ range .Values.sentinels }}
+  - name: {{ .name }}
+    namespace: {{ $.Values.namespace }}
+    chart: hyperfleet-sentinel/hyperfleet-sentinel
+    needs:
+      - hyperfleet-api
+    labels:
+      component: sentinel
+    values:
+      - ./values/base-sentinel.yaml.gotmpl
+{{ if hasKey . "values" }}
+{{ toYaml .values | indent 6 }}
+{{ end }}
+{{ if hasKey . "setFiles" }}
+    set:
+{{ toYaml .setFiles | indent 6 }}
+{{ end }}
+{{ end }}
+
+{{ range .Values.adapters }}
+  - name: {{ .name }}
+    namespace: {{ $.Values.namespace }}
+    chart: hyperfleet-adapter/hyperfleet-adapter
+    labels:
+      component: adapter
+    values:
+      - ./values/base-adapter.yaml.gotmpl
+{{ if hasKey . "values" }}
+{{ toYaml .values | indent 6 }}
+{{ end }}
+{{ if hasKey . "setFiles" }}
+    set:
+{{ toYaml .setFiles | indent 6 }}
+{{ end }}
+{{ end }}
+

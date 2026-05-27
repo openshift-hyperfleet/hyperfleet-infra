@@ -1,0 +1,150 @@
+{{ $namespace := requiredEnv "NAMESPACE" }}
+adapters:
+  - name: cl-namespace
+    resourceType: clusters
+    values:
+      - adapterTaskConfig:
+          create: true
+        adapterConfig:
+          create: true
+          log:
+            level: debug
+        rbac:
+          resources:
+            - namespaces
+            - serviceaccounts
+            - configmaps
+            - deployments
+            - roles
+            - rolebindings
+            - jobs
+            - jobs/status
+            - pods
+        broker:
+          create: true
+          rabbitmq:
+            url: "amqp://guest:guest@rabbitmq:5672"
+            queue: {{ $namespace }}-clusters-cl-namespace
+            exchange: {{ $namespace }}-clusters
+            routingKey: "#"
+    setFiles:
+      - name: adapterConfig.yaml
+        file: configs/e2e/adapters/cl-namespace/adapter-config.yaml
+      - name: adapterTaskConfig.yaml
+        file: configs/e2e/adapters/cl-namespace/adapter-task-config.yaml
+  
+  - name: cl-job
+    resourceType: clusters
+    values:
+      - adapterTaskConfig:
+          create: true
+        adapterConfig:
+          create: true
+          log:
+            level: debug
+        rbac:
+          resources:
+            - namespaces
+            - jobs
+        broker:
+          create: true
+          rabbitmq:
+            url: "amqp://guest:guest@rabbitmq:5672"
+            queue: {{ $namespace }}-clusters-cl-job
+            exchange: {{ $namespace }}-clusters
+            routingKey: "#"
+    setFiles:
+      - name: adapterConfig.yaml
+        file: configs/e2e/adapters/cl-job/adapter-config.yaml
+      - name: adapterTaskConfig.external.task-config
+        file: configs/e2e/adapters/cl-job/adapter-task-config.yaml
+      - name: adapterTaskConfig.external.job
+        file: configs/e2e/adapters/cl-job/adapter-task-resource-job.yaml
+  
+  - name: cl-deployment
+    resourceType: clusters
+    values:
+      - adapterTaskConfig:
+          create: true
+        adapterConfig:
+          create: true
+          log:
+            level: debug
+        rbac:
+          resources:
+            - deployments
+            - deployments/status
+        broker:
+          create: true
+          rabbitmq:
+            url: "amqp://guest:guest@rabbitmq:5672"
+            queue: {{ $namespace }}-clusters-cl-deployment
+            exchange: {{ $namespace }}-clusters
+            routingKey: "#"
+    setFiles:
+      - name: adapterConfig.yaml
+        file: configs/e2e/adapters/cl-deployment/adapter-config.yaml
+      - name: adapterTaskConfig.external.task-config
+        file: configs/e2e/adapters/cl-deployment/adapter-task-config.yaml
+      - name: adapterTaskConfig.external.deployment
+        file: configs/e2e/adapters/cl-deployment/adapter-task-resource-deployment.yaml
+  
+  - name: cl-maestro
+    resourceType: clusters
+    values:
+      - adapterTaskConfig:
+          create: true
+        adapterConfig:
+          create: true
+          log:
+            level: debug
+        rbac:
+          resources:
+            - namespaces
+            - configmaps
+            - configmaps/status
+        broker:
+          create: true
+          rabbitmq:
+            url: "amqp://guest:guest@rabbitmq:5672"
+            queue: {{ $namespace }}-clusters-cl-maestro
+            exchange: {{ $namespace }}-clusters
+            routingKey: "#"
+    setFiles:
+      - name: adapterConfig.yaml
+        file: configs/e2e/adapters/cl-maestro/adapter-config.yaml
+      - name: adapterTaskConfig.external.task-config
+        file: configs/e2e/adapters/cl-maestro/adapter-task-config.yaml
+      - name: adapterTaskConfig.external.manifestwork
+        file: configs/e2e/adapters/cl-maestro/adapter-task-resource-manifestwork.yaml
+  
+  - name: np-configmap
+    resourceType: nodepools
+    values:
+      - adapterTaskConfig:
+          create: true
+        adapterConfig:
+          create: true
+          log:
+            level: debug
+        rbac:
+          resources:
+            - configmaps
+            - configmaps/status
+        broker:
+          create: true
+          rabbitmq:
+            url: "amqp://guest:guest@rabbitmq:5672"
+            queue: {{ $namespace }}-nodepools-np-configmap
+            exchange: {{ $namespace }}-nodepools
+            routingKey: "#"
+    setFiles:
+      - name: adapterConfig.yaml
+        file: configs/e2e/adapters/np-configmap/adapter-config.yaml
+      - name: adapterTaskConfig.external.task-config
+        file: configs/e2e/adapters/np-configmap/adapter-task-config.yaml
+      - name: adapterTaskConfig.external.configmap
+        file: configs/e2e/adapters/np-configmap/adapter-task-resource-configmap.yaml
+      
+
+ 

@@ -1,0 +1,6 @@
+apiVersion: v2
+name: rabbitmq
+description: RabbitMQ for HyperFleet development (not production ready)
+type: application
+version: 0.1.0
+appVersion: "3.13"

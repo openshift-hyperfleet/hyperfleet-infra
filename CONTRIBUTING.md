@@ -2,214 +2,269 @@
 
 ## Development Setup
 
-This repository is primarily infrastructure-as-code and does not require traditional build/compile steps. However, you'll need the appropriate tools to work with Terraform, Helm, and Kubernetes.
+No build/compile steps. You need the right tools to work with Terraform, Helm, and Kubernetes.
 
 ```bash
 # 1. Clone the repository
 git clone https://github.com/openshift-hyperfleet/hyperfleet-infra.git
 cd hyperfleet-infra
 
-# 2. Install prerequisites (see Prerequisites section in README.md)
-# - Helm + helm-git plugin
-# - kubectl
-# - Terraform >= 1.5 (for GCP deployments)
-# - Google Cloud SDK (for GCP deployments)
+# 2. Install prerequisites
+#    - helm + helm-git plugin + helmfile
+#    - kubectl
+#    - terraform 1.13.1 via asdf (GCP only)
+#    - Google Cloud SDK + gke-gcloud-auth-plugin (GCP only)
 
-# 3. Verify prerequisites are installed
+# 3. Verify prerequisites
 make check-helm
+make check-helmfile
 make check-kubectl
-make check-terraform  # Only for GCP deployments
+make check-kind # kind only
+make check-terraform   # GCP only
 
-# 4. For GCP deployments: Setup Terraform config files
-cp terraform/envs/gke/dev.tfvars.example terraform/envs/gke/dev.tfvars
-cp terraform/envs/gke/dev.tfbackend.example terraform/envs/gke/dev.tfbackend
-# Edit both files: set developer_name and prefix to your username
+# 4. For GCP: set up personal Terraform config files
+cp terraform/envs/gke/dev.tfvars.example terraform/envs/gke/dev-<username>.tfvars
+cp terraform/envs/gke/dev.tfbackend.example terraform/envs/gke/dev-<username>.tfbackend
+# Set developer_name = "<username>" in tfvars
+# Set prefix = "terraform/state/dev-<username>" in tfbackend
 
-# 5. For GCP deployments: Authenticate with GCP
+# 5. For GCP: authenticate
 gcloud auth application-default login
 gcloud config set project hcm-hyperfleet
 ```
 
-**First-time setup notes:**
+Notes:
+- Personal tfvars/tfbackend are gitignored — never commit them
+- For kind deployments, Terraform setup is not required
+- `NAMESPACE` controls which Kubernetes namespace is used; set it to run parallel deployments on the same cluster
+- `helm-git` plugin is required for helm to pull charts from sibling repos
+- `diff` plugin is required for helmfile to show the change on upgrade
 
-- For RabbitMQ-based deployments (non-GCP), Terraform setup is not required
-- The `NAMESPACE` variable controls which Kubernetes namespace resources are deployed to (default: `hyperfleet`)
-- Use different namespaces for multiple parallel deployments on the same cluster
-- The repository uses helm-git plugin to pull charts from other repositories - ensure it's installed
+## Environment Configuration Files
+
+The Makefile auto-sources one of two env files based on `HELMFILE_ENV`:
+- HELMFILE_ENV=gcp and HELMFILE_ENV=e2e-gcp → sources `env.gcp`
+- HELMFILE_ENV=kind and HELMFILE_ENV=e2e-kind → sources `env.kind`
+
+All variables use `?=`. CLI overrides always win:
+
+Example:
+```bash
+HELMFILE_ENV=kind NAMESPACE=my-namespace REGISTRY=quay.io make install-hyperfleet
+```
+
+Configuration precedence (highest to lowest):
+1. CLI variables
+2. `env.gcp` or `env.kind`
+3. Makefile defaults
 
 ## Repository Structure
 
 ```
 hyperfleet-infra/
-├── Makefile                    # Main entry point - run 'make help' for all targets
-├── manifests/
-│   └── rabbitmq.yaml           # RabbitMQ development manifest (for BROKER_TYPE=rabbitmq)
+├── Makefile                         # Entry point — run 'make help'
+├── env.gcp                          # GCP defaults (Google Pub/Sub, LoadBalancer)
+├── env.kind                         # kind defaults (RabbitMQ, ClusterIP)
+├── helmfile/
+│   ├── helmfile.yaml.gotmpl         # Helmfile orchestration
+│   ├── environments/                # Per-env configs (gcp, kind, e2e-gcp, e2e-kind)
+│   ├── configs/
+│   │   ├── base/adapters/           # Adapter configs (adapter1, adapter2, adapter3)
+│   │   └── e2e/adapters/            # E2E adapter configs
+│   └── values/                      # Helm value templates
+├── helm/
+│   ├── maestro/                     # Maestro server + agent (umbrella chart)
+│   └── rabbitmq/                    # Dev-only RabbitMQ chart
 ├── scripts/
-│   └── tf-helm-values.sh       # Generates Helm values from Terraform outputs or env vars
-├── helm/                       # Helm charts for HyperFleet components
-│   ├── api/                    # HyperFleet API chart
-│   ├── sentinel*/              # Sentinel examples
-│   ├── adapter*/               # Adapter examples
-│   └── maestro/                # Maestro server + agent charts
+│   ├── generate-rabbitmq-values.sh  # Generates RabbitMQ broker config
+│   └── kind-build-images.sh         # Builds and loads images into kind
 ├── terraform/
-│   ├── README.md               # Detailed Terraform documentation
-│   ├── main.tf                 # Root module (GKE cluster, Pub/Sub, firewall)
-│   ├── bootstrap/              # One-time GCP setup scripts
-│   ├── shared/                 # Shared VPC infrastructure (deploy once per project)
+│   ├── README.md                    # Detailed Terraform documentation
+│   ├── main.tf                      # Root module (GKE cluster, Pub/Sub, firewall)
+│   ├── helm-values-files.tf         # Writes generated Helm values via local_file
+│   ├── bootstrap/                   # One-time GCP setup scripts (admin only)
+│   ├── shared/                      # Shared VPC infrastructure (deploy once)
 │   ├── modules/
-│   │   ├── cluster/gke/        # GKE cluster module
-│   │   └── pubsub/             # Google Pub/Sub module
-│   └── envs/gke/               # Per-environment tfvars and tfbackend files
-├── generated-values-from-terraform/  # Auto-generated Helm values (gitignored)
-├── README.md                   # Getting started guide
-├── CONTRIBUTING.md             # This file
-├── CLAUDE.md                   # Instructions for agents
-└── CHANGELOG.md                # Version changes to this repo
+│   │   ├── cluster/gke/             # GKE cluster module
+│   │   └── pubsub/                  # Google Pub/Sub module
+│   └── envs/gke/                    # Per-developer tfvars and tfbackend files
+├── generated-values-from-terraform/ # Auto-generated, gitignored
+├── generated-values-rabbitmq/       # Auto-generated, gitignored
+├── README.md
+├── CONTRIBUTING.md
+├── AGENTS.md
+└── CHANGELOG.md
 ```
 
-## Testing
+## Validation and Testing
 
-This repository focuses on infrastructure provisioning and deployment. Testing is done through validation and dry-run modes.
+Run these before opening a PR:
 
-### Terraform Validation
-
+### CI Validation
 ```bash
-# Validate Terraform configuration
-cd terraform
-terraform init -backend-config=envs/gke/dev.tfbackend
-terraform validate
-terraform plan -var-file=envs/gke/dev.tfvars
+make ci-validate     # terraform fmt+validate + lint checks
+make ci-dry-run      # ci-validate + maestro chart validation
 ```
 
-### Helm Chart Validation
+Individual checks:
 
 ```bash
-# Dry-run Helm installations to validate charts
-make install-all DRY_RUN=true
-
-# Check individual components
-make install-api DRY_RUN=true
-make install-sentinels DRY_RUN=true
-make install-adapters DRY_RUN=true
-```
-
-### Linting
-
-```bash
-# Terraform format check
-cd terraform
-terraform fmt -check -recursive
-
-# Auto-fix formatting
-terraform fmt -recursive
+make validate-terraform            # terraform init (no backend) + fmt check + validate
+make validate-maestro              # templates maestro charts
+make lint-helm                     # helm lint all charts under helm/*/
+make lint-shellcheck               # shellcheck all *.sh
+HELMFILE_ENV=<env> make lint-helmfile
+HELMFILE_ENV=<env> make template-helmfile   # dry-run render for one env
 ```
 
 ## Common Development Tasks
 
-### Working with Terraform
+### Kind Deployment (local development)
 
 ```bash
-# Initialize Terraform
-cd terraform
-terraform init -backend-config=envs/gke/dev.tfbackend
+export HELMFILE_ENV=kind
+export NAMESPACE=hyperfleet-local
 
-# Plan infrastructure changes
-terraform plan -var-file=envs/gke/dev.tfvars
+# Step by step installation
+make create-kind-cluster
+make install-maestro-all
+make generate-rabbitmq-values
+make kind-build-images
+make install-hyperfleet
 
-# Apply infrastructure changes
-terraform apply -var-file=envs/gke/dev.tfvars
-
-# Destroy infrastructure
-terraform destroy -var-file=envs/gke/dev.tfvars
+# One-shot installation (image builds by default - BUILD_IMAGES set in env.kind)
+make local-up-kind
 ```
 
-### Working with Helm Charts
+### E2E Tests on Kind
+
+#### Port-forwarding required for E2E tests:
 
 ```bash
-# Install all HyperFleet components (GCP with Pub/Sub)
-make install-all
-
-# Install all HyperFleet components (RabbitMQ)
-make install-all-rabbitmq
-
-# Install individual components
-make install-api
-make install-sentinels
-make install-adapters
-make install-maestro
-
-# Uninstall all components
-make uninstall-all
-
-# Check deployment status
-make status
+export NAMESPACE=<e2e_namespace>
+kubectl port-forward -n maestro svc/maestro 8001:8000 &
+kubectl port-forward -n $NAMESPACE svc/hyperfleet-api 8000:8000 &
+export MAESTRO_URL=http://localhost:8001
+export HYPERFLEET_API_URL=http://localhost:8000
 ```
 
-### Generating Helm Values
+#### Run tests
 
 ```bash
-# Generate Helm values from Terraform (for Google Pub/Sub)
-make tf-helm-values
-
-# Generate Helm values for RabbitMQ
-make tf-helm-values BROKER_TYPE=rabbitmq
-
-# Clean generated files
-make clean-generated
+# Run tier0 tests
+cd ../hyperfleet-e2e && make generate && make build && ./bin/hyperfleet-e2e test --label-filter=tier0
 ```
 
-### Using Custom Images
+
+### GKE Deployment (GCP)
 
 ```bash
-# Use custom registry
-make install-all REGISTRY=quay.io/myuser
+export HELMFILE_ENV=gcp
+export NAMESPACE=hyperfleet
 
-# Use specific image tags
-make install-all API_IMAGE_TAG=v0.2.0 SENTINEL_IMAGE_TAG=v0.2.0 ADAPTER_IMAGE_TAG=v0.2.0
+# Step by step installation
+make install-terraform
+make get-credentials
+make install-maestro-all
+make install-hyperfleet
 
-# Override individual component image tags
-make install-api API_IMAGE_TAG=dev-abc123
+# One-shot installation
+make local-up-gcp
 ```
 
-### Working with Multiple Environments
+### E2E Tests on GKE
+
+#### Required Variables for E2E tests:
+```bash
+kubectl patch svc maestro -n maestro -p '{"spec":{"type":"LoadBalancer"}}'
+export MAESTRO_EXTERNAL_IP=$(kubectl get svc maestro -n maestro -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+export MAESTRO_URL=http://${MAESTRO_EXTERNAL_IP}:8000
+export API_EXTERNAL_IP=$(kubectl get svc hyperfleet-api -n $NAMESPACE -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+export HYPERFLEET_API_URL=http://${API_EXTERNAL_IP}:8000
+```
+
+#### Run tests
 
 ```bash
-# Deploy to a specific environment
-make install-all TF_ENV=staging NAMESPACE=hyperfleet-staging
+# Run tier0 tests
+cd ../hyperfleet-e2e && make generate && make build && ./bin/hyperfleet-e2e test --label-filter=tier0
+```
 
-# Deploy to custom namespace
-make install-all NAMESPACE=my-dev-env
+## Customization
+
+### Using custom images
+
+- CLI Overrides for specific variables
+- Update env.* files with custom values
+```bash
+# CLI Overrides
+REGISTRY=quay.io/$USER API_IMAGE_TAG=v0.2.0 HELMFILE_ENV=gcp make install-hyperfleet
+
+API_IMAGE_TAG=dev-abc123 HELMFILE_ENV=kind make install-api
+```
+
+### Building and loading images into kind
+
+```bash
+export HELMFILE_ENV=<env> # verify that BUILD_IMAGES ?= true in env.kind
+make kind-build-images
+
+# or CLI override
+BUILD_IMAGES=true make kind-build-images
+
+# or call the script directly:
+PROJECTS_DIR=~/Code/openshift-hyperfleet REGISTRY=localhost ./scripts/kind-build-images.sh
+```
+
+## Cleanup
+
+### kind / e2e-kind
+
+```bash
+export HELMFILE_ENV=kind # or HELMFILE_ENV=e2e-kind
+export NAMESPACE=<namespace>
+
+# for individual targets
+make uninstall-hyperfleet
+make uninstall-maestro
+make delete-kind-cluster
+
+# for full teardown
+make local-down-kind
+```
+
+### gcp / e2e-gcp
+
+```bash
+export HELMFILE_ENV=gcp # or HELMFILE_ENV=e2e-gcp
+export NAMESPACE=<namespace>
+
+# for individual targets
+make uninstall-hyperfleet
+make uninstall-maestro
+make destroy-terraform
+
+# for full teardown
+make local-down-gcp
 ```
 
 ## Commit Standards
 
-This project follows [HyperFleet commit standards](https://github.com/openshift-hyperfleet/architecture/blob/main/hyperfleet/standards/commit-standard.md).
+Format: `HYPERFLEET-XXX - <type>: <subject>`
 
-Commit message format:
-
-```
-HYPERFLEET-XXX - <type>: <subject>
-```
+Types: `feat`, `fix`, `docs`, `refactor`, `chore`, `test`
 
 Examples:
-
 - `HYPERFLEET-761 - docs: add CONTRIBUTING.md`
 - `HYPERFLEET-123 - feat: add support for custom Helm chart refs`
 - `HYPERFLEET-456 - fix: correct RabbitMQ URL format in generated values`
 
+Full standard: https://github.com/openshift-hyperfleet/architecture/blob/main/hyperfleet/standards/commit-standard.md
+
 ## Release Process
 
-This repository does not follow traditional semantic versioning for releases. Instead:
+No semantic versioning. Infrastructure changes deploy from `main` after review and approval via `OWNERS` (Prow enforced).
 
-- **Terraform modules** are versioned through git tags and referenced in consuming projects
-- **Helm charts** are stored in component repositories (`hyperfleet-api`, `hyperfleet-sentinel`, `hyperfleet-adapter`) and pulled via helm-git plugin
-- **Infrastructure changes** are deployed directly from `main` branch after review and approval
-- **Image tags** default to component versions (e.g., `v0.1.0` from upstream releases)
-
-When making changes:
-
-1. Create a feature branch from `main`
-2. Make your changes and test locally
-3. Open a pull request with clear description of changes
-4. After review and approval, merge to `main`
-5. Changes in `main` can be deployed to environments as needed
+- Helm charts live in component repos (`hyperfleet-api`, `hyperfleet-sentinel`, `hyperfleet-adapter`) and are pulled via helm-git at deploy time
+- Terraform modules are versioned through git tags
+- Image tags default to `latest` (GCP) or `local` (kind); override with `API_IMAGE_TAG`, `SENTINEL_IMAGE_TAG`, `ADAPTER_IMAGE_TAG`

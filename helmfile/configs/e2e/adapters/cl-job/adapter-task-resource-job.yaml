@@ -1,0 +1,29 @@
+# Simple hello-world Kubernetes Job for e2e testing
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: "test-job-{{ .clusterId }}-{{ .generationSpec }}"
+  namespace: "{{ .clusterId }}"
+  labels:
+    hyperfleet.io/cluster-id: "{{ .clusterId }}"
+    hyperfleet.io/resource-type: "job"
+    app: test-job
+  annotations:
+    hyperfleet.io/generation: "{{ .generationSpec }}"
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: hello-world
+        image: alpine:3.19
+        imagePullPolicy: IfNotPresent
+        command: ["/bin/sh", "-c", "echo 'Hello, World!'"]
+        resources:
+          requests:
+            memory: "32Mi"
+            cpu: "50m"
+          limits:
+            memory: "64Mi"
+            cpu: "100m"

@@ -1,0 +1,63 @@
+# Example HyperFleet Adapter deployment configuration
+adapter:
+  name: cl-maestro
+  #version: "0.1.0"
+
+# Log the full merged configuration after load (default: false)
+debug_config: true
+log:
+  level: debug
+
+clients:
+  hyperfleet_api:
+    base_url: CHANGE_ME
+    version: v1
+    timeout: 2s
+    retry_attempts: 3
+    retry_backoff: exponential
+
+  broker:
+    # These values are overridden at deploy time via env vars from Helm values
+    subscription_id: CHANGE_ME
+    topic: CHANGE_ME
+
+  maestro:
+    grpc_server_address: "maestro-grpc.maestro.svc.cluster.local:8090"
+
+    # HTTPS server address for REST API operations (optional)
+    # Environment variable: HYPERFLEET_MAESTRO_HTTP_SERVER_ADDRESS
+    http_server_address: "http://maestro.maestro.svc.cluster.local:8000"
+
+    # Source identifier for CloudEvents routing (must be unique across adapters)
+    # Environment variable: HYPERFLEET_MAESTRO_SOURCE_ID
+    source_id: "cl-maestro"
+
+    # Client identifier (defaults to source_id if not specified)
+    # Environment variable: HYPERFLEET_MAESTRO_CLIENT_ID
+    client_id: "cl-maestro-client"
+    insecure: true
+
+    # Authentication configuration
+    #auth:
+    #  type: "tls"  # TLS certificate-based mTLS
+    #
+    #  tls_config:
+    #    # gRPC TLS configuration
+    #    # Certificate paths (mounted from Kubernetes secrets)
+    #    # Environment variable: HYPERFLEET_MAESTRO_CA_FILE
+    #    ca_file: "/etc/maestro/certs/grpc/ca.crt"
+    #
+    #    # Environment variable: HYPERFLEET_MAESTRO_CERT_FILE
+    #    cert_file: "/etc/maestro/certs/grpc/client.crt"
+    #
+    #    # Environment variable: HYPERFLEET_MAESTRO_KEY_FILE
+    #    key_file: "/etc/maestro/certs/grpc/client.key"
+    #
+    #    # Server name for TLS verification
+    #    # Environment variable: HYPERFLEET_MAESTRO_SERVER_NAME
+    #    server_name: "maestro-grpc.maestro.svc.cluster.local"
+    #
+    #    # HTTP API TLS configuration (may use different CA than gRPC)
+    #    # If not set, falls back to ca_file for backwards compatibility
+    #    # Environment variable: HYPERFLEET_MAESTRO_HTTP_CA_FILE
+    #    http_ca_file: "/etc/maestro/certs/https/ca.crt"

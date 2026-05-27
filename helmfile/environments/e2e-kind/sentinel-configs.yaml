@@ -1,0 +1,15 @@
+sentinels:
+  - name: clusters
+    values:
+      - config:
+          resourceType: clusters
+
+  - name: nodepools
+    values:
+      - config:
+          resourceType: nodepools
+          messageData:
+            owner_references:
+              id: "resource.owner_references.id"
+              href: "resource.owner_references.href"
+              kind: "resource.owner_references.kind"

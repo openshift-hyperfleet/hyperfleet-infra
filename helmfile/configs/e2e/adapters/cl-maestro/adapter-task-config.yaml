@@ -1,0 +1,247 @@
+# Example HyperFleet Adapter task configuration
+
+# Parameters with all required variables
+params:
+
+  - name: "clusterId"
+    source: "event.id"
+    type: "string"
+    required: true
+
+  - name: "generation"
+    source: "event.generation"
+    type: "int"
+    required: true
+
+  - name: "namespace"
+    source: "env.NAMESPACE"
+    type: "string"
+
+# Preconditions with valid operators and CEL expressions
+preconditions:
+  - name: "clusterStatus"
+    api_call:
+      method: "GET"
+      url: "/clusters/{{ .clusterId }}"
+      timeout: 10s
+      retry_attempts: 3
+      retry_backoff: "exponential"
+    capture:
+      - name: "clusterName"
+        field: "name"
+      - name: "generation"
+        field: "generation"
+      - name: "timestamp"
+        field: "created_time"
+      - name: "is_deleting"
+        expression: "has(clusterStatus.deleted_time)"
+      - name: "reconciledConditionStatus"
+        expression: |
+          status.conditions.filter(c, c.type == "Reconciled").size() > 0
+            ? status.conditions.filter(c, c.type == "Reconciled")[0].status
+            : "False"
+      - name: "placementClusterName"
+        expression: "\"cluster1\""  # TBC coming from placement adapter
+      - name: "platformType"
+        expression: |
+          has(spec.platform) && has(spec.platform.type) ? spec.platform.type : ""
+      - name: "subnets"
+        expression: |
+          has(spec.platform) && has(spec.platform.gcp) && has(spec.platform.gcp.subnets)
+            ? spec.platform.gcp.subnets
+            : []
+
+
+  - name: "validationCheck"
+    expression: |
+      is_deleting || reconciledConditionStatus == "False"
+
+# Resources with valid K8s manifests
+resources:
+  - name: "resource0"
+    transport:
+      client: "maestro"
+      maestro:
+        target_cluster: "{{ .placementClusterName }}"
+
+    # ManifestWork manifest ref with Go template structural syntax ({{ if }}, {{ else }})
+    # This validates that Go template conditionals work with Maestro transport
+    manifest:
+      ref: "/etc/adapter/manifestwork.yaml"
+    # Discover the ResourceBundle (ManifestWork) by name from Maestro
+    discovery:
+      by_name: "{{ .clusterId }}-{{ .adapter.name }}"
+    lifecycle:
+      delete:
+        propagationPolicy: Background
+        when:
+          expression: "is_deleting"
+
+    # Discover nested resources deployed by the ManifestWork
+    nested_discoveries:
+      - name: "namespace0"
+        discovery:
+          by_name: "{{ .clusterId | lower }}-{{ .adapter.name }}-namespace"
+      - name: "configmap0"
+        discovery:
+          by_name: "{{ .clusterId | lower }}-{{ .adapter.name }}-configmap"
+
+post:
+  payloads:
+    - name: "statusPayload"
+      build:
+        adapter: "{{ .adapter.name }}"
+        conditions:
+          # Applied: Check if ManifestWork exists and has type="Applied", status="True"
+          - type: "Applied"
+            status:
+              expression: |
+                has(resources.resource0) && has(resources.resource0.status) && has(resources.resource0.status.conditions) && resources.resource0.status.conditions.filter(c, has(c.type) && c.type == "Applied").size() > 0 ? resources.resource0.status.conditions.filter(c, c.type == "Applied")[0].status : "False"
+            reason:
+              expression: |
+                has(resources.resource0) && has(resources.resource0.status) && has(resources.resource0.status.conditions) && resources.resource0.status.conditions.filter(c, has(c.type) && c.type == "Applied").size() > 0 ? resources.resource0.status.conditions.filter(c, c.type == "Applied")[0].reason : "ManifestWorkNotDiscovered"
+            message:
+              expression: |
+                has(resources.resource0) && has(resources.resource0.status) && has(resources.resource0.status.conditions) && resources.resource0.status.conditions.filter(c, has(c.type) && c.type == "Applied").size() > 0 ? resources.resource0.status.conditions.filter(c, c.type == "Applied")[0].message : "ManifestWork not discovered from Maestro or no Applied condition"
+
+          # Available: Check if nested discovered manifests are available on the spoke cluster
+          # Each nested discovery is enriched with top-level "conditions" from status.resourceStatus.manifests[]
+          - type: "Available"
+            status:
+              expression: |
+                has(resources.namespace0) && has(resources.namespace0.conditions)
+                  && resources.namespace0.conditions.exists(c, has(c.type) && c.type == "Available" && has(c.status) && c.status == "True")
+                  && has(resources.configmap0) && has(resources.configmap0.conditions)
+                  && resources.configmap0.conditions.exists(c, c.type == "Available" && has(c.status) && c.status == "True")
+                ? "True"
+                : "False"
+            reason:
+              expression: |
+                !(has(resources.namespace0) && has(resources.namespace0.conditions))
+                ? "NamespaceNotDiscovered"
+                : !resources.namespace0.conditions.exists(c, has(c.type) && c.type == "Available" && has(c.status) && c.status == "True")
+                  ? "NamespaceNotAvailable"
+                  : !(has(resources.configmap0) && has(resources.configmap0.conditions))
+                    ? "ConfigMapNotDiscovered"
+                    : !resources.configmap0.conditions.exists(c, c.type == "Available" && has(c.status) && c.status == "True")
+                      ? "ConfigMapNotAvailable"
+                      : "AllResourcesAvailable"
+            message:
+              expression: |
+                !(has(resources.namespace0) && has(resources.namespace0.conditions))
+                ? "Namespace not discovered from ManifestWork"
+                : !resources.namespace0.conditions.exists(c, has(c.type) && c.type == "Available" && has(c.status) && c.status == "True")
+                  ? "Namespace not yet available on spoke cluster"
+                  : !(has(resources.configmap0) && has(resources.configmap0.conditions))
+                    ? "ConfigMap not discovered from ManifestWork"
+                    : !resources.configmap0.conditions.exists(c, c.type == "Available" && has(c.status) && c.status == "True")
+                      ? "ConfigMap not yet available on spoke cluster"
+                      : "All manifests (namespace, configmap) are available on spoke cluster"
+
+          # Health: Adapter execution status — surfaces errors from any phase
+          - type: "Health"
+            status:
+              expression: |
+                adapter.?executionStatus.orValue("") == "success"
+                  && !adapter.?resourcesSkipped.orValue(false)
+                ? "True"
+                : "False"
+            reason:
+              expression: |
+                adapter.?executionStatus.orValue("") != "success"
+                ? "ExecutionFailed:" + adapter.?executionError.?phase.orValue("unknown")
+                : adapter.?resourcesSkipped.orValue(false)
+                  ? "ResourcesSkipped"
+                  : "Healthy"
+            message:
+              expression: |
+                adapter.?executionStatus.orValue("") != "success"
+                ? "Adapter failed at phase ["
+                    + adapter.?executionError.?phase.orValue("unknown")
+                    + "] step ["
+                    + adapter.?executionError.?step.orValue("unknown")
+                    + "]: "
+                    + adapter.?executionError.?message.orValue(adapter.?errorMessage.orValue("no details"))
+                : adapter.?resourcesSkipped.orValue(false)
+                  ? "Resources skipped: " + adapter.?skipReason.orValue("unknown reason")
+                  : "Adapter execution completed successfully"
+
+          # Finalized: True once ManifestWork and all spoke resources are confirmed deleted
+          - type: "Finalized"
+            status:
+              expression: |
+                is_deleting
+                  && adapter.?executionStatus.orValue("") == "success"
+                  && !adapter.?resourcesSkipped.orValue(false)
+                  && !resources.?resource0.hasValue()
+                  && !resources.?namespace0.hasValue()
+                  && !resources.?configmap0.hasValue()
+                ? "True"
+                : "False"
+            reason:
+              expression: |
+                !is_deleting ? "NotDeleting"
+                : !resources.?resource0.hasValue()
+                  && !resources.?namespace0.hasValue()
+                  && !resources.?configmap0.hasValue()
+                  ? "CleanupConfirmed"
+                  : "CleanupInProgress"
+            message:
+              expression: |
+                !is_deleting ? "Resource not marked for deletion"
+                : !resources.?resource0.hasValue()
+                  && !resources.?namespace0.hasValue()
+                  && !resources.?configmap0.hasValue()
+                  ? "All resources deleted; cleanup confirmed"
+                  : "Deletion in progress; waiting for resources to be removed"
+
+        observed_generation:
+          expression: "generation"
+        observed_time: "{{ now | date \"2006-01-02T15:04:05Z07:00\" }}"
+
+        # Extract data from discovered ManifestWork from Maestro
+        data:
+          manifestwork:
+            name:
+              expression: |
+                has(resources.resource0) && has(resources.resource0.metadata)
+                ? resources.resource0.metadata.name
+                : ""
+            consumer:
+              expression: |
+                has(resources.resource0) && has(resources.resource0.metadata)
+                ? resources.resource0.metadata.namespace
+                : placementClusterName
+          configmap:
+            name:
+              expression: |
+                has(resources.configmap0) && has(resources.configmap0.metadata)
+                ? resources.configmap0.metadata.name
+                : ""
+            clusterId:
+              expression: |
+                has(resources.configmap0) && has(resources.configmap0.data) && has(resources.configmap0.data.cluster_id)
+                ? resources.configmap0.data.cluster_id
+                : clusterId
+          namespace:
+            name:
+              expression: |
+                has(resources.namespace0) && has(resources.namespace0.metadata)
+                ? resources.namespace0.metadata.name
+                : ""
+            phase:
+              expression: |
+                has(resources.namespace0) && has(resources.namespace0.statusFeedback) && has(resources.namespace0.statusFeedback.values)
+                  && resources.namespace0.statusFeedback.values.exists(v, has(v.name) && v.name == "phase" && has(v.fieldValue))
+                ? resources.namespace0.statusFeedback.values.filter(v, v.name == "phase")[0].fieldValue.string
+                : "Unknown"
+
+  post_actions:
+    - name: "reportClusterStatus"
+      api_call:
+        method: "PUT"
+        url: "/clusters/{{ .clusterId }}/statuses"
+        headers:
+          - name: "Content-Type"
+            value: "application/json"
+        body: "{{ .statusPayload }}"

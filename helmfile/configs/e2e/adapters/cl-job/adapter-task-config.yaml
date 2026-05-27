@@ -1,0 +1,186 @@
+# Simple valid HyperFleet Adapter Configuration for testing
+
+# Parameters with all required variables
+params:
+  - name: "clusterId"
+    source: "event.id"
+    type: "string"
+    required: true
+
+# Preconditions with valid operators and CEL expressions
+preconditions:
+  - name: "clusterStatus"
+    api_call:
+      method: "GET"
+      url: "/clusters/{{ .clusterId }}"
+      timeout: 10s
+      retry_attempts: 3
+      retry_backoff: "exponential"
+    capture:
+      - name: "clusterName"
+        field: "name"
+      - name: "generationSpec"
+        field: "generation"
+      - name: "is_deleting"
+        expression: "has(clusterStatus.deleted_time)"
+      - name: "clusterNotReconciled"
+        expression: |
+          status.conditions.filter(c, c.type == "Reconciled").size() > 0
+            ? status.conditions.filter(c, c.type == "Reconciled")[0].status != "True"
+            : true
+      - name: "clusterReconciledTTL"
+        expression: |
+          (timestamp(now()) - timestamp(
+            status.conditions.filter(c, c.type == "Reconciled").size() > 0
+              ? status.conditions.filter(c, c.type == "Reconciled")[0].last_transition_time
+              : now()
+          )).getSeconds() > 300
+
+  - name: "clusterAdapterStatus"
+    api_call:
+      method: "GET"
+      url: "/clusters/{{ .clusterId }}/statuses"
+      timeout: 10s
+      retry_attempts: 3
+      retry_backoff: "exponential"
+    capture:
+      - name: "clusterNamespaceStatus"
+        field: "{.items[?(@.adapter=='cl-namespace')].data.namespace.status}"
+
+  - name: "validationCheck"
+    expression: |
+      is_deleting || (clusterNamespaceStatus == "Active" && (clusterNotReconciled || clusterReconciledTTL))
+
+# Resources with valid K8s manifests
+resources:
+  # Hello-world job created in the cluster namespace
+  - name: "testJob"
+    transport:
+      client: "kubernetes"
+    manifest:
+      ref: "/etc/adapter/job.yaml"
+    discovery:
+      namespace: "{{ .clusterId }}"
+      by_selectors:
+        label_selector:
+          hyperfleet.io/cluster-id: "{{ .clusterId }}"
+          hyperfleet.io/resource-type: "job"
+    lifecycle:
+      delete:
+        propagationPolicy: Background
+        when:
+          expression: "is_deleting"
+
+# Post-processing with valid CEL expressions
+# Reports Applied, Available, and Health conditions for the hello-world job
+post:
+  payloads:
+    - name: "clusterStatusPayload"
+      build:
+        adapter: "{{ .adapter.name }}"
+        conditions:
+          # Applied: Job successfully created
+          - type: "Applied"
+            status:
+              expression: |
+                has(resources.testJob) ? "True" : "False"
+            reason:
+              expression: |
+                has(resources.testJob)
+                  ? "JobApplied"
+                  : "JobPending"
+            message:
+              expression: |
+                has(resources.testJob)
+                  ? "testJob manifest applied successfully"
+                  : "testJob is pending to be applied"
+          # Available: True when the job has completed successfully
+          - type: "Available"
+            status:
+              expression: |
+                has(resources.testJob) ?
+                  ( resources.?testJob.?status.?conditions.orValue([]).exists(c, c.type == "Complete")
+                    ? resources.testJob.status.conditions.filter(c, c.type == "Complete")[0].status
+                    : "False")
+                  : "False"
+            reason:
+              expression: |
+                resources.?testJob.?status.?conditions.orValue([]).exists(c, c.type == "Complete")
+                  ? "JobComplete"
+                  : resources.?testJob.?status.?conditions.orValue([]).exists(c, c.type == "Failed")
+                    ? "JobFailed"
+                    : resources.?testJob.?status.hasValue()
+                      ? "JobRunning"
+                      : "JobPending"
+            message:
+              expression: |
+                resources.?testJob.?status.?conditions.orValue([]).exists(c, c.type == "Complete")
+                  ? "Hello-world job completed successfully"
+                  : resources.?testJob.?status.?conditions.orValue([]).exists(c, c.type == "Failed")
+                    ? "Hello-world job failed"
+                    : resources.?testJob.?status.hasValue()
+                      ? "Hello-world job is running"
+                      : "Hello-world job is pending"
+          # Health: Adapter execution status (runtime)
+          - type: "Health"
+            status:
+              expression: |
+                adapter.?executionStatus.orValue("") == "success"
+                  && !adapter.?resourcesSkipped.orValue(false)
+                ? "True"
+                : "False"
+            reason:
+              expression: |
+                adapter.?executionStatus.orValue("") != "success"
+                ? "ExecutionFailed:" + adapter.?executionError.?phase.orValue("unknown")
+                : adapter.?resourcesSkipped.orValue(false)
+                  ? "ResourcesSkipped"
+                  : "Healthy"
+            message:
+              expression: |
+                adapter.?executionStatus.orValue("") != "success"
+                ? "Adapter failed at phase ["
+                    + adapter.?executionError.?phase.orValue("unknown")
+                    + "] step ["
+                    + adapter.?executionError.?step.orValue("unknown")
+                    + "]: "
+                    + adapter.?executionError.?message.orValue(adapter.?errorMessage.orValue("no details"))
+                : adapter.?resourcesSkipped.orValue(false)
+                  ? "Resources skipped: " + adapter.?skipReason.orValue("unknown reason")
+                  : "Adapter execution completed successfully"
+          # Finalized: True once all job resources are confirmed deleted
+          - type: "Finalized"
+            status:
+              expression: |
+                is_deleting
+                  && adapter.?executionStatus.orValue("") == "success"
+                  && !adapter.?resourcesSkipped.orValue(false)
+                  && !resources.?testJob.hasValue()
+                ? "True"
+                : "False"
+            reason:
+              expression: |
+                !is_deleting ? "NotDeleting"
+                : !resources.?testJob.hasValue()
+                  ? "CleanupConfirmed"
+                  : "CleanupInProgress"
+            message:
+              expression: |
+                !is_deleting ? "Resource not marked for deletion"
+                : !resources.?testJob.hasValue()
+                  ? "All resources deleted; cleanup confirmed"
+                  : "Deletion in progress; waiting for resources to be removed"
+        # Event generation ID metadata field needs to use expression to avoid interpolation issues
+        observed_generation:
+          expression: "generationSpec"
+        observed_time: "{{ now | date \"2006-01-02T15:04:05Z07:00\" }}"
+
+  post_actions:
+    - name: "reportClusterStatus"
+      api_call:
+        method: "PUT"
+        url: "/clusters/{{ .clusterId }}/statuses"
+        headers:
+          - name: "Content-Type"
+            value: "application/json"
+        body: "{{ .clusterStatusPayload }}"

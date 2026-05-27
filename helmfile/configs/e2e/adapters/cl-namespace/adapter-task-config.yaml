@@ -1,0 +1,189 @@
+# Simple valid HyperFleet Adapter Configuration for testing
+
+# Parameters with all required variables
+params:
+  - name: "clusterId"
+    source: "event.id"
+    type: "string"
+    required: true
+  - name: "testRunId"
+    source: "env.TEST_RUN_ID"
+    type: "string"
+    required: false
+    default: "TEST_RUN_ID"
+  - name: "ci"
+    source: "env.CI"
+    type: "string"
+    required: false
+    default: "false"
+
+# Preconditions with valid operators and CEL expressions
+preconditions:
+  - name: "clusterStatus"
+    api_call:
+      method: "GET"
+      url: "/clusters/{{ .clusterId }}"
+      timeout: 10s
+      retry_attempts: 3
+      retry_backoff: "exponential"
+    capture:
+      - name: "clusterName"
+        field: "name"
+      - name: "generationSpec"
+        field: "generation"
+      - name: "is_deleting"
+        expression: "has(clusterStatus.deleted_time)"
+      - name: "clusterNotReconciled"
+        expression: |
+          status.conditions.filter(c, c.type == "Reconciled").size() > 0
+            ? status.conditions.filter(c, c.type == "Reconciled")[0].status != "True"
+            : true
+      - name: "clusterReconciledTTL"
+        expression: |
+          (timestamp(now()) - timestamp(
+            status.conditions.filter(c, c.type == "Reconciled").size() > 0
+              ? status.conditions.filter(c, c.type == "Reconciled")[0].last_transition_time
+              : now()
+          )).getSeconds() > 300
+
+  - name: "validationCheck"
+    # Precondition passes if cluster is NOT Reconciled OR if cluster is Reconciled and stable for >300 seconds since last transition (enables self-healing)
+    expression: |
+      is_deleting || clusterNotReconciled || clusterReconciledTTL
+
+# Resources with valid K8s manifests
+resources:
+  - name: "clusterNamespace"
+    transport:
+      client: "kubernetes"
+    manifest:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ .clusterId }}"
+        labels:
+          hyperfleet.io/cluster-id: "{{ .clusterId }}"
+          hyperfleet.io/cluster-name: "{{ .clusterName }}"
+          e2e.hyperfleet.io/test-run-id: "{{ .testRunId }}"
+          e2e.hyperfleet.io/ci: "{{ .ci }}"
+          e2e.hyperfleet.io/managed-by: "test-framework"
+        annotations:
+          hyperfleet.io/generation: "{{ .generationSpec }}"
+    discovery:
+      namespace: "*"  # Cluster-scoped resource (Namespace)
+      by_selectors:
+        label_selector:
+          hyperfleet.io/cluster-id: "{{ .clusterId }}"
+          hyperfleet.io/cluster-name: "{{ .clusterName }}"
+    lifecycle:
+      delete:
+        propagationPolicy: Foreground
+        when:
+          expression: "is_deleting"
+
+# Post-processing with valid CEL expressions
+# This example contains multiple resources, we will only report on the conditions of the jobNamespace not to overcomplicate the example
+post:
+  payloads:
+    - name: "clusterStatusPayload"
+      build:
+        adapter: "{{ .adapter.name }}"
+        conditions:
+          # Applied: Job successfully created
+          - type: "Applied"
+            status:
+              expression: |
+                resources.?clusterNamespace.?status.?phase.orValue("") == "Active" ? "True" : "False"
+            reason:
+              expression: |
+                resources.?clusterNamespace.?status.?phase.orValue("") == "Active"
+                  ? "NamespaceCreated"
+                  : "NamespacePending"
+            message:
+              expression: |
+                resources.?clusterNamespace.?status.?phase.orValue("") == "Active"
+                  ? "Namespace created successfully"
+                  : "Namespace creation in progress"
+          # Available: Check job status conditions
+          - type: "Available"
+            status:
+              expression: |
+                resources.?clusterNamespace.?status.?phase.orValue("") == "Active" ? "True" : "False"
+            reason:
+              expression: |
+                resources.?clusterNamespace.?status.?phase.orValue("") == "Active" ? "NamespaceReady" : "NamespaceNotReady"
+            message:
+              expression: |
+                resources.?clusterNamespace.?status.?phase.orValue("") == "Active" ? "Namespace is active and ready" : "Namespace is not active and ready"
+          # Health: Adapter execution status (runtime)
+          - type: "Health"
+            status:
+              expression: |
+                adapter.?executionStatus.orValue("") == "success"
+                  && !adapter.?resourcesSkipped.orValue(false)
+                ? "True"
+                : "False"
+            reason:
+              expression: |
+                adapter.?executionStatus.orValue("") != "success"
+                ? "ExecutionFailed:" + adapter.?executionError.?phase.orValue("unknown")
+                : adapter.?resourcesSkipped.orValue(false)
+                  ? "ResourcesSkipped"
+                  : "Healthy"
+            message:
+              expression: |
+                adapter.?executionStatus.orValue("") != "success"
+                ? "Adapter failed at phase ["
+                    + adapter.?executionError.?phase.orValue("unknown")
+                    + "] step ["
+                    + adapter.?executionError.?step.orValue("unknown")
+                    + "]: "
+                    + adapter.?executionError.?message.orValue(adapter.?errorMessage.orValue("no details"))
+                : adapter.?resourcesSkipped.orValue(false)
+                  ? "Resources skipped: " + adapter.?skipReason.orValue("unknown reason")
+                  : "Adapter execution completed successfully"
+          # Finalized: True once namespace is confirmed deleted
+          - type: "Finalized"
+            status:
+              expression: |
+                is_deleting
+                  && adapter.?executionStatus.orValue("") == "success"
+                  && !adapter.?resourcesSkipped.orValue(false)
+                  && !resources.?clusterNamespace.hasValue()
+                ? "True"
+                : "False"
+            reason:
+              expression: |
+                !is_deleting ? "NotDeleting"
+                : !resources.?clusterNamespace.hasValue()
+                  ? "CleanupConfirmed"
+                  : "CleanupInProgress"
+            message:
+              expression: |
+                !is_deleting ? "Resource not marked for deletion"
+                : !resources.?clusterNamespace.hasValue()
+                  ? "All resources deleted; cleanup confirmed"
+                  : "Deletion in progress; waiting for namespace to be removed"
+        # Event generation ID metadata field needs to use expression to avoid interpolation issues
+        observed_generation:
+          expression: "generationSpec"
+        observed_time: "{{ now | date \"2006-01-02T15:04:05Z07:00\" }}"
+
+        data:
+          namespace:
+            name:
+              expression: |
+                resources.?clusterNamespace.?metadata.?name.orValue("")
+            status:
+              expression: |
+                resources.?clusterNamespace.?status.?phase.orValue("")
+
+  post_actions:
+    - name: "reportClusterStatus"
+      api_call:
+        method: "PUT"
+        url: "/clusters/{{ .clusterId }}/statuses"
+        headers:
+          - name: "Content-Type"
+            value: "application/json"
+        body: "{{ .clusterStatusPayload }}"

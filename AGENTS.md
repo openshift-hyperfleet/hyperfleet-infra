@@ -1,116 +1,189 @@
-# HyperFleet Infrastructure — Agent Guide
+# AGENTS.md
 
-IaC repo for HyperFleet dev environments. Terraform provisions GCP resources (GKE, Pub/Sub, VPC). Helm deploys components to Kubernetes. No application code.
+## What this repo is
 
-```
-Terraform → GKE cluster + Pub/Sub
-    ↓
-scripts/tf-helm-values.sh → generates broker config YAML
-    ↓
-Helm charts (via helm-git plugin) → deploy to Kubernetes
-    ├── API
-    ├── Sentinels (clusters, nodepools)
-    ├── Adapters (1, 2, 3)
-    └── Maestro (server + agent, separate namespace)
-```
+Pure infrastructure-as-code. No application code, no compiled artifacts. Provisions HyperFleet dev environments using **Makefile + Helmfile + Terraform**.
 
-## Verification
+`make help` is the canonical entry point — all developer operations go through it.
 
-Run `make help` for all targets. Use these for validation:
+---
 
-| Target | What it does | Needs cluster? |
-|--------|-------------|----------------|
-| `make validate-terraform` | `terraform init -backend=false`, `fmt -check`, `validate` | No |
-| `make lint-helm` | `helm lint` all charts | No |
-| `make lint-shellcheck` | shellcheck all `.sh` files (requires `shellcheck`; skips silently outside CI if missing) | No |
-| `make ci-validate` | All three above combined | No |
-| `make validate-helm-charts` | `helm template` render all charts (current `BROKER_TYPE` only) | No |
-| `make ci-dry-run` | `ci-validate` + `validate-helm-charts` for both broker types | No |
-| `make install-api DRY_RUN=true` | Helm dry-run a single component against live cluster | Yes |
-
-**IMPORTANT:** Do NOT use `make install-all DRY_RUN=true` for validation — it runs Terraform first and fails without backend access. Use `make ci-dry-run` for offline validation.
-
-**Pre-commit order:**
+## Validation / CI commands
 
 ```bash
-cd terraform && terraform fmt -recursive     # auto-fix terraform formatting
-make ci-dry-run                             # full offline validation
+make ci-validate     # validate terraform + lint helm + lint shellcheck
+make ci-dry-run      # ci-validate + validate maestro
 ```
 
-## Source of Truth
+Run `ci-validate` before proposing changes. `ci-dry-run` is the full pre-merge check.
 
-| Topic | File |
-|-------|------|
-| All make targets and variables | `Makefile` (run `make help`) |
-| Terraform variables and defaults | `terraform/variables.tf` |
-| Terraform architecture and setup | `terraform/README.md` |
-| Development setup and workflow | `CONTRIBUTING.md` |
-| Commit message format | `CONTRIBUTING.md` → "Commit Standards" |
-| Helm values generation logic | `scripts/tf-helm-values.sh` |
-| Chart dependencies and sources | `helm/*/Chart.yaml` |
-| Terraform version pin | `.tool-versions` |
-| Repo structure and quick start | `README.md` |
+Individual checks:
+```bash
+make validate-terraform   # terraform init (no backend) + fmt check + validate
+make lint-helm            # helm lint all charts under helm/*/
+make lint-shellcheck      # shellcheck all *.sh
+make validate-maestro     # renders maestro chart to /dev/null
+```
 
-## Two Deployment Paths
+Template/dry-run all four Helmfile environments explicitly:
+```bash
+# environment specific
+HELMFILE_ENV=<env> make template-helmfile
+# example:
+HELMFILE_ENV=gcp make template-helmfile
+```
 
-1. **GCP + Google Pub/Sub** (default): `make install-all` — runs Terraform, configures kubectl, generates Pub/Sub broker config, deploys everything.
-2. **RabbitMQ** (any Kubernetes): `make install-all-rabbitmq` — no Terraform, deploys RabbitMQ manifest, generates RabbitMQ broker config, deploys everything.
+---
 
-## Key Makefile Defaults
+## Terraform formatting
 
-Most commonly overridden variables with actual defaults. Run `make help` for the complete list:
+Terraform lock file (`terraform/.terraform.lock.hcl`) is **gitignored** — do not commit it.
 
-| Variable | Default |
-|----------|---------|
-| `NAMESPACE` | `hyperfleet` |
-| `MAESTRO_NS` | `maestro` |
-| `BROKER_TYPE` | `googlepubsub` |
-| `REGISTRY` | `registry.ci.openshift.org` |
-| `*_IMAGE_TAG` | `latest` |
-| `*_CHART_REF` | `main` (API, Sentinel, Adapter only — Maestro has no `CHART_REF` variable) |
-| `CHART_ORG` | `openshift-hyperfleet` |
-| `GCP_PROJECT_ID` | `hcm-hyperfleet` |
-| `TF_ENV` | `dev` |
+Format check runs from `terraform/`:
+```bash
+terraform fmt -check -recursive -diff
+terraform fmt -recursive   # auto-fix
+```
 
-To pin Maestro's chart version, edit `helm/maestro/Chart.yaml` directly.
+Pinned version: `terraform 1.13.1` (asdf, `.tool-versions`). Providers: `hashicorp/google 5.45.2`, `hashicorp/google-beta 5.45.2`, `hashicorp/local 2.9.0`.
 
-## Conventions
+---
 
-### Makefile
-- Prerequisite checks use `check-*` naming prefix
+## Generated values — must exist before helmfile deploy
 
-### Helm Charts
-- Charts are umbrella charts — actual chart source lives in component repos, pulled via helm-git plugin
-- `set-chart-ref` macro in Makefile rewrites `Chart.yaml` repository URL and `?ref=` during install and validation targets — do not manually edit the `?ref=` parameter in api, sentinel, or adapter charts
-- Maestro chart ref is NOT managed by `set-chart-ref` or `CHART_ORG` — its chart source is hardcoded to `openshift-online/maestro`
-- `CHART_ORG` and `*_CHART_REF` control which GitHub org/ref api/sentinel/adapter charts are pulled from
+**Do not edit files in `generated-values-from-terraform/` or `generated-values-rabbitmq/` — both directories are auto-generated and gitignored.**
 
-### Terraform
-- All variables need `description` in `variables.tf`
-- All outputs need `description` in `outputs.tf`
-- Backend config files: `dev-*.tfvars`, `dev-*.tfbackend`, `dev.tfvars`, and `dev.tfbackend` in `terraform/envs/gke/` are gitignored. Exception: `dev-prow.*` files are committed (shared CI cluster config)
-- Copy from `.example` files for personal configs
+| Env | How values are generated | Required before |
+|-----|--------------------------|-----------------|
+| `gcp` | `make install-terraform` (Terraform writes via `local_file`) | `make install-hyperfleet` |
+| `kind` | `make generate-rabbitmq-values` (shell script) | `make install-hyperfleet` |
+| `e2e-gcp` / `e2e-kind` | Not needed — broker configs hardcoded in helmfile | — |
 
-## Boundaries
+Helmfile will fail silently or render incorrectly if these files are missing.
 
-**IMPORTANT: Do NOT**
-- Edit files in `generated-values-from-terraform/` — they are created by `scripts/tf-helm-values.sh` and overwritten on each run
-- Commit personal `dev-*.tfvars` or `dev-*.tfbackend` files (gitignored, but `dev-prow.*` is an exception)
-- Hardcode GCP project IDs — use `GCP_PROJECT_ID` variable
-- Add Makefile targets without `## Description` comment (powers `make help`) and `.PHONY` declaration
-- Add external tool dependencies without a matching `check-*` prerequisite target
-- Use `make install-all` for offline validation (use `make ci-dry-run`)
+`make clean-generated` removes both directories.
 
-## Gotchas
+---
 
-1. **helm-git plugin required**: Helm charts pull from GitHub repos via `git+https://` URLs. Without the helm-git plugin, `helm dependency update` fails silently or with cryptic errors. Check with `make check-helm`.
+## Environment variable loading
 
-2. **`set-chart-ref` modifies Chart.yaml in-place**: The Makefile's `set-chart-ref` macro rewrites the `?ref=` parameter and org in `helm/{api,sentinel-*,adapter*}/Chart.yaml` during install and validation targets (`install-*`, `validate-helm-charts`, `ci-dry-run`). These changes show up as dirty in `git status`. This is by design — chart refs are pinned at runtime, not at commit time. Maestro charts are not affected.
+The Makefile selects the env file based on `HELMFILE_ENV`:
+- contains `gcp` → sources `env.gcp`
+- does not contain `gcp` → sources `env.kind` (so `kind`, `e2e-kind`, etc.)
 
-3. **Maestro uses a separate namespace**: Maestro deploys to `$(MAESTRO_NS)` (default: `maestro`), not `$(NAMESPACE)`. Both namespaces are created automatically by `check-namespace`/`check-maestro-namespace`.
+All variables in those files use `?=`, so **any variable can be overridden on the CLI** and the env file value is ignored:
 
-4. **`DRY_RUN` only affects Helm**: The `DRY_RUN=true` flag adds `--dry-run` to Helm commands only. Terraform targets (`install-terraform`, `get-credentials`) ignore it. Aggregate targets like `install-all` still run Terraform even with `DRY_RUN=true`.
+```bash
+HELMFILE_ENV=kind NAMESPACE=my-namespace REGISTRY=quay.io make install-hyperfleet
+```
 
-5. **Adapter config files are `--set-file` not `--values`**: Adapter install targets use `--set-file` for `adapter-config.yaml` and `adapter-task-config.yaml`. These are loaded as string values, not merged as Helm values.
+For persistent personal overrides, pass variables on the CLI or set them in your shell environment before invoking make.
 
-6. **Generated values are conditional**: Install targets only pass `--values $(GENERATED_DIR)/file.yaml` if the file exists (`$(wildcard ...)`). If you skip `tf-helm-values`, components install without broker config.
+Key variables:
+
+| Variable | GCP default | kind default | Notes |
+|----------|------------|--------------|-------|
+| `HELMFILE_ENV` | `gcp` | `kind` | Also `e2e-gcp`, `e2e-kind` |
+| `NAMESPACE` | `hyperfleet` | `hyperfleet-local` | e2e envs use `hyperfleet-e2e[-$USER]` |
+| `REGISTRY` | `registry.ci.openshift.org` | `localhost` | |
+| `TF_ENV` | `dev` | N/A | Selects `envs/gke/<TF_ENV>.tfvars` |
+| `BROKER_TYPE` | `googlepubsub` | `rabbitmq` | |
+| `API_IMAGE_TAG` | `latest` | `local` | |
+| `IMAGE_PULL_POLICY` | `Always` | `IfNotPresent` | |
+
+---
+
+## Terraform per-developer setup (GCP, one-time)
+
+```bash
+cd terraform
+cp envs/gke/dev.tfvars.example envs/gke/dev-<username>.tfvars
+cp envs/gke/dev.tfbackend.example envs/gke/dev-<username>.tfbackend
+# Set developer_name = "<username>" in tfvars
+# Set prefix = "terraform/state/dev-<username>" in tfbackend
+```
+
+These files are gitignored — never commit personal tfvars/tfbackend. Remote state uses GCS bucket `hyperfleet-terraform-state`.
+
+---
+
+## Helm charts and dependencies
+
+Two local charts under `helm/`:
+- `helm/maestro/` — umbrella chart; dependencies pulled from `github.com/openshift-online/maestro` via `helm-git` plugin at `ref=main`
+- `helm/rabbitmq/` — dev-only, NOT production-ready (no StatefulSet, hardcoded `guest/guest`)
+
+`helm/maestro/charts/` is gitignored; `Chart.lock` is committed. The `install-maestro` target runs `helm dependency update` automatically.
+
+**Required Helm plugins** (not standard):
+```bash
+helm plugin install https://github.com/aslafy-z/helm-git
+helm plugin install https://github.com/databus23/helm-diff --verify=false
+```
+
+---
+
+## Helmfile environments
+
+Four environments, two broker backends:
+
+| `HELMFILE_ENV` | Backend | Notes |
+|----------------|---------|-------|
+| `gcp` | Google Pub/Sub | Requires Terraform-generated values |
+| `kind` | RabbitMQ | Requires script-generated values |
+| `e2e-gcp` | Google Pub/Sub | Hardcoded configs, uses `$NAMESPACE` |
+| `e2e-kind` | RabbitMQ | Hardcoded configs, uses `$NAMESPACE` |
+
+Helmfile uses Go template syntax (`.gotmpl` extension) throughout.
+
+---
+
+## Sibling repos
+
+Helm charts for `hyperfleet-api`, `hyperfleet-sentinel`, and `hyperfleet-adapter` live in their respective sibling repos and are pulled at deploy time via `helm-git`. The `CHART_ORG` and `API_CHART_REF` variables control which org/ref is used.
+
+For kind image builds, `PROJECTS_DIR` must point to the parent directory containing those repos (default: `~/openshift-hyperfleet`).
+
+---
+
+## No CI workflows in this repo
+
+There is no `.github/workflows/`. CI is managed by **Prow** (OpenShift CI). The `ci-validate`, `ci-dry-run`, `ci-test`, and `ci-cleanup` Make targets are designed to be called by Prow. PR approval is enforced via `OWNERS`.
+
+---
+
+## Common gotchas
+
+**`generate-rabbitmq-values` only works for `HELMFILE_ENV=kind`**
+Running it for any other env silently no-ops. E2E envs (`e2e-kind`, `e2e-gcp`) have broker configs hardcoded in helmfile and need no generated files.
+
+**`check-kubectl-context` enforces context shape, not just env**
+`make install-hyperfleet` (and most helmfile targets) run `check-kubectl-context`, which hard-fails if your current kubectl context doesn't contain `gke_` (for gcp envs) or `kind-` (for kind envs). Switching `HELMFILE_ENV` without switching your kubeconfig context will fail immediately.
+
+**`install-maestro` installs the AppliedManifestWorks CRD manually**
+The upstream Maestro Helm chart CRD install is broken. `install-maestro` works around this by applying the CRD directly from `open-cluster-management-io/api` before the chart, and sets `--set agent.installWorkCRDs=false`. Do not remove or reorder these steps.
+
+**Terraform state lock is always disabled**
+`make install-terraform` and `make destroy-terraform` both pass `-lock=false`. If a previous apply left `terraform/errored.tfstate` (currently present in this repo), resolve it before re-running — Terraform may use it as a fallback.
+
+**`validate-terraform` uses no backend**
+`make validate-terraform` runs `terraform init -backend=false`. It validates syntax only; it does not test connectivity to GCS or check that provider credentials work.
+
+**`shellcheck` is silently skipped locally but required in CI**
+`make lint-shellcheck` skips without error if `shellcheck` is not installed. In CI (`$CI` set), it hard-fails instead. Install it locally to catch issues before push: `brew install shellcheck`.
+
+**`helm/maestro/charts/` is gitignored; `Chart.lock` is not**
+Running `helm dependency update helm/maestro` is required before any Maestro install. The `install-maestro` target does this automatically, but running `helm install` or `helm template` on the chart directly will fail if `charts/` is absent.
+
+**E2E environments share env files with their base environments**
+`HELMFILE_ENV=e2e-kind` sources `env.kind`, and `HELMFILE_ENV=e2e-gcp` sources `env.gcp` — no separate `env.e2e-*` files exist. The Makefile uses substring matching (`findstring gcp`) to choose between the two env files. The distinction between base and e2e environments is in Helmfile only (different adapter configs, hardcoded broker settings).
+
+---
+
+## Commit message format
+
+```
+HYPERFLEET-XXX - <type>: <subject>
+```
+
+Types: `feat`, `fix`, `docs`, `refactor`, `chore`, `test`. No semver releases — infra changes deploy from `main`.

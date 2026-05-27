@@ -1,211 +1,221 @@
 # HyperFleet Infrastructure
 
-Infrastructure as Code for HyperFleet development environments.
+Infrastructure as Code for HyperFleet development environments using **Makefile + Helmfile + Terraform**.
+
+`make help` is the canonical entry point.
 
 ## Overview
 
-This repository provides a `Makefile`-driven workflow for provisioning infrastructure (Terraform) and deploying HyperFleet components (Helm).
+Two message broker backends are supported:
 
-HyperFleet supports two message broker backends:
+- **Google Pub/Sub** (default) — managed by GCP, provisioned via Terraform
+- **RabbitMQ** — self-hosted via `helm/rabbitmq/`, used for kind/local deployments
 
-- **Google Pub/Sub** (default) — managed by GCP, provisioned via Terraform. Best for GCP-based deployments.
-- **RabbitMQ** — self-hosted, must be installed separately. Works on any Kubernetes cluster.
+**Terraform manages (GCP only):**
+- Shared VPC, subnets, firewall rules (one-time per project)
+- Per-developer GKE clusters
+- Google Pub/Sub topics, subscriptions, Workload Identity
+- Helm values files written to `generated-values-from-terraform/`
 
-**What Terraform manages (GCP only):**
-
-- **Shared infrastructure** (VPC, subnets, firewall rules) - deployed once per GCP project
-- **Developer GKE clusters** - personal Kubernetes clusters for each developer
-- **Google Pub/Sub** (optional) - managed message broker with Workload Identity
-
-**What Helm manages (via Makefile):**
-
-- HyperFleet API, Sentinels, Adapters
-- Maestro (server + agent)
+**Helmfile manages:**
+- All HyperFleet components (API, Sentinels, Adapters, *RabbitMQ)
+- Environment-specific configurations across four environments
 
 ## Prerequisites
 
-### Common
+### All environments
 
-- [Helm](https://helm.sh/docs/intro/install/) + [helm-git plugin](https://github.com/aslafy-z/helm-git) (`helm plugin install https://github.com/aslafy-z/helm-git`)
-- `kubectl` configured with access to your target cluster
+- `helm` + [`helm-git` plugin](https://github.com/aslafy-z/helm-git) + [`helm-diff` plugin](https://github.com/databus23/helm-diff)
+- `helmfile`
+- `kubectl` with a configured context
 
-### Google Pub/Sub deployments
+```bash
+helm plugin install https://github.com/aslafy-z/helm-git
+helm plugin install https://github.com/databus23/helm-diff --verify=false
+```
 
-- [Terraform](https://developer.hashicorp.com/terraform/downloads) >= 1.5
+### GCP only
+
+- `terraform 1.13.1` (pinned via `.tool-versions`; use [asdf](https://asdf-vm.com/))
 - [Google Cloud SDK](https://cloud.google.com/sdk/docs/install) (`gcloud`) + `gke-gcloud-auth-plugin`
 - Access to the `hcm-hyperfleet` GCP project
 
-### RabbitMQ deployments
+### kind only
 
-- A RabbitMQ instance accessible from the cluster. For development, use `make install-rabbitmq` (included in this repo). For production, provide your own RabbitMQ installation.
+- `kind`
+- `podman` or `docker` (for image builds)
 
-## Quick Start (Google Pub/Sub)
+## Deployment Environments
 
-This is the default deployment path using GCP infrastructure and Google Pub/Sub as the message broker.
+| `HELMFILE_ENV` | Cluster | Broker | Notes |
+|----------------|---------|--------|-------|
+| `gcp` | GKE (Terraform) | Google Pub/Sub | Requires Terraform-generated values |
+| `kind` | kind (local) | RabbitMQ | Requires script-generated values |
+| `e2e-gcp` | GKE (Terraform) | Google Pub/Sub | Broker config hardcoded in helmfile |
+| `e2e-kind` | kind (local) | RabbitMQ | Broker config hardcoded in helmfile |
 
-### 1. One-time setup
+`HELMFILE_ENV` defaults to `gcp` if not set.
 
-```bash
-# Authenticate with GCP
-gcloud auth application-default login
-gcloud config set project hcm-hyperfleet
+### Environment variable loading
 
-# Create your Terraform config files
-cp terraform/envs/gke/dev.tfvars.example terraform/envs/gke/dev.tfvars
-cp terraform/envs/gke/dev.tfbackend.example terraform/envs/gke/dev.tfbackend
-# Edit both files: set developer_name and prefix to your username
-```
+The Makefile selects the env file based on `HELMFILE_ENV`:
+- contains `gcp` → sources `env.gcp`
+- does not contain `gcp` → sources `env.kind` (so `kind`, `e2e-kind`, etc.)
 
-### 2. Install everything
-
-```bash
-# Provision cluster + deploy all HyperFleet components
-make install-all
-
-# With custom registry
-make install-all REGISTRY=quay.io/<your username>
-
-# With specific image version
-make install-all IMAGE_TAG=v0.2.0
-```
-
-> **Note:** Helm release names are prefixed with the namespace (e.g. `hyperfleet-api`, `hyperfleet-adapter1`) to avoid ClusterRole collisions when multiple deployments share the same cluster. Use a different `NAMESPACE` for each deployment.
-
-`make install-all` runs these steps in order:
-
-```text
-install-terraform       → Create GKE cluster and cloud resources
-get-credentials         → Configure kubectl from Terraform outputs
-tf-helm-values          → Generate Helm override values (Pub/Sub config)
-install-maestro         → Deploy Maestro server + agent
-create-maestro-consumer → Register a Maestro consumer
-install-hyperfleet      → Deploy API, Sentinels, and Adapters via Helm
-```
-
-### 3. Verify
+All variables use `?=`. CLI overrides always win:
 
 ```bash
-make status
+HELMFILE_ENV=kind NAMESPACE=my-namespace REGISTRY=quay.io make install-hyperfleet
 ```
 
-## Deploying with RabbitMQ
+Configuration precedence (highest to lowest):
+1. CLI variables
+2. `env.gcp` or `env.kind`
+3. Makefile defaults
 
-Use this path when deploying on any Kubernetes cluster with RabbitMQ as the message broker. Terraform is not required.
+## Makefile Targets
 
-### Quick install
-
-```bash
-make install-all-rabbitmq
-```
-
-This single command installs RabbitMQ, generates broker config, deploys all HyperFleet components, and sets up Maestro.
-
-> **Development only:** The included RabbitMQ manifest uses hardcoded credentials (`guest:guest`) and no persistent storage. For shared or staging environments, use a Kubernetes Secret for credentials and a StatefulSet with PersistentVolumeClaim for data durability.
-
-### Verify
-
-```bash
-make status
-```
-
-## Installation Targets
-
-Run `make help` to see all targets. Key targets:
+### HyperFleet
 
 | Target | Description |
 |--------|-------------|
-| `make install-all` | Full GCP install: Terraform + credentials + Helm values + HyperFleet + Maestro |
-| `make install-all-rabbitmq` | Full RabbitMQ install: RabbitMQ + Helm values + HyperFleet + Maestro (no Terraform) |
-| `make install-terraform` | Provision GCP cloud infrastructure only |
-| `make get-credentials` | Configure kubectl from Terraform outputs |
-| `make tf-helm-values` | Generate Helm override values (broker config) |
-| `make install-hyperfleet` | Deploy API + Sentinels + Adapters (requires cluster credentials) |
-| `make install-maestro` | Deploy Maestro server + agent (separate namespace) |
-| `make create-maestro-consumer` | Register a Maestro consumer (requires Maestro running) |
-| `make install-rabbitmq` | Install RabbitMQ for development (only for `BROKER_TYPE=rabbitmq`) |
-| `make install-api` | Deploy HyperFleet API only |
-| `make install-sentinels` | Deploy all Sentinels |
-| `make install-adapters` | Deploy all Adapters |
-| `make uninstall-rabbitmq` | Remove RabbitMQ deployment |
-| `make uninstall-all` | Remove all Helm releases |
-| `make status` | Show Helm releases and pod status |
+| `make install-hyperfleet` | Install all HyperFleet components |
+| `make install-api` | Install HyperFleet API only |
+| `make install-sentinels` | Install Sentinels only |
+| `make install-adapters` | Install Adapters only |
+| `make uninstall-hyperfleet` | Uninstall all HyperFleet components |
+| `make uninstall-hyperfleet-api` | Uninstall API only |
+| `make uninstall-hyperfleet-sentinels` | Uninstall Sentinels only |
+| `make uninstall-hyperfleet-adapters` | Uninstall Adapters only |
 
-### Makefile Variables
+### Terraform
 
-Override with `VAR=value`, e.g. `make install-hyperfleet BROKER_TYPE=rabbitmq`:
+| Target | Description |
+|--------|-------------|
+| `make install-terraform` | `terraform init` + `apply`; writes generated values |
+| `make plan-terraform` | `terraform plan` (no apply) |
+| `make validate-terraform` | `terraform init -backend=false` + fmt check + validate |
+| `make get-credentials` | Configure kubectl from terraform output |
+| `make destroy-terraform` | Destroy Terraform-managed infrastructure |
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `TF_ENV` | `dev` | Terraform environment (selects `envs/gke/<TF_ENV>.tfvars` and `.tfbackend`) |
-| `NAMESPACE` | `hyperfleet` | Kubernetes namespace for HyperFleet components |
-| `MAESTRO_NS` | `maestro` | Kubernetes namespace for Maestro |
-| `BROKER_TYPE` | `googlepubsub` | Message broker type (`googlepubsub` or `rabbitmq`) |
-| `RABBITMQ_URL` | `amqp://guest:guest@rabbitmq:5672/` | RabbitMQ connection URL (only used when `BROKER_TYPE=rabbitmq`) |
-| `REGISTRY` | `registry.ci.openshift.org` | Override image registry for all components |
-| `API_REPOSITORY` | `ci/hyperfleet-api` | Override API image repository |
-| `SENTINEL_REPOSITORY` | `ci/hyperfleet-sentinel` | Override sentinel image repository |
-| `ADAPTER_REPOSITORY` | `ci/hyperfleet-adapter` | Override adapter image repository |
-| `API_IMAGE_TAG` | `latest` | Override image tag for the API |
-| `SENTINEL_IMAGE_TAG` | `latest` | Override image tag for Sentinels |
-| `ADAPTER_IMAGE_TAG` | `latest` | Override image tag for Adapters |
-| `MAESTRO_CONSUMER` | `cluster1` | Maestro consumer name for `create-maestro-consumer` |
+### Maestro
+
+| Target | Description |
+|--------|-------------|
+| `make install-maestro` | Install Maestro server + agent (runs `helm dependency update` first) |
+| `make create-maestro-consumer` | Create a Maestro consumer (requires Maestro running) |
+| `make install-maestro-all` | `install-maestro` + `create-maestro-consumer` |
+| `make uninstall-maestro` | Uninstall Maestro |
+
+### kind
+
+| Target | Description |
+|--------|-------------|
+| `make create-kind-cluster` | Create kind cluster or export kubeconfig if it exists |
+| `make delete-kind-cluster` | Delete the kind cluster |
+| `make kind-build-images` | Build and load component images into kind |
+| `make local-up-kind` | Full local setup: cluster + images + maestro + values + deploy |
+| `make local-down-kind` | Tear down: uninstall hyperfleet + maestro + delete cluster |
+
+### Generated values
+
+| Target | Description |
+|--------|-------------|
+| `make generate-rabbitmq-values` | Generate RabbitMQ broker Helm values (`HELMFILE_ENV=kind` only) |
+| `make clean-generated` | Remove all generated value directories |
+
+### Validation / CI
+
+| Target | Description |
+|--------|-------------|
+| `make ci-dry-run` | `ci-validate` + `validate maestro` |
+| `make ci-test` | `install terraform` + `get-credentials` + `install-maestro` + `create-maestro-consumer` + `health-check-maestro` |
+| `make ci-cleanup` | `uninstall-maestro` + `destroy-terraform` |
+
+
+## Variables
+
+| Variable | GCP default | kind default | Notes |
+|----------|------------|--------------|-------|
+| `HELMFILE_ENV` | `gcp` | `kind` | Also `e2e-gcp`, `e2e-kind` |
+| `NAMESPACE` | `hyperfleet` | `hyperfleet-local` | e2e envs use `hyperfleet-e2e[-$USER]` |
+| `MAESTRO_NAMESPACE` | `maestro` | `maestro` | |
+| `REGISTRY` | `registry.ci.openshift.org` | `localhost` | |
+| `API_REPOSITORY` | `ci/hyperfleet-api` | `hyperfleet-api` | |
+| `SENTINEL_REPOSITORY` | `ci/hyperfleet-sentinel` | `hyperfleet-sentinel` | |
+| `ADAPTER_REPOSITORY` | `ci/hyperfleet-adapter` | `hyperfleet-adapter` | |
+| `API_IMAGE_TAG` | `latest` | `local` | |
+| `SENTINEL_IMAGE_TAG` | `latest` | `local` | |
+| `ADAPTER_IMAGE_TAG` | `latest` | `local` | |
+| `IMAGE_PULL_POLICY` | `Always` | `IfNotPresent` | |
+| `CHART_ORG` | `openshift-hyperfleet` | `openshift-hyperfleet` | GitHub org for helm-git chart repos |
+| `API_CHART_REF` | `main` | `main` | Git ref for API chart |
+| `SENTINEL_CHART_REF` | `main` | `main` | Git ref for Sentinel chart |
+| `ADAPTER_CHART_REF` | `main` | `main` | Git ref for Adapter chart |
+| `TF_ENV` | `dev` | N/A | Selects `envs/gke/<TF_ENV>.tfvars` |
+| `RABBITMQ_URL` | N/A | `amqp://guest:guest@rabbitmq:5672` | |
+| `MAESTRO_CONSUMER` | `cluster1` | `cluster1` | |
+| `KIND_CLUSTER_NAME` | N/A | `kind` | |
+| `PROJECTS_DIR` | N/A | `~/openshift-hyperfleet` | Parent dir for sibling repos (image builds) |
+| BUILD_IMAGES | N/A | true | Set to false to skip image builds |
 
 ## Repository Structure
 
 ```
 hyperfleet-infra/
-├── Makefile                    # Main entry point (make help)
-├── manifests/
-│   └── rabbitmq.yaml           # RabbitMQ dev manifest (for BROKER_TYPE=rabbitmq)
+├── Makefile                         # Entry point — run 'make help'
+├── env.gcp                          # GCP defaults (Google Pub/Sub, LoadBalancer)
+├── env.kind                         # kind defaults (RabbitMQ, ClusterIP)
+├── helmfile/
+│   ├── helmfile.yaml.gotmpl         # Helmfile orchestration
+│   ├── environments/                # Per-env configs (gcp, kind, e2e-gcp, e2e-kind)
+│   ├── configs/
+│   │   ├── base/adapters/           # Adapter configs (adapter1, adapter2, adapter3)
+│   │   └── e2e/adapters/            # E2E adapter configs
+│   └── values/                      # Helm value templates (.gotmpl)
+├── helm/
+│   ├── maestro/                     # Maestro umbrella chart (deps via helm-git)
+│   └── rabbitmq/                    # Dev-only RabbitMQ (not production-ready)
 ├── scripts/
-│   └── tf-helm-values.sh      # Generates Helm values (Pub/Sub from Terraform, RabbitMQ from variables)
-├── helm/                      # Helm charts for application components
-│   ├── api/                   # HyperFleet API
-│   ├── sentinel-clusters/     # Sentinel for cluster events
-│   ├── sentinel-nodepools/    # Sentinel for nodepool events
-│   ├── adapter1/              # Adapter 1
-│   ├── adapter2/              # Adapter 2
-│   ├── adapter3/              # Adapter 3
-│   └── maestro/               # Maestro server + agent
+│   ├── generate-rabbitmq-values.sh  # Generates RabbitMQ broker config
+│   └── kind-build-images.sh         # Builds and loads images into kind
 ├── terraform/
-│   ├── README.md              # Detailed Terraform documentation
-│   ├── main.tf                # Root module (GKE cluster, Pub/Sub, firewall)
-│   ├── variables.tf
-│   ├── outputs.tf
-│   ├── providers.tf
-│   ├── versions.tf
-│   ├── backend.tf
-│   ├── bootstrap/             # One-time setup scripts
-│   ├── shared/                # Shared infrastructure (deploy once per project)
+│   ├── README.md                    # Detailed Terraform documentation
+│   ├── main.tf                      # Root module (GKE cluster, Pub/Sub, firewall)
+│   ├── helm-values-files.tf         # Writes generated Helm values via local_file
+│   ├── bootstrap/                   # One-time GCP setup scripts (admin only)
+│   ├── shared/                      # Shared VPC infrastructure (deploy once)
 │   ├── modules/
-│   │   ├── cluster/gke/       # GKE cluster module
-│   │   └── pubsub/            # Google Pub/Sub module
-│   └── envs/gke/              # Per-environment tfvars and tfbackend files
-└── generated-values-from-terraform/  # Auto-generated Helm values (gitignored)
+│   │   ├── cluster/gke/             # GKE cluster module
+│   │   └── pubsub/                  # Google Pub/Sub module
+│   └── envs/gke/                    # Per-developer tfvars and tfbackend files
+├── generated-values-from-terraform/ # Auto-generated, gitignored
+└── generated-values-rabbitmq/       # Auto-generated, gitignored
 ```
 
-### Generated Helm Values
+## Generated Helm Values
 
-Running `make tf-helm-values` generates per-component YAML files in `generated-values-from-terraform/` with broker configuration. Each install target conditionally passes its generated file via `--values` if it exists.
+Both generated directories are gitignored and must exist before `make install-hyperfleet`.
 
-The script behavior depends on `BROKER_TYPE`:
+| Env | How generated | Directory |
+|-----|---------------|-----------|
+| `gcp` | `make install-terraform` (Terraform `local_file`) | `generated-values-from-terraform/` |
+| `kind` | `make generate-rabbitmq-values` (shell script) | `generated-values-rabbitmq/` |
+| `e2e-gcp` / `e2e-kind` | Not needed — hardcoded in helmfile | — |
 
-- **`googlepubsub`**: reads Terraform outputs (`gcp_project_id`, `kubernetes_namespace`) and generates Pub/Sub config (topic names, project ID, subscription IDs).
-- **`rabbitmq`**: skips Terraform entirely, uses `RABBITMQ_URL` and `NAMESPACE` to generate RabbitMQ config (URL, exchange, queue names, routing keys).
+Files written per component:
 
-| Generated File | Used By | Contents |
-|----------------|---------|----------|
-| `sentinel-clusters.yaml` | `install-sentinel-clusters` | Broker config for cluster events |
-| `sentinel-nodepools.yaml` | `install-sentinel-nodepools` | Broker config for nodepool events |
-| `adapter1.yaml` | `install-adapter1` | Broker config for adapter1 |
-| `adapter2.yaml` | `install-adapter2` | Broker config for adapter2 |
-| `adapter3.yaml` | `install-adapter3` | Broker config for adapter3 |
+| File | Component |
+|------|-----------|
+| `sentinel-clusters.yaml` | Sentinel (cluster events) |
+| `sentinel-nodepools.yaml` | Sentinel (nodepool events) |
+| `adapter1.yaml` | Adapter 1 |
+| `adapter2.yaml` | Adapter 2 |
+| `adapter3.yaml` | Adapter 3 |
 
-To clean up generated files: `make clean-generated`.
+## Shared Infrastructure (one-time admin setup)
 
-## Shared Infrastructure (One-time Admin Setup)
-
-The shared VPC must be deployed once before any developer clusters:
+The shared VPC must be deployed once before any developer clusters. This is an admin-only operation:
 
 ```bash
 cd terraform/shared
@@ -215,30 +225,12 @@ terraform apply
 
 See [terraform/shared/README.md](terraform/shared/README.md) for details.
 
-## Destroying Resources
-
-```bash
-# Uninstall all Helm releases
-make uninstall-all
-
-# Uninstall RabbitMQ (if installed)
-make uninstall-rabbitmq
-
-# Destroy Terraform-managed infrastructure (GCP only)
-cd terraform && terraform destroy -var-file=envs/gke/dev.tfvars
-```
-
-## Documentation
-
-- [Architecture](https://github.com/openshift-hyperfleet/architecture) - System architecture and API documentation
-- [Contributing](CONTRIBUTING.md) - Development setup and contribution guidelines
-- [Changelog](CHANGELOG.md) - Release history and notable changes
-
 ## Related Repositories
 
-- [hyperfleet-api](https://github.com/openshift-hyperfleet/hyperfleet-api) - HyperFleet API server
-- [hyperfleet-sentinel](https://github.com/openshift-hyperfleet/hyperfleet-sentinel) - HyperFleet Sentinel
-- [hyperfleet-adapter](https://github.com/openshift-hyperfleet/hyperfleet-adapter) - HyperFleet Adapter Framework
+- [hyperfleet-api](https://github.com/openshift-hyperfleet/hyperfleet-api) — API server
+- [hyperfleet-sentinel](https://github.com/openshift-hyperfleet/hyperfleet-sentinel) — Sentinel
+- [hyperfleet-adapter](https://github.com/openshift-hyperfleet/hyperfleet-adapter) — Adapter Framework
+- [architecture](https://github.com/openshift-hyperfleet/architecture) — System architecture and standards
 
 ## License
 

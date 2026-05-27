@@ -1,0 +1,19 @@
+# Test ConfigMap template for nodepool
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: "nodepool-config-{{ .nodepoolId }}"
+  namespace: "{{ .clusterId }}"
+  labels:
+    hyperfleet.io/cluster-id: "{{ .clusterId }}"
+    hyperfleet.io/nodepool-id: "{{ .nodepoolId }}"
+    hyperfleet.io/nodepool-name: "{{ .nodepoolName }}"
+    hyperfleet.io/resource-type: "configmap"
+  annotations:
+    hyperfleet.io/generation: "{{ .generationSpec }}"
+data:
+  nodepool.id: "{{ .nodepoolId }}"
+  nodepool.name: "{{ .nodepoolName }}"
+  cluster.id: "{{ .clusterId }}"
+  test.key: "test-value"
+  environment: "e2e-testing"

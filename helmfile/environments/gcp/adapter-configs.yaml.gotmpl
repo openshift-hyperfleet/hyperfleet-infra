@@ -1,0 +1,36 @@
+adapters:
+  - name: adapter1
+    resourceType: clusters
+    setFiles:
+      - name: adapterConfig.yaml
+        file: configs/base/adapters/adapter1/adapter-config.yaml
+      - name: adapterTaskConfig.yaml
+        file: configs/base/adapters/adapter1/adapter-task-config.yaml
+    values:
+      - {{ readFile "../../../generated-values-from-terraform/adapter1.yaml" | fromYaml | toYaml | nindent 8 }}
+        rbac:
+          resources:
+            - configmaps
+
+  - name: adapter2
+    resourceType: clusters
+    setFiles:
+      - name: adapterConfig.yaml
+        file: configs/base/adapters/adapter2/adapter-config.yaml
+      - name: adapterTaskConfig.yaml
+        file: configs/base/adapters/adapter2/adapter-task-config.yaml
+    values:
+      - {{ readFile "../../../generated-values-from-terraform/adapter2.yaml" | fromYaml | toYaml | nindent 8 }}
+
+  - name: adapter3
+    resourceType: nodepools
+    setFiles:
+      - name: adapterConfig.yaml
+        file: configs/base/adapters/adapter3/adapter-config.yaml
+      - name: adapterTaskConfig.yaml
+        file: configs/base/adapters/adapter3/adapter-task-config.yaml
+    values:
+      - {{ readFile "../../../generated-values-from-terraform/adapter3.yaml" | fromYaml | toYaml | nindent 8 }}
+        rbac:
+          resources:
+            - configmaps

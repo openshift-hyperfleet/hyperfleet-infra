@@ -1,0 +1,26 @@
+# Base values for HyperFleet API
+
+image:
+  registry: {{ env "REGISTRY" | default "registry.ci.openshift.org" }}
+  repository: {{ env "API_REPOSITORY" | default "ci/hyperfleet-api" }}
+  tag: {{ env "API_IMAGE_TAG" | default "latest" }}
+  pullPolicy: {{ env "IMAGE_PULL_POLICY" | default "IfNotPresent" }}
+
+service:
+  type: {{ .Values.serviceType }}
+
+config:
+  adapters:
+    required:
+      cluster:
+        {{- range .Values.adapters }}
+        {{- if eq .resourceType "clusters" }}
+        - {{ .name }}
+        {{- end }}
+        {{- end }}
+      nodepool:
+        {{- range .Values.adapters }}
+        {{- if eq .resourceType "nodepools" }}
+        - {{ .name }}
+        {{- end }}
+        {{- end }}
