@@ -31,8 +31,8 @@ hyperfleet-adapter:
       # make install will substitute this by data coming from tf-helm-values.sh
       url: CHANGE_ME
       queue: CHANGE_ME
-      exchange: ""
-      routingKey: ""
+      exchange: CHANGE_ME
+      routingKey: CHANGE_ME
 
   env:
     - name: SIMULATE_RESULT
