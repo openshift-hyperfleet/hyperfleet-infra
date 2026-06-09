@@ -1,0 +1,175 @@
+# Broken adapter1 task config for Hackathon Scenario 3
+# The precondition API URL is intentionally broken (/clusters-BROKEN/ instead of /clusters/)
+# This causes HTTP 404 errors, the adapter reports failure, and clusters stay Reconciled=False
+params:
+
+  - name: "clusterId"
+    source: "event.id"
+    type: "string"
+    required: true
+
+  - name: "generation"
+    source: "event.generation"
+    type: "int"
+    required: true
+
+  - name: "namespace"
+    source: "env.NAMESPACE"
+    type: "string"
+
+preconditions:
+  - name: "clusterStatus"
+    api_call:
+      method: "GET"
+      url: "/clusters-BROKEN/{{ .clusterId }}"
+      timeout: 10s
+      retry_attempts: 3
+      retry_backoff: "exponential"
+    capture:
+      - name: "clusterName"
+        field: "name"
+      - name: "generation"
+        field: "generation"
+      - name: "is_deleting"
+        expression: "clusterStatus.?deleted_time.hasValue()"
+      - name: "clusterNotReconciled"
+        expression: |
+          status.conditions.filter(c, c.type == "Reconciled").size() > 0
+            ? status.conditions.filter(c, c.type == "Reconciled")[0].status != "True"
+            : true
+      - name: "clusterReconciledTTL"
+        expression: |
+          (timestamp(now()) - timestamp(
+            status.conditions.filter(c, c.type == "Reconciled").size() > 0
+              ? status.conditions.filter(c, c.type == "Reconciled")[0].last_transition_time
+              : now()
+          )).getSeconds() > 300
+
+  - name: "validationCheck"
+    expression: |
+      clusterNotReconciled || clusterReconciledTTL || is_deleting
+
+resources:
+  - name: "resource0"
+    transport:
+      client: "kubernetes"
+    manifest:
+      apiVersion: v1
+      kind: ConfigMap
+      data:
+        cluster_id: "{{ .clusterId }}"
+        cluster_name: "{{ .clusterName }}"
+      metadata:
+        name: "{{ .clusterId | lower }}-adapter1-configmap"
+        namespace: "{{ .namespace }}"
+        labels:
+          app.kubernetes.io/component: adapter
+          app.kubernetes.io/instance: adapter1
+          app.kubernetes.io/name: hyperfleet-adapter
+          app.kubernetes.io/version: 1.0.0
+          app.kubernetes.io/transport: kubernetes
+          hyperfleet.io/cluster-id: "{{ .clusterId }}"
+          hyperfleet.io/cluster-name: "{{ .clusterName }}"
+        annotations:
+          hyperfleet.io/generation: "{{ .generation }}"
+    discovery:
+      namespace: "{{ .namespace }}"
+      by_selectors:
+        label_selector:
+          hyperfleet.io/cluster-id: "{{ .clusterId }}"
+          hyperfleet.io/cluster-name: "{{ .clusterName }}"
+    lifecycle:
+      delete:
+        propagationPolicy: "Background"
+        when:
+          expression: "is_deleting"
+
+post:
+  payloads:
+    - name: "statusPayload"
+      build:
+        adapter: "{{ .adapter.name }}"
+        conditions:
+          - type: "Applied"
+            status:
+              expression: |
+                resources.?resource0.?metadata.?creationTimestamp.hasValue() ? "True" : "False"
+            reason:
+              expression: |
+                resources.?resource0.?metadata.?creationTimestamp.hasValue() ? "ConfigMapCreated" : "ConfigMapNotCreated"
+            message:
+              expression: |
+                resources.?resource0.?metadata.?creationTimestamp.hasValue()
+                  ? "ConfigMap created in namespace " + resources.resource0.metadata.namespace
+                  : "ConfigMap has not been created yet"
+          - type: "Available"
+            status:
+              expression: |
+                resources.?resource0.?data.?cluster_id.hasValue() ? "True" : "False"
+            reason:
+              expression: |
+                resources.?resource0.?data.?cluster_id.hasValue()
+                  ? "ConfigMapDataPopulated"
+                  : "ConfigMapDataMissing"
+            message:
+              expression: |
+                resources.?resource0.?data.?cluster_id.hasValue()
+                  ? "ConfigMap data keys are populated and accessible"
+                  : "ConfigMap data keys are not yet populated"
+          - type: "Health"
+            status:
+              expression: |
+                adapter.?executionStatus.orValue("") == "success" ? "True" : (adapter.?executionStatus.orValue("") == "failed" ? "False" : "Unknown")
+            reason:
+              expression: |
+                adapter.?errorReason.orValue("") != "" ? adapter.?errorReason.orValue("") : "Healthy"
+            message:
+              expression: |
+                adapter.?errorMessage.orValue("") != "" ? adapter.?errorMessage.orValue("") : "All adapter operations completed successfully"
+          - type: "Finalized"
+            status:
+              expression: |
+                !is_deleting
+                  ? "False"
+                  : (!resources.?resource0.hasValue()
+                      ? "True"
+                      : "False")
+            reason:
+              expression: |
+                !is_deleting
+                  ? "ResourceActive"
+                  : (!resources.?resource0.hasValue()
+                      ? "CleanupConfirmed"
+                      : (adapter.?executionStatus.orValue("") == "failed"
+                          ? "CleanupFailed"
+                          : "CleanupInProgress"))
+            message:
+              expression: |
+                !is_deleting
+                  ? "Resource is active, not scheduled for deletion"
+                  : (!resources.?resource0.hasValue()
+                      ? "All resources deleted successfully"
+                      : (adapter.?executionStatus.orValue("") == "failed"
+                          ? "Deletion failed during adapter execution"
+                          : "Deletion in progress"))
+        observed_generation:
+          expression: "generation"
+        observed_time: "{{ now | date \"2006-01-02T15:04:05Z07:00\" }}"
+        data:
+          namespace:
+            name:
+              expression: |
+                resources.?resource0.?metadata.?name.orValue("")
+            creationTimestamp:
+              expression: |
+                resources.?resource0.?metadata.?creationTimestamp.orValue("")
+
+  post_actions:
+    - name: "reportClusterStatus"
+      api_call:
+        method: "PUT"
+        url: "/clusters/{{ .clusterId }}/statuses"
+        headers:
+          - name: "Content-Type"
+            value: "application/json"
+        body: "{{ .statusPayload }}"
