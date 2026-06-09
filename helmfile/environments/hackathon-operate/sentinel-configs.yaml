@@ -10,7 +10,6 @@ sentinels:
     values:
       - config:
           resourceType: clusters
-          # Catch-all: no resourceSelector means "watch everything"
           resourceSelector: []
       - broker:
           type: rabbitmq
@@ -23,6 +22,7 @@ sentinels:
     values:
       - config:
           resourceType: nodepools
+          resourceSelector: []
           messageData:
             owner_references:
               id: "resource.owner_references.id"
