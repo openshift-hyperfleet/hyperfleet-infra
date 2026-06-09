@@ -1,12 +1,13 @@
 
 .DEFAULT_GOAL := help
 
-# Possible envs are gcp, e2e-gcp, kind, e2e-kind
+# Possible envs are gcp, e2e-gcp, kind, e2e-kind, hackathon-*
 # Default to gcp
 HELMFILE_ENV ?= gcp
 
-
-ifeq ($(findstring gcp,$(HELMFILE_ENV)),)
+ifneq ($(findstring hackathon,$(HELMFILE_ENV)),)
+	-include env.hackathon
+else ifeq ($(findstring gcp,$(HELMFILE_ENV)),)
 	-include env.kind
 else
 	-include env.gcp
@@ -276,15 +277,83 @@ check-helmfile-env-generated: ## Check that the generated directory exists based
 	fi
 	@echo "OK: Did not need to validate generated values for environment: $(HELMFILE_ENV)"
 
+# ──────────────────────────────────────────────
+# Hackathon (Ignition Day) targets
+# ──────────────────────────────────────────────
+
+HACKATHON_PARTICIPANTS ?=
+
+.PHONY: install-hackathon-monitoring
+install-hackathon-monitoring: check-helm check-kubectl ## Install kube-prometheus-stack for hackathon monitoring
+	helm repo add prometheus-community https://prometheus-community.github.io/helm-charts 2>/dev/null || true
+	helm repo update prometheus-community
+	helm upgrade --install monitoring prometheus-community/kube-prometheus-stack \
+		--namespace monitoring --create-namespace \
+		--set grafana.enabled=true \
+		--set grafana.service.type=LoadBalancer \
+		--set grafana.adminPassword=ignition \
+		--wait --timeout 5m
+	@echo "OK: kube-prometheus-stack installed in monitoring namespace"
+	@echo "    Grafana: kubectl get svc -n monitoring monitoring-grafana"
+	@echo "    Credentials: admin / ignition"
+
+.PHONY: create-hackathon-namespaces
+create-hackathon-namespaces: check-kubectl ## Create per-participant namespaces and RBAC (set HACKATHON_PARTICIPANTS=alice,bob,...)
+	@if [ -z "$(HACKATHON_PARTICIPANTS)" ]; then \
+		echo "ERROR: HACKATHON_PARTICIPANTS is required (comma-separated list of names)"; \
+		echo "Usage: make create-hackathon-namespaces HACKATHON_PARTICIPANTS=alice,bob,charlie"; \
+		exit 1; \
+	fi
+	@./scripts/create-hackathon-env.sh $(HACKATHON_PARTICIPANTS)
+
+.PHONY: seed-hackathon-clusters
+seed-hackathon-clusters: check-kubectl ## Seed region-labeled clusters via HyperFleet API (for Scenario 5)
+	@./scripts/seed-hackathon-clusters.sh
+
+.PHONY: uninstall-hackathon-monitoring
+uninstall-hackathon-monitoring: check-helm ## Uninstall kube-prometheus-stack
+	helm uninstall monitoring --namespace monitoring || true
+	kubectl delete namespace monitoring --ignore-not-found
+	@echo "OK: monitoring stack removed"
+
+
 .PHONY: check-kubectl-context
-check-kubectl-context: check-kubectl ## Verify kubectl context matches HELMFILE_ENV for kind and e2e-kind
-	@if [ "$(HELMFILE_ENV)" = "kind" ] || [ "$(HELMFILE_ENV)" = "e2e-kind" ]; then \
-		if ! kubectl config current-context | grep -q "kind-"; then \
-			echo "ERROR: HELMFILE_ENV=$(HELMFILE_ENV) requires kind context"; \
-			exit 1; \
-		fi; \
-		echo "OK: kubectl context matches HELMFILE_ENV=$(HELMFILE_ENV)"; \
-	fi;
+check-kubectl-context: check-kubectl ## Verify kubectl context matches HELMFILE_ENV
+	@CONTEXT=$$(kubectl config current-context); \
+	case "$(HELMFILE_ENV)" in \
+		gcp|e2e-gcp) \
+			if echo "$$CONTEXT" | grep -q "gke_"; then \
+				echo "OK: connected to GKE cluster (context: $$CONTEXT)"; \
+			else \
+				echo "WARNING: current context '$$CONTEXT' does not appear to be a GKE cluster"; \
+				echo "         Expected context name containing 'gke_'"; \
+				exit 1; \
+			fi \
+			;; \
+		kind|e2e-kind) \
+			if echo "$$CONTEXT" | grep -q "kind-"; then \
+				echo "OK: connected to kind cluster (context: $$CONTEXT)"; \
+			else \
+				echo "WARNING: current context '$$CONTEXT' does not appear to be a kind cluster"; \
+				echo "         Expected context name containing 'kind-'"; \
+				exit 1; \
+			fi \
+			;; \
+		hackathon-*) \
+			if echo "$$CONTEXT" | grep -q "gke_"; then \
+				echo "OK: connected to GKE cluster for hackathon (context: $$CONTEXT)"; \
+			else \
+				echo "WARNING: current context '$$CONTEXT' does not appear to be a GKE cluster"; \
+				echo "         Hackathon environments run on GKE. Expected context containing 'gke_'"; \
+				exit 1; \
+			fi \
+			;; \
+		*) \
+			echo "ERROR: invalid HELMFILE_ENV: $(HELMFILE_ENV)"; \
+			echo "       Valid values: gcp, e2e-gcp, kind, e2e-kind, hackathon-{dogfood,broken-americas,broken-europe,build,operate}"; \
+			exit 1 \
+			;; \
+	esac \
 
 .PHONY: check-terraform
 check-terraform: ## Verify terraform is installed

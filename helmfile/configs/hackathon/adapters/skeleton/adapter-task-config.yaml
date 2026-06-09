@@ -1,0 +1,174 @@
+# HyperFleet Ignition Day — Adapter Task Configuration (Skeleton)
+#
+# This is where the real work happens. Your adapter task config defines:
+#   1. params      — values extracted from the incoming broker event
+#   2. preconditions — when should your adapter act? (CEL expressions + API calls)
+#   3. resources   — what Kubernetes resources does your adapter create/manage?
+#   4. post        — how does your adapter report status back to the API?
+#
+# Architecture docs:
+#   Adapter framework: https://github.com/openshift-hyperfleet/architecture/blob/main/hyperfleet/components/adapter/framework/adapter-frame-design.md
+#   CEL expressions:   https://github.com/google/cel-spec
+#   Go templates:      https://pkg.go.dev/text/template
+#
+# Write your config from the architecture docs. Do not copy from existing adapters.
+
+# ─── 1. PARAMS ────────────────────────────────────────────────────────────────
+# Extract values from the incoming broker event for use in later sections.
+#
+# Each param has:
+#   name     — variable name (referenced as {{ .paramName }} in templates)
+#   source   — where to read from: "event.<field>" or "env.<VAR>"
+#   type     — "string" or "int"
+#   required — if true, adapter won't run without this value
+#
+# The event payload contains at minimum: id, generation, resource_type
+#
+# TODO: Define the parameters your adapter needs from the event.
+
+params: []
+  # - name: ""
+  #   source: ""
+  #   type: "string"
+  #   required: true
+
+# ─── 2. PRECONDITIONS ─────────────────────────────────────────────────────────
+# Decide whether your adapter should act on this event.
+#
+# Typical pattern:
+#   Step 1: Make an API call to GET the resource's current state
+#   Step 2: Capture fields from the response into named variables
+#   Step 3: Write CEL expressions that evaluate to true/false
+#   Step 4: Combine into a final validation expression
+#
+# Key concepts:
+#   - api_call: fetch data from the HyperFleet API (GET /clusters/{id}, etc.)
+#   - capture: extract fields from the API response into variables
+#   - expression: CEL expression that must evaluate to true for the adapter to proceed
+#   - The "Reconciled" condition indicates a resource has been fully processed
+#   - Check for deletion via: has(resource.deleted_time) or resource.?deleted_time.hasValue()
+#
+# TODO: Define when your adapter should act.
+
+preconditions: []
+  # - name: "fetchResourceState"
+  #   api_call:
+  #     method: "GET"
+  #     url: ""            # TODO: API endpoint, e.g., "/clusters/{{ .clusterId }}"
+  #     timeout: 10s
+  #     retry_attempts: 3
+  #     retry_backoff: "exponential"
+  #   capture: []
+  #     # TODO: Extract fields from the API response
+  #     # - name: "resourceName"
+  #     #   field: "name"
+  #     # - name: "is_deleting"
+  #     #   expression: "<CEL expression>"
+  #
+  # - name: "shouldProceed"
+  #   expression: ""       # TODO: CEL expression combining your conditions
+
+# ─── 3. RESOURCES ─────────────────────────────────────────────────────────────
+# Define the Kubernetes resources your adapter creates and manages.
+#
+# Each resource has:
+#   transport  — how to apply it (client: "kubernetes" for direct K8s API)
+#   manifest   — the K8s resource manifest (Go template syntax for variables)
+#   discovery  — how to find existing instances of this resource
+#   lifecycle  — deletion behavior (propagationPolicy, when to delete)
+#
+# Go template variables: {{ .paramName }} references params defined above
+# Common resource types: ConfigMap, Job, Deployment, Namespace
+#
+# TODO: Define the Kubernetes resources your adapter creates.
+
+resources: []
+  # - name: "myResource"
+  #   transport:
+  #     client: "kubernetes"
+  #   manifest:
+  #     apiVersion: v1
+  #     kind: ConfigMap       # TODO: Choose your resource type
+  #     metadata:
+  #       name: ""            # TODO: Unique name using template variables
+  #       namespace: ""       # TODO: Target namespace
+  #       labels: {}          # TODO: Labels for discovery
+  #     data: {}              # TODO: Resource-specific data
+  #   discovery:
+  #     namespace: ""         # TODO: Where to look for existing resources
+  #     by_selectors:
+  #       label_selector: {}  # TODO: Match labels from your manifest
+  #   lifecycle:
+  #     delete:
+  #       propagationPolicy: "Background"
+  #       when:
+  #         expression: ""    # TODO: CEL expression, e.g., "is_deleting"
+
+# ─── 4. POST (STATUS REPORTING) ──────────────────────────────────────────────
+# Report your adapter's status back to the HyperFleet API.
+#
+# Every adapter MUST report four conditions:
+#   Applied   — have the K8s resources been created?
+#   Available — has the work completed successfully?
+#   Health    — is the adapter operating normally?
+#   Finalized — (for deletion) are all resources confirmed deleted?
+#
+# Each condition has:
+#   status  — CEL expression → "True", "False", or "Unknown"
+#   reason  — CEL expression → machine-readable reason string
+#   message — CEL expression → human-readable message
+#
+# Access resource state via:  resources.?resourceName.?field.hasValue()
+# Access adapter state via:   adapter.?executionStatus.orValue("")
+#
+# The status payload is sent via POST/PUT to /<resource_type>/<id>/statuses
+#
+# TODO: Build your status payload and post it to the API.
+
+post:
+  payloads: []
+    # - name: "statusPayload"
+    #   build:
+    #     adapter: ""         # TODO: Your adapter name
+    #     conditions:
+    #       - type: "Applied"
+    #         status:
+    #           expression: ""   # TODO: CEL — has the resource been created?
+    #         reason:
+    #           expression: ""
+    #         message:
+    #           expression: ""
+    #       - type: "Available"
+    #         status:
+    #           expression: ""   # TODO: CEL — is the resource working?
+    #         reason:
+    #           expression: ""
+    #         message:
+    #           expression: ""
+    #       - type: "Health"
+    #         status:
+    #           expression: ""   # TODO: CEL — is the adapter healthy?
+    #         reason:
+    #           expression: ""
+    #         message:
+    #           expression: ""
+    #       - type: "Finalized"
+    #         status:
+    #           expression: ""   # TODO: CEL — deletion complete?
+    #         reason:
+    #           expression: ""
+    #         message:
+    #           expression: ""
+    #     observed_generation:
+    #       expression: ""       # TODO: Usually "generation"
+    #     observed_time: ""      # TODO: Usually '{{ now | date "2006-01-02T15:04:05Z07:00" }}'
+
+  post_actions: []
+    # - name: "reportStatus"
+    #   api_call:
+    #     method: "PUT"
+    #     url: ""              # TODO: e.g., "/clusters/{{ .clusterId }}/statuses"
+    #     headers:
+    #       - name: "Content-Type"
+    #         value: "application/json"
+    #     body: ""             # TODO: e.g., "{{ .statusPayload }}"

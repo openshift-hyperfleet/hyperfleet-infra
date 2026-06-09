@@ -20,7 +20,7 @@ values:
       adapter:
         chartRef: {{ env "ADAPTER_CHART_REF" | default "main" }}
 
-# Environment configurations - e2e, e2e-kind, kind, gcp
+# Environment configurations - e2e, e2e-kind, kind, gcp, hackathon-*
 environments:
   e2e-gcp:
     values:
@@ -48,6 +48,31 @@ environments:
         serviceType: {{ env "API_SERVICE_TYPE" | default "LoadBalancer" }}
       - environments/gcp/adapter-configs.yaml.gotmpl
       - environments/gcp/sentinel-configs.yaml.gotmpl
+  # ── Hackathon (Ignition Day) environments ──
+  hackathon-dogfood:
+    values:
+      - brokerType: rabbitmq
+        serviceType: {{ env "API_SERVICE_TYPE" | default "LoadBalancer" }}
+      - environments/hackathon-dogfood/adapter-configs.yaml.gotmpl
+      - environments/hackathon-dogfood/sentinel-configs.yaml
+  hackathon-broken:
+    values:
+      - brokerType: rabbitmq
+        serviceType: {{ env "API_SERVICE_TYPE" | default "LoadBalancer" }}
+      - environments/hackathon-broken/adapter-configs.yaml.gotmpl
+      - environments/hackathon-broken/sentinel-configs.yaml
+  hackathon-build:
+    values:
+      - brokerType: rabbitmq
+        serviceType: {{ env "API_SERVICE_TYPE" | default "LoadBalancer" }}
+      - environments/hackathon-build/adapter-configs.yaml.gotmpl
+      - environments/hackathon-build/sentinel-configs.yaml
+  hackathon-operate:
+    values:
+      - brokerType: rabbitmq
+        serviceType: {{ env "API_SERVICE_TYPE" | default "LoadBalancer" }}
+      - environments/hackathon-operate/adapter-configs.yaml.gotmpl
+      - environments/hackathon-operate/sentinel-configs.yaml
 
 commonLabels:
   group: hyperfleet

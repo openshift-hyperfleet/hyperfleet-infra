@@ -1,0 +1,2 @@
+bucket = "hyperfleet-terraform-state"
+prefix = "terraform/state/hackathon-operate"

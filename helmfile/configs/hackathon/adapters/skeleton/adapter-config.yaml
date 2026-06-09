@@ -1,0 +1,32 @@
+# HyperFleet Ignition Day — Adapter Configuration (Skeleton)
+#
+# Reference: https://github.com/openshift-hyperfleet/architecture/blob/main/hyperfleet/components/adapter/framework/adapter-frame-design.md
+#
+# This file configures your adapter's identity, logging, and client connections.
+# The infrastructure (broker, API endpoint) is pre-configured — you only need
+# to set the adapter identity fields below.
+
+adapter:
+  name: ""            # TODO: Name your adapter (e.g., "my-adapter")
+  version: "0.1.0"
+
+debug_config: true
+log:
+  level: debug
+
+clients:
+  hyperfleet_api:
+    base_url: http://hyperfleet-api:8000
+    version: v1
+    timeout: 2s
+    retry_attempts: 3
+    retry_backoff: exponential
+
+  broker:
+    # These values are overridden at deploy time via Helm values.
+    # You do not need to change them.
+    subscription_id: "placeholder"
+    topic: "placeholder"
+
+  kubernetes:
+    api_version: "v1"
