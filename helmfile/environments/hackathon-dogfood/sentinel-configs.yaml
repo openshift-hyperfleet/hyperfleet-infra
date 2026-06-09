@@ -5,6 +5,7 @@ sentinels:
     values:
       - config:
           resourceType: clusters
+          resourceSelector: []
       - broker:
           type: rabbitmq
           topic: hyperfleet-healthy-clusters
@@ -16,6 +17,7 @@ sentinels:
     values:
       - config:
           resourceType: nodepools
+          resourceSelector: []
           messageData:
             owner_references:
               id: "resource.owner_references.id"
