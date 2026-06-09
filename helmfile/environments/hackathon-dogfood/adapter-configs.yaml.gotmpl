@@ -1,0 +1,57 @@
+# Hackathon — Cluster 1: "Dog Food" (Healthy deployment)
+# Scenarios 1 (Fresh Eyes) and 2 (Reconciliation Loop)
+# Standard 3-adapter setup with SIMULATE_RESULT=success
+adapters:
+  - name: adapter1
+    resourceType: clusters
+    setFiles:
+      - name: adapterConfig.yaml
+        file: configs/base/adapters/adapter1/adapter-config.yaml
+      - name: adapterTaskConfig.yaml
+        file: configs/base/adapters/adapter1/adapter-task-config.yaml
+    values:
+      - broker:
+          type: rabbitmq
+          rabbitmq:
+            url: "amqp://guest:guest@rabbitmq:5672"
+            queue: {{ requiredEnv "NAMESPACE" }}-clusters-adapter1
+            exchange: {{ requiredEnv "NAMESPACE" }}-clusters
+            routingKey: "#"
+        rbac:
+          resources:
+            - configmaps
+
+  - name: adapter2
+    resourceType: clusters
+    setFiles:
+      - name: adapterConfig.yaml
+        file: configs/base/adapters/adapter2/adapter-config.yaml
+      - name: adapterTaskConfig.yaml
+        file: configs/base/adapters/adapter2/adapter-task-config.yaml
+    values:
+      - broker:
+          type: rabbitmq
+          rabbitmq:
+            url: "amqp://guest:guest@rabbitmq:5672"
+            queue: {{ requiredEnv "NAMESPACE" }}-clusters-adapter2
+            exchange: {{ requiredEnv "NAMESPACE" }}-clusters
+            routingKey: "#"
+
+  - name: adapter3
+    resourceType: nodepools
+    setFiles:
+      - name: adapterConfig.yaml
+        file: configs/base/adapters/adapter3/adapter-config.yaml
+      - name: adapterTaskConfig.yaml
+        file: configs/base/adapters/adapter3/adapter-task-config.yaml
+    values:
+      - broker:
+          type: rabbitmq
+          rabbitmq:
+            url: "amqp://guest:guest@rabbitmq:5672"
+            queue: {{ requiredEnv "NAMESPACE" }}-nodepools-adapter3
+            exchange: {{ requiredEnv "NAMESPACE" }}-nodepools
+            routingKey: "#"
+        rbac:
+          resources:
+            - configmaps

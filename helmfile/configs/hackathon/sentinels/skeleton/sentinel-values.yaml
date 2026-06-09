@@ -1,0 +1,40 @@
+# HyperFleet Ignition Day — Sentinel Configuration (Skeleton)
+#
+# Reference: https://github.com/openshift-hyperfleet/architecture/blob/main/hyperfleet/components/sentinel/sentinel.md
+#
+# A Sentinel watches for resources that need reconciliation and publishes
+# events to the message broker. Your job is to configure:
+#
+#   1. resourceType      — what does this sentinel watch? ("clusters" or "nodepools")
+#   2. resourceSelector  — label filters to shard resources across sentinels
+#                          Empty [] means "watch everything" (catch-all)
+#   3. Poll timing       — how often to check for resources needing attention
+#
+# The broker connection and API endpoint are pre-configured via Helm values.
+# You only need to fill in the sentinel-specific config below.
+
+config:
+  sentinel:
+    name: ""             # TODO: Name your sentinel (e.g., "sentinel-us-east")
+
+  resourceType: ""       # TODO: "clusters" or "nodepools"
+
+  resourceSelector: []   # TODO: Label selectors for sharding
+    # Example — watch only clusters with region=us-east:
+    # - label: "region"
+    #   value: "us-east"
+    #
+    # Leave empty [] to watch ALL resources (catch-all sentinel)
+
+  debugConfig: false
+
+  log:
+    level: info
+    format: json
+    output: stdout
+
+  clients:
+    hyperfleetApi:
+      baseUrl: http://hyperfleet-api:8000
+      version: v1
+      timeout: 10s

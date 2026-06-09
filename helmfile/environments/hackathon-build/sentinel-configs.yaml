@@ -1,0 +1,29 @@
+# Hackathon — Cluster 2: "Build" (Scenario 4: Build Your Own Adapter)
+# Standard sentinels — these publish events that participant adapters will consume
+sentinels:
+  - name: clusters
+    values:
+      - config:
+          resourceType: clusters
+      - broker:
+          type: rabbitmq
+          topic: hyperfleet-clusters
+          rabbitmq:
+            url: "amqp://guest:guest@rabbitmq:5672"
+            exchangeType: topic
+
+  - name: nodepools
+    values:
+      - config:
+          resourceType: nodepools
+          messageData:
+            owner_references:
+              id: "resource.owner_references.id"
+              href: "resource.owner_references.href"
+              kind: "resource.owner_references.kind"
+      - broker:
+          type: rabbitmq
+          topic: hyperfleet-nodepools
+          rabbitmq:
+            url: "amqp://guest:guest@rabbitmq:5672"
+            exchangeType: topic
