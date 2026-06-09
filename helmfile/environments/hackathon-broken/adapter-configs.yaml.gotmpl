@@ -1,15 +1,16 @@
 # Hackathon — Cluster 1: "Dog Food" (Broken deployment)
 # Scenario 3 (Something Is Wrong)
-# Same as healthy deployment but adapter3 has SIMULATE_RESULT=failure
-# This causes clusters to get stuck in a non-Reconciled state
+# adapter1 uses a broken precondition URL (/clusters-BROKEN/) causing HTTP 404 errors.
+# This makes clusters stuck in Reconciled=False because adapter1 never completes.
 adapters:
+  # BROKEN: adapter1 has a broken precondition URL — intentional for Scenario 3
   - name: adapter1
     resourceType: clusters
     setFiles:
       - name: adapterConfig.yaml
-        file: configs/base/adapters/adapter1/adapter-config.yaml
+        file: configs/base/adapters/adapter1-broken/adapter-config.yaml
       - name: adapterTaskConfig.yaml
-        file: configs/base/adapters/adapter1/adapter-task-config.yaml
+        file: configs/base/adapters/adapter1-broken/adapter-task-config.yaml
     values:
       - broker:
           type: rabbitmq
@@ -38,7 +39,6 @@ adapters:
             exchange: {{ requiredEnv "NAMESPACE" }}-clusters
             routingKey: "#"
 
-  # BROKEN: adapter3 is configured to FAIL — this is intentional for Scenario 3
   - name: adapter3
     resourceType: nodepools
     setFiles:
@@ -57,10 +57,3 @@ adapters:
         rbac:
           resources:
             - configmaps
-        env:
-          - name: SIMULATE_RESULT
-            value: failure
-          - name: NAMESPACE
-            valueFrom:
-              fieldRef:
-                fieldPath: metadata.namespace

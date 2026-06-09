@@ -310,6 +310,10 @@ create-hackathon-namespaces: check-kubectl ## Create per-participant namespaces 
 seed-hackathon-clusters: check-kubectl ## Seed region-labeled clusters via HyperFleet API (for Scenario 5)
 	@./scripts/seed-hackathon-clusters.sh
 
+.PHONY: smoke-test-hackathon
+smoke-test-hackathon: check-kubectl ## Run smoke tests for all hackathon clusters
+	@./scripts/smoke-test-hackathon.sh $(HACKATHON_SMOKE_ARGS)
+
 .PHONY: uninstall-hackathon-monitoring
 uninstall-hackathon-monitoring: check-helm ## Uninstall kube-prometheus-stack
 	helm uninstall monitoring --namespace monitoring || true
