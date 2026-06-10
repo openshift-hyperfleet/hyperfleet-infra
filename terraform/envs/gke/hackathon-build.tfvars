@@ -15,7 +15,7 @@ gcp_subnetwork = "hyperfleet-dev-vpc-subnet"
 
 node_count   = 2
 machine_type = "e2-standard-4"
-use_spot_vms = true
+use_spot_vms = false
 
 enable_deletion_protection = false
 
