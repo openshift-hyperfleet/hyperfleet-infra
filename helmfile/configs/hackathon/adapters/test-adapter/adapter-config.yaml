@@ -1,0 +1,25 @@
+# Scenario 4 test adapter — minimal working adapter for validation.
+# This adapter is deployed by the scenario test script to verify the
+# end-to-end adapter developer experience: helm deploy, broker connectivity,
+# preconditions, resource creation, and status reporting.
+adapter:
+  name: scenario4-test
+
+debug_config: true
+log:
+  level: debug
+
+clients:
+  hyperfleet_api:
+    base_url: http://hyperfleet-api.hyperfleet:8000
+    version: v1
+    timeout: 2s
+    retry_attempts: 3
+    retry_backoff: exponential
+
+  broker:
+    subscription_id: "placeholder"
+    topic: "placeholder"
+
+  kubernetes:
+    api_version: "v1"

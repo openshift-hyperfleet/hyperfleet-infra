@@ -1,0 +1,155 @@
+# Scenario 4 test adapter task config — minimal working example.
+# Creates a ConfigMap per cluster and reports status back to the API.
+# This is the simplest adapter that participates in the reconciliation loop.
+params:
+  - name: "clusterId"
+    source: "event.id"
+    type: "string"
+    required: true
+
+  - name: "generation"
+    source: "event.generation"
+    type: "int"
+    required: true
+
+  - name: "namespace"
+    source: "env.NAMESPACE"
+    type: "string"
+
+preconditions:
+  - name: "clusterStatus"
+    api_call:
+      method: "GET"
+      url: "/clusters/{{ .clusterId }}"
+      timeout: 10s
+      retry_attempts: 3
+      retry_backoff: "exponential"
+    capture:
+      - name: "clusterName"
+        field: "name"
+      - name: "generation"
+        field: "generation"
+      - name: "is_deleting"
+        expression: "clusterStatus.?deleted_time.hasValue()"
+      - name: "clusterNotReconciled"
+        expression: |
+          status.conditions.filter(c, c.type == "Reconciled").size() > 0
+            ? status.conditions.filter(c, c.type == "Reconciled")[0].status != "True"
+            : true
+      - name: "clusterReconciledTTL"
+        expression: |
+          (timestamp(now()) - timestamp(
+            status.conditions.filter(c, c.type == "Reconciled").size() > 0
+              ? status.conditions.filter(c, c.type == "Reconciled")[0].last_transition_time
+              : now()
+          )).getSeconds() > 300
+
+  - name: "validationCheck"
+    expression: |
+      clusterNotReconciled || clusterReconciledTTL || is_deleting
+
+resources:
+  - name: "resource0"
+    transport:
+      client: "kubernetes"
+    manifest:
+      apiVersion: v1
+      kind: ConfigMap
+      data:
+        cluster_id: "{{ .clusterId }}"
+        cluster_name: "{{ .clusterName }}"
+        adapter: "scenario4-test"
+      metadata:
+        name: "{{ .clusterId }}-scenario4-test"
+        namespace: "{{ .namespace }}"
+        labels:
+          app.kubernetes.io/component: adapter
+          app.kubernetes.io/instance: scenario4-test
+          app.kubernetes.io/name: hyperfleet-adapter
+          hyperfleet.io/cluster-id: "{{ .clusterId }}"
+        annotations:
+          hyperfleet.io/generation: "{{ .generation }}"
+    discovery:
+      namespace: "{{ .namespace }}"
+      by_selectors:
+        label_selector:
+          hyperfleet.io/cluster-id: "{{ .clusterId }}"
+          app.kubernetes.io/instance: scenario4-test
+    lifecycle:
+      delete:
+        propagationPolicy: "Background"
+        when:
+          expression: "is_deleting"
+
+post:
+  payloads:
+    - name: "statusPayload"
+      build:
+        adapter: "{{ .adapter.name }}"
+        conditions:
+          - type: "Applied"
+            status:
+              expression: |
+                resources.?resource0.?metadata.?creationTimestamp.hasValue() ? "True" : "False"
+            reason:
+              expression: |
+                resources.?resource0.?metadata.?creationTimestamp.hasValue() ? "ConfigMapApplied" : "ConfigMapPending"
+            message:
+              expression: |
+                resources.?resource0.?metadata.?creationTimestamp.hasValue()
+                  ? "ConfigMap created by scenario4-test adapter"
+                  : "ConfigMap pending creation"
+          - type: "Available"
+            status:
+              expression: |
+                resources.?resource0.?data.?cluster_id.hasValue() ? "True" : "False"
+            reason:
+              expression: |
+                resources.?resource0.?data.?cluster_id.hasValue()
+                  ? "ConfigMapDataAvailable"
+                  : "ConfigMapDataNotYetAvailable"
+            message:
+              expression: |
+                resources.?resource0.?data.?cluster_id.hasValue()
+                  ? "ConfigMap data available"
+                  : "ConfigMap data not yet available"
+          - type: "Health"
+            status:
+              expression: |
+                adapter.?executionStatus.orValue("") == "success" ? "True" : (adapter.?executionStatus.orValue("") == "failed" ? "False" : "Unknown")
+            reason:
+              expression: |
+                adapter.?errorReason.orValue("") != "" ? adapter.?errorReason.orValue("") : "Healthy"
+            message:
+              expression: |
+                adapter.?errorMessage.orValue("") != "" ? adapter.?errorMessage.orValue("") : "Adapter operating normally"
+          - type: "Finalized"
+            status:
+              expression: |
+                adapter.?executionStatus.orValue("") == "success"
+                  && !resources.?resource0.hasValue()
+                  ? "True"
+                  : "False"
+            reason:
+              expression: |
+                !resources.?resource0.hasValue()
+                  ? "CleanupConfirmed"
+                  : "ResourceActive"
+            message:
+              expression: |
+                !resources.?resource0.hasValue()
+                  ? "All resources deleted"
+                  : "Resource is active or pending"
+        observed_generation:
+          expression: "generation"
+        observed_time: "{{ now | date \"2006-01-02T15:04:05Z07:00\" }}"
+
+  post_actions:
+    - name: "reportClusterStatus"
+      api_call:
+        method: "PUT"
+        url: "/clusters/{{ .clusterId }}/statuses"
+        headers:
+          - name: "Content-Type"
+            value: "application/json"
+        body: "{{ .statusPayload }}"
