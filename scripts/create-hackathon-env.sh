@@ -37,6 +37,13 @@ for name in "${PARTICIPANTS[@]}"; do
     echo "  ✓ Namespace ${ns} created"
   fi
 
+  # Label namespace
+  kubectl label namespace "$ns" \
+    app.kubernetes.io/part-of=hyperfleet-hackathon \
+    hackathon.hyperfleet.io/participant="${name}" \
+    --overwrite >/dev/null 2>&1
+  echo "  ✓ Namespace ${ns} labeled"
+
   # Create ServiceAccount
   kubectl apply -f - <<EOF
 apiVersion: v1

@@ -1,0 +1,23 @@
+# Broken adapter1 for Hackathon Scenario 3 ("Something Is Wrong")
+# This adapter has a broken precondition URL that causes HTTP 404 errors.
+adapter:
+  name: adapter1
+
+debug_config: true
+log:
+  level: debug
+
+clients:
+  hyperfleet_api:
+    base_url: http://hyperfleet-api:8000
+    version: v1
+    timeout: 2s
+    retry_attempts: 3
+    retry_backoff: exponential
+
+  broker:
+    subscription_id: "placeholder"
+    topic: "placeholder"
+
+  kubernetes:
+    api_version: "v1"
