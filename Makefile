@@ -314,6 +314,10 @@ seed-hackathon-clusters: check-kubectl ## Seed region-labeled clusters via Hyper
 smoke-test-hackathon: check-kubectl ## Run smoke tests for all hackathon clusters
 	@./scripts/smoke-test-hackathon.sh $(HACKATHON_SMOKE_ARGS)
 
+.PHONY: scenario-test-hackathon
+scenario-test-hackathon: check-kubectl ## Run scenario validation tests (Scenarios 1, 2, 3)
+	@./scripts/scenario-test-hackathon.sh $(HACKATHON_SCENARIO_ARGS)
+
 .PHONY: uninstall-hackathon-monitoring
 uninstall-hackathon-monitoring: check-helm ## Uninstall kube-prometheus-stack
 	helm uninstall monitoring --namespace monitoring || true
