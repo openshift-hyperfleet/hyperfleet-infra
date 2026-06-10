@@ -1,25 +1,34 @@
 #!/usr/bin/env bash
 # Scenario validation tests for HyperFleet Ignition Day.
-# Tests the user journey for Scenarios 1, 2, and 3 against live hackathon clusters.
+# Tests the user journey for Scenarios 1, 2, 3, and 4 against live hackathon clusters.
 #
 # Complements smoke-test-hackathon.sh (infrastructure health) with functional checks:
 #   Scenario 1: API surface, cluster lifecycle, Day-2 ops, validation, burst creation
 #   Scenario 2: Reconciliation loop observability (sentinel, broker, adapters, status)
 #   Scenario 3: Broken deployment debugging (stuck clusters, broken adapter behaviour)
+#   Scenario 4: Build Your Own Adapter (deploy test adapter, verify reconciliation loop)
 #
-# Usage: ./scripts/scenario-test-hackathon.sh [--scenario 1|2|3|all] [--no-cleanup] [--timeout N]
+# Usage: ./scripts/scenario-test-hackathon.sh [--scenario 1|2|3|4|all] [--no-cleanup] [--timeout N] [--namespace NS]
 
 set -uo pipefail
 
 # ── Constants ──
 
 CTX_DOGFOOD="gke_hcm-hyperfleet_us-central1-a_hyperfleet-dev-hackathon-dogfood"
+CTX_BUILD="gke_hcm-hyperfleet_us-central1-a_hyperfleet-dev-hackathon-build"
 NS_HEALTHY="hyperfleet-healthy"
 NS_BROKEN="hyperfleet-broken"
+NS_HYPERFLEET="hyperfleet"
 
 API_PORT=8000
 RECONCILE_TIMEOUT=120
 DATE_SUFFIX=$(date +%Y%m%d%H%M)
+PARTICIPANT_NS_OVERRIDE=""
+
+# Path to test adapter configs (relative to repo root)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+TEST_ADAPTER_CONFIGS="${REPO_ROOT}/helmfile/configs/hackathon/adapters/test-adapter"
 
 # ── State ──
 
@@ -46,8 +55,12 @@ while [[ $# -gt 0 ]]; do
       RECONCILE_TIMEOUT="$2"
       shift 2
       ;;
+    --namespace)
+      PARTICIPANT_NS_OVERRIDE="$2"
+      shift 2
+      ;;
     *)
-      echo "Usage: $0 [--scenario 1|2|3|all] [--no-cleanup] [--timeout N]"
+      echo "Usage: $0 [--scenario 1|2|3|4|all] [--no-cleanup] [--timeout N] [--namespace NS]"
       exit 1
       ;;
   esac
@@ -721,6 +734,256 @@ test_scenario_3() {
   fi
 }
 
+# ── Scenario 4: Build Your Own Adapter ──
+
+test_scenario_4() {
+  local ctx="$CTX_BUILD"
+
+  # Determine participant namespace
+  local participant_ns
+  if [[ -n "$PARTICIPANT_NS_OVERRIDE" ]]; then
+    participant_ns="$PARTICIPANT_NS_OVERRIDE"
+  else
+    local gcloud_user
+    gcloud_user=$(gcloud config get-value account 2>/dev/null | cut -d@ -f1) || gcloud_user=""
+    if [[ -z "$gcloud_user" ]]; then
+      fail "[S4] Could not detect gcloud user. Use --namespace to specify participant namespace"
+      return
+    fi
+    participant_ns="hackathon-${gcloud_user}"
+  fi
+
+  local api_url
+  api_url=$(get_api_url "$ctx" "$NS_HYPERFLEET") || {
+    fail "[S4] Could not get API LoadBalancer IP for $NS_HYPERFLEET"
+    return
+  }
+
+  section "Scenario 4: Build Your Own Adapter"
+  echo "  API: $api_url"
+  echo "  Participant namespace: $participant_ns"
+
+  # ── Infrastructure checks ──
+
+  section "S4: Infrastructure"
+
+  # Verify participant namespace exists
+  if kubectl --context "$ctx" get namespace "$participant_ns" &>/dev/null; then
+    pass "[S4] Participant namespace $participant_ns exists"
+  else
+    fail "[S4] Participant namespace $participant_ns not found. Run: make create-hackathon-namespaces"
+    return
+  fi
+
+  # API accessible
+  local api_status
+  api_status=$(curl -s -o /dev/null -w '%{http_code}' --connect-timeout 5 --max-time 10 \
+    "${api_url}/api/hyperfleet/v1/clusters" 2>/dev/null) || api_status="error"
+
+  if [[ "$api_status" == "200" ]]; then
+    pass "[S4] API responds (HTTP 200)"
+  else
+    fail "[S4] API not responding (HTTP $api_status)"
+    return
+  fi
+
+  # RabbitMQ running
+  local rabbitmq_ready
+  rabbitmq_ready=$(kubectl --context "$ctx" get deploy rabbitmq \
+    -n "$NS_HYPERFLEET" -o jsonpath='{.status.readyReplicas}' 2>/dev/null) || rabbitmq_ready=0
+
+  if [[ "$rabbitmq_ready" -ge 1 ]]; then
+    pass "[S4] RabbitMQ running"
+  else
+    fail "[S4] RabbitMQ not ready"
+  fi
+
+  # Sentinels running
+  local sentinel_ready
+  sentinel_ready=$(kubectl --context "$ctx" get deploy clusters-hyperfleet-sentinel \
+    -n "$NS_HYPERFLEET" -o jsonpath='{.status.readyReplicas}' 2>/dev/null) || sentinel_ready=0
+
+  if [[ "$sentinel_ready" -ge 1 ]]; then
+    pass "[S4] Sentinel running"
+  else
+    fail "[S4] Sentinel not ready"
+  fi
+
+  # No pre-deployed adapters
+  local adapter_count
+  adapter_count=$(kubectl --context "$ctx" get deploy -n "$NS_HYPERFLEET" --no-headers 2>/dev/null \
+    | grep -c "adapter" || true)
+
+  if [[ "$adapter_count" == "0" ]]; then
+    pass "[S4] No pre-deployed adapters (correct for Scenario 4)"
+  else
+    warn "[S4] Found $adapter_count adapter deployment(s) in $NS_HYPERFLEET"
+  fi
+
+  # ── Deploy test adapter ──
+
+  section "S4: Deploy Test Adapter"
+
+  # Verify test adapter configs exist
+  if [[ ! -f "${TEST_ADAPTER_CONFIGS}/adapter-config.yaml" || ! -f "${TEST_ADAPTER_CONFIGS}/adapter-task-config.yaml" ]]; then
+    fail "[S4] Test adapter configs not found at ${TEST_ADAPTER_CONFIGS}"
+    return
+  fi
+
+  # Clean up any stale test adapter from previous runs
+  helm --kube-context "$ctx" uninstall scenario4-test -n "$participant_ns" 2>/dev/null || true
+
+  # Deploy test adapter via helm
+  local helm_result
+  helm_result=$(helm --kube-context "$ctx" upgrade --install scenario4-test \
+    hyperfleet-adapter/hyperfleet-adapter \
+    --namespace "$participant_ns" \
+    --set image.registry=quay.io \
+    --set image.repository=redhat-services-prod/hyperfleet-tenant/hyperfleet/hyperfleet-adapter \
+    --set image.tag=latest \
+    --set image.pullPolicy=Always \
+    --set broker.type=rabbitmq \
+    --set broker.rabbitmq.url="amqp://guest:guest@rabbitmq.${NS_HYPERFLEET}:5672" \
+    --set broker.rabbitmq.queue="${NS_HYPERFLEET}-clusters-scenario4-test" \
+    --set broker.rabbitmq.exchange="${NS_HYPERFLEET}-clusters" \
+    --set 'broker.rabbitmq.routingKey=#' \
+    --set-file adapterConfig.yaml="${TEST_ADAPTER_CONFIGS}/adapter-config.yaml" \
+    --set-file adapterTaskConfig.yaml="${TEST_ADAPTER_CONFIGS}/adapter-task-config.yaml" \
+    --set 'env[0].name=NAMESPACE' \
+    --set 'env[0].valueFrom.fieldRef.fieldPath=metadata.namespace' \
+    --set "adapterConfig.hyperfleetApi.baseUrl=http://hyperfleet-api.${NS_HYPERFLEET}:8000" \
+    --set 'rbac.resources[0]=configmaps' \
+    --wait --timeout 2m 2>&1) || true
+
+  # Check if adapter pod is running
+  local pod_status
+  pod_status=$(kubectl --context "$ctx" get pods -n "$participant_ns" \
+    -l app.kubernetes.io/instance=scenario4-test --no-headers 2>/dev/null \
+    | awk '{print $3}' | head -1) || pod_status=""
+
+  if [[ "$pod_status" == "Running" ]]; then
+    pass "[S4] Test adapter pod is Running in $participant_ns"
+  else
+    fail "[S4] Test adapter pod is not Running (status: ${pod_status:-not found})"
+    echo "  Helm output: $(echo "$helm_result" | tail -3)"
+    # Try to show pod events for debugging
+    kubectl --context "$ctx" get events -n "$participant_ns" --sort-by='.lastTimestamp' 2>/dev/null | tail -5
+    if [[ "$CLEANUP" == true ]]; then
+      helm --kube-context "$ctx" uninstall scenario4-test -n "$participant_ns" 2>/dev/null || true
+    fi
+    return
+  fi
+
+  # Verify no restarts after a brief wait (indicates stable connection to broker)
+  sleep 10
+  local restarts
+  restarts=$(kubectl --context "$ctx" get pods -n "$participant_ns" \
+    -l app.kubernetes.io/instance=scenario4-test -o jsonpath='{.items[0].status.containerStatuses[0].restartCount}' 2>/dev/null) || restarts="unknown"
+
+  if [[ "$restarts" == "0" ]]; then
+    pass "[S4] Test adapter stable (0 restarts after 10s)"
+  else
+    warn "[S4] Test adapter has $restarts restart(s) after 10s"
+  fi
+
+  # ── Test reconciliation loop ──
+
+  section "S4: Adapter in Reconciliation Loop"
+
+  # Clean up stale test clusters
+  cleanup_stale "$api_url" "scenario4-"
+
+  # Create a cluster
+  local cluster_id
+  cluster_id=$(create_cluster "$api_url" "scenario4-test-${DATE_SUFFIX}") || true
+
+  if [[ -n "$cluster_id" ]]; then
+    pass "[S4] Test cluster created (id=${cluster_id:0:12}...)"
+  else
+    fail "[S4] Failed to create test cluster"
+    if [[ "$CLEANUP" == true ]]; then
+      helm --kube-context "$ctx" uninstall scenario4-test -n "$participant_ns" 2>/dev/null || true
+    fi
+    return
+  fi
+
+  # Wait for the test adapter to process the cluster and report status
+  # Since scenario4-test is NOT in the API's required adapters list, the cluster
+  # may reconcile without it. We check for the adapter's status report instead.
+  echo "  Waiting for test adapter to report status (up to ${RECONCILE_TIMEOUT}s)..."
+
+  local elapsed=0
+  local adapter_reported=false
+
+  while [[ $elapsed -lt $RECONCILE_TIMEOUT ]]; do
+    local status_response
+    status_response=$(curl -s --max-time 5 \
+      "${api_url}/api/hyperfleet/v1/clusters/${cluster_id}/statuses" 2>/dev/null)
+
+    local found_adapter
+    found_adapter=$(echo "$status_response" \
+      | jq '[.items[]? | select(.adapter=="scenario4-test")] | length') || found_adapter=0
+
+    if [[ "$found_adapter" -ge 1 ]]; then
+      adapter_reported=true
+      break
+    fi
+    sleep 5
+    elapsed=$((elapsed + 5))
+  done
+
+  if [[ "$adapter_reported" == true ]]; then
+    pass "[S4] Test adapter reported status in ${elapsed}s"
+  else
+    fail "[S4] Test adapter did NOT report status after ${RECONCILE_TIMEOUT}s"
+    # Show adapter logs for debugging
+    echo "  Last 10 adapter log lines:"
+    kubectl --context "$ctx" logs -l app.kubernetes.io/instance=scenario4-test \
+      -n "$participant_ns" --tail=10 2>/dev/null | head -10
+    if [[ "$CLEANUP" == true ]]; then
+      cleanup_cluster "$api_url" "$cluster_id"
+      helm --kube-context "$ctx" uninstall scenario4-test -n "$participant_ns" 2>/dev/null || true
+    fi
+    return
+  fi
+
+  # Verify adapter status conditions
+  local adapter_status
+  adapter_status=$(curl -s --max-time 5 \
+    "${api_url}/api/hyperfleet/v1/clusters/${cluster_id}/statuses" 2>/dev/null)
+
+  local applied
+  applied=$(echo "$adapter_status" \
+    | jq -r '.items[]? | select(.adapter=="scenario4-test") | .conditions[]? | select(.type=="Applied") | .status // "missing"') || applied="missing"
+
+  if [[ "$applied" == "True" ]]; then
+    pass "[S4] Test adapter reports Applied=True"
+  else
+    fail "[S4] Test adapter reports Applied=$applied (expected True)"
+  fi
+
+  # Verify ConfigMap was created in participant namespace
+  local configmap_name="${cluster_id}-scenario4-test"
+  if kubectl --context "$ctx" get configmap "$configmap_name" -n "$participant_ns" &>/dev/null; then
+    pass "[S4] ConfigMap created in $participant_ns ($configmap_name)"
+  else
+    fail "[S4] ConfigMap not found in $participant_ns (expected $configmap_name)"
+  fi
+
+  # ── Cleanup ──
+
+  if [[ "$CLEANUP" == true ]]; then
+    section "S4: Cleanup"
+    cleanup_cluster "$api_url" "$cluster_id"
+    helm --kube-context "$ctx" uninstall scenario4-test -n "$participant_ns" 2>/dev/null || true
+    # Wait for configmap cleanup
+    sleep 5
+    kubectl --context "$ctx" delete configmap -l app.kubernetes.io/instance=scenario4-test \
+      -n "$participant_ns" 2>/dev/null || true
+    echo "  Test adapter and cluster cleaned up"
+  fi
+}
+
 # ── Main ──
 
 echo "════════════════════════════════════════════"
@@ -736,13 +999,15 @@ case "$SCENARIO_FILTER" in
   1)   test_scenario_1 ;;
   2)   test_scenario_2 ;;
   3)   test_scenario_3 ;;
+  4)   test_scenario_4 ;;
   all)
     test_scenario_1
     test_scenario_2
     test_scenario_3
+    test_scenario_4
     ;;
   *)
-    echo "ERROR: invalid scenario: $SCENARIO_FILTER (valid: 1, 2, 3, all)"
+    echo "ERROR: invalid scenario: $SCENARIO_FILTER (valid: 1, 2, 3, 4, all)"
     exit 1
     ;;
 esac
