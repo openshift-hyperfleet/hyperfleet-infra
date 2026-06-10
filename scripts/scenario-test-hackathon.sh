@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 # Scenario validation tests for HyperFleet Ignition Day.
-# Tests the user journey for Scenarios 1, 2, 3, and 4 against live hackathon clusters.
+# Tests the user journey for Scenarios 1-5 against live hackathon clusters.
 #
 # Complements smoke-test-hackathon.sh (infrastructure health) with functional checks:
 #   Scenario 1: API surface, cluster lifecycle, Day-2 ops, validation, burst creation
 #   Scenario 2: Reconciliation loop observability (sentinel, broker, adapters, status)
 #   Scenario 3: Broken deployment debugging (stuck clusters, broken adapter behaviour)
 #   Scenario 4: Build Your Own Adapter (deploy test adapter, verify reconciliation loop)
+#   Scenario 5: Shard the Sentinel (deploy regional sentinel, verify selective polling)
 #
-# Usage: ./scripts/scenario-test-hackathon.sh [--scenario 1|2|3|4|all] [--no-cleanup] [--timeout N] [--namespace NS]
+# Usage: ./scripts/scenario-test-hackathon.sh [--scenario 1|2|3|4|5|all] [--no-cleanup] [--timeout N] [--namespace NS]
 
 set -uo pipefail
 
@@ -16,6 +17,7 @@ set -uo pipefail
 
 CTX_DOGFOOD="gke_hcm-hyperfleet_us-central1-a_hyperfleet-dev-hackathon-dogfood"
 CTX_BUILD="gke_hcm-hyperfleet_us-central1-a_hyperfleet-dev-hackathon-build"
+CTX_OPERATE="gke_hcm-hyperfleet_us-central1-a_hyperfleet-dev-hackathon-operate"
 NS_HEALTHY="hyperfleet-healthy"
 NS_BROKEN="hyperfleet-broken"
 NS_HYPERFLEET="hyperfleet"
@@ -984,6 +986,224 @@ test_scenario_4() {
   fi
 }
 
+# ── Scenario 5: Shard the Sentinel ──
+
+test_scenario_5() {
+  local ctx="$CTX_OPERATE"
+
+  # Determine participant namespace (same logic as S4)
+  local participant_ns
+  if [[ -n "$PARTICIPANT_NS_OVERRIDE" ]]; then
+    participant_ns="$PARTICIPANT_NS_OVERRIDE"
+  else
+    local gcloud_user
+    gcloud_user=$(gcloud config get-value account 2>/dev/null | cut -d@ -f1) || gcloud_user=""
+    if [[ -z "$gcloud_user" ]]; then
+      fail "[S5] Could not detect gcloud user. Use --namespace to specify participant namespace"
+      return
+    fi
+    participant_ns="hackathon-${gcloud_user}"
+  fi
+
+  local api_url
+  api_url=$(get_api_url "$ctx" "$NS_HYPERFLEET") || {
+    fail "[S5] Could not get API LoadBalancer IP for $NS_HYPERFLEET"
+    return
+  }
+
+  section "Scenario 5: Shard the Sentinel"
+  echo "  API: $api_url"
+  echo "  Participant namespace: $participant_ns"
+
+  # ── Infrastructure checks ──
+
+  section "S5: Infrastructure"
+
+  # Participant namespace exists
+  if kubectl --context "$ctx" get namespace "$participant_ns" &>/dev/null; then
+    pass "[S5] Participant namespace $participant_ns exists"
+  else
+    fail "[S5] Participant namespace $participant_ns not found"
+    return
+  fi
+
+  # API accessible
+  local api_status
+  api_status=$(curl -s -o /dev/null -w '%{http_code}' --connect-timeout 5 --max-time 10 \
+    "${api_url}/api/hyperfleet/v1/clusters" 2>/dev/null) || api_status="error"
+
+  if [[ "$api_status" == "200" ]]; then
+    pass "[S5] API responds (HTTP 200)"
+  else
+    fail "[S5] API not responding (HTTP $api_status)"
+    return
+  fi
+
+  # Catch-all sentinel running
+  local sentinel_ready
+  sentinel_ready=$(kubectl --context "$ctx" get deploy clusters-hyperfleet-sentinel \
+    -n "$NS_HYPERFLEET" -o jsonpath='{.status.readyReplicas}' 2>/dev/null) || sentinel_ready=0
+
+  if [[ "$sentinel_ready" -ge 1 ]]; then
+    pass "[S5] Catch-all sentinel running"
+  else
+    fail "[S5] Catch-all sentinel not ready"
+  fi
+
+  # Seeded clusters exist
+  local seeded_count
+  seeded_count=$(curl -s --max-time 10 "${api_url}/api/hyperfleet/v1/clusters?size=50" 2>/dev/null \
+    | jq '.total // 0') || seeded_count=0
+
+  if [[ "$seeded_count" -ge 12 ]]; then
+    pass "[S5] $seeded_count seeded clusters found (expected >= 12)"
+  else
+    fail "[S5] Only $seeded_count seeded clusters (expected >= 12)"
+  fi
+
+  # Region distribution
+  local us_east us_west eu_west
+  us_east=$(curl -s --max-time 10 "${api_url}/api/hyperfleet/v1/clusters?size=50" 2>/dev/null \
+    | jq '[.items[]? | select(.labels.region == "us-east")] | length') || us_east=0
+  us_west=$(curl -s --max-time 10 "${api_url}/api/hyperfleet/v1/clusters?size=50" 2>/dev/null \
+    | jq '[.items[]? | select(.labels.region == "us-west")] | length') || us_west=0
+  eu_west=$(curl -s --max-time 10 "${api_url}/api/hyperfleet/v1/clusters?size=50" 2>/dev/null \
+    | jq '[.items[]? | select(.labels.region == "eu-west")] | length') || eu_west=0
+
+  if [[ "$us_east" -ge 4 && "$us_west" -ge 4 && "$eu_west" -ge 4 ]]; then
+    pass "[S5] Region distribution correct: us-east=$us_east, us-west=$us_west, eu-west=$eu_west"
+  else
+    fail "[S5] Region distribution wrong: us-east=$us_east, us-west=$us_west, eu-west=$eu_west (expected >= 4/4/4)"
+  fi
+
+  # ── Deploy regional sentinel ──
+
+  section "S5: Deploy Regional Sentinel (us-east)"
+
+  # Clean up any stale test sentinel from previous runs
+  helm --kube-context "$ctx" uninstall sentinel-us-east -n "$participant_ns" 2>/dev/null || true
+
+  # Deploy a us-east regional sentinel
+  local helm_result
+  helm_result=$(helm --kube-context "$ctx" upgrade --install sentinel-us-east \
+    hyperfleet-sentinel/hyperfleet-sentinel \
+    --namespace "$participant_ns" \
+    --set image.registry=quay.io \
+    --set image.repository=redhat-services-prod/hyperfleet-tenant/hyperfleet/hyperfleet-sentinel \
+    --set image.tag=latest \
+    --set image.pullPolicy=Always \
+    --set config.resourceType=clusters \
+    --set config.resourceSelector[0].label=region \
+    --set config.resourceSelector[0].value=us-east \
+    --set "config.clients.hyperfleetApi.baseUrl=http://hyperfleet-api.${NS_HYPERFLEET}:8000" \
+    --set broker.type=rabbitmq \
+    --set "broker.topic=${NS_HYPERFLEET}-clusters" \
+    --set "broker.rabbitmq.url=amqp://guest:guest@rabbitmq.${NS_HYPERFLEET}:5672" \
+    --set broker.rabbitmq.exchangeType=topic \
+    --wait --timeout 2m 2>&1) || true
+
+  # Check if sentinel pod is running
+  local pod_status
+  pod_status=$(kubectl --context "$ctx" get pods -n "$participant_ns" \
+    -l app.kubernetes.io/instance=sentinel-us-east --no-headers 2>/dev/null \
+    | awk '{print $3}' | head -1) || pod_status=""
+
+  if [[ "$pod_status" == "Running" ]]; then
+    pass "[S5] Regional sentinel (us-east) running in $participant_ns"
+  else
+    fail "[S5] Regional sentinel not running (status: ${pod_status:-not found})"
+    echo "  Helm output: $(echo "$helm_result" | tail -3)"
+    if [[ "$CLEANUP" == true ]]; then
+      helm --kube-context "$ctx" uninstall sentinel-us-east -n "$participant_ns" 2>/dev/null || true
+    fi
+    return
+  fi
+
+  # Verify stability
+  sleep 10
+  local restarts
+  restarts=$(kubectl --context "$ctx" get pods -n "$participant_ns" \
+    -l app.kubernetes.io/instance=sentinel-us-east -o jsonpath='{.items[0].status.containerStatuses[0].restartCount}' 2>/dev/null) || restarts="unknown"
+
+  if [[ "$restarts" == "0" ]]; then
+    pass "[S5] Regional sentinel stable (0 restarts after 10s)"
+  else
+    warn "[S5] Regional sentinel has $restarts restart(s) after 10s"
+  fi
+
+  # ── Scale down catch-all and test regional sentinel ──
+
+  section "S5: Sentinel Sharding Test"
+
+  # Scale down the catch-all sentinel
+  kubectl --context "$ctx" scale deploy clusters-hyperfleet-sentinel \
+    -n "$NS_HYPERFLEET" --replicas=0 2>/dev/null
+  echo "  Catch-all sentinel scaled down"
+
+  # Wait for the regional sentinel to pick up events
+  sleep 10
+
+  # Clean up stale test clusters
+  cleanup_stale "$api_url" "scenario5-"
+
+  # Create a us-east cluster -- should be picked up by the regional sentinel
+  local cluster_id
+  cluster_id=$(curl -sS -w "" -X POST \
+    -H "Content-Type: application/json" \
+    "${api_url}/api/hyperfleet/v1/clusters" \
+    -d "{\"name\":\"scenario5-test-${DATE_SUFFIX}\",\"kind\":\"Cluster\",\"spec\":{\"provider\":\"gcp\",\"region\":\"us-east1\"},\"labels\":{\"region\":\"us-east\",\"environment\":\"hackathon\"}}" \
+    --connect-timeout 5 --max-time 15 2>/dev/null \
+    | jq -r '.id // empty') || cluster_id=""
+
+  if [[ -n "$cluster_id" ]]; then
+    pass "[S5] Test cluster created with region=us-east (id=${cluster_id:0:12}...)"
+  else
+    fail "[S5] Failed to create test cluster"
+    # Restore catch-all before returning
+    kubectl --context "$ctx" scale deploy clusters-hyperfleet-sentinel \
+      -n "$NS_HYPERFLEET" --replicas=1 2>/dev/null
+    if [[ "$CLEANUP" == true ]]; then
+      helm --kube-context "$ctx" uninstall sentinel-us-east -n "$participant_ns" 2>/dev/null || true
+    fi
+    return
+  fi
+
+  # Wait for reconciliation (via the regional sentinel + existing adapters)
+  local elapsed
+  if elapsed=$(wait_reconciled "$api_url" "$cluster_id"); then
+    pass "[S5] Cluster reconciled via regional sentinel in ${elapsed}s"
+  else
+    fail "[S5] Cluster NOT reconciled after ${RECONCILE_TIMEOUT}s (regional sentinel may not be publishing events)"
+  fi
+
+  # Verify adapter statuses are reported (proves the sentinel published events that adapters consumed)
+  local status_count
+  status_count=$(curl -s --max-time 5 \
+    "${api_url}/api/hyperfleet/v1/clusters/${cluster_id}/statuses" 2>/dev/null \
+    | jq '.total // 0') || status_count=0
+
+  if [[ "$status_count" -ge 1 ]]; then
+    pass "[S5] $status_count adapter(s) reported status via regional sentinel"
+  else
+    fail "[S5] No adapter statuses reported (regional sentinel may not be publishing to correct topic)"
+  fi
+
+  # ── Restore and cleanup ──
+
+  section "S5: Restore & Cleanup"
+
+  # Scale catch-all sentinel back up
+  kubectl --context "$ctx" scale deploy clusters-hyperfleet-sentinel \
+    -n "$NS_HYPERFLEET" --replicas=1 2>/dev/null
+  echo "  Catch-all sentinel restored"
+
+  if [[ "$CLEANUP" == true ]]; then
+    cleanup_cluster "$api_url" "$cluster_id"
+    helm --kube-context "$ctx" uninstall sentinel-us-east -n "$participant_ns" 2>/dev/null || true
+    echo "  Regional sentinel and test cluster cleaned up"
+  fi
+}
+
 # ── Main ──
 
 echo "════════════════════════════════════════════"
@@ -1000,14 +1220,16 @@ case "$SCENARIO_FILTER" in
   2)   test_scenario_2 ;;
   3)   test_scenario_3 ;;
   4)   test_scenario_4 ;;
+  5)   test_scenario_5 ;;
   all)
     test_scenario_1
     test_scenario_2
     test_scenario_3
     test_scenario_4
+    test_scenario_5
     ;;
   *)
-    echo "ERROR: invalid scenario: $SCENARIO_FILTER (valid: 1, 2, 3, 4, all)"
+    echo "ERROR: invalid scenario: $SCENARIO_FILTER (valid: 1, 2, 3, 4, 5, all)"
     exit 1
     ;;
 esac
