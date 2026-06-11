@@ -106,6 +106,11 @@ clean-generated: ## Remove generated Helm values
 MAESTRO_CONSUMER ?= cluster1
 MANIFESTS_DIR    := manifests
 
+.PHONY: install-priority-classes
+install-priority-classes: check-kubectl ## Install PriorityClasses for critical infrastructure pods
+	kubectl apply -f $(MANIFESTS_DIR)/priority-classes.yaml --kubeconfig $(KUBECONFIG)
+	@echo "OK: PriorityClasses applied"
+
 .PHONY: install-rabbitmq
 install-rabbitmq: check-kubectl check-namespace ## Install RabbitMQ (dev only, for BROKER_TYPE=rabbitmq)
 	kubectl apply -f $(MANIFESTS_DIR)/rabbitmq.yaml --namespace $(NAMESPACE) --kubeconfig $(KUBECONFIG)
@@ -262,11 +267,11 @@ install-adapters: install-adapter1 install-adapter2 install-adapter3 ## Install 
 install-hyperfleet: install-api install-sentinels install-adapters ## Install API + sentinels + adapters (no maestro, no terraform)
 
 .PHONY: install-all
-install-all: install-terraform get-credentials tf-helm-values install-maestro create-maestro-consumer install-hyperfleet ## Full GCP install (terraform + googlepubsub + hyperfleet + maestro)
+install-all: install-terraform get-credentials tf-helm-values install-priority-classes install-maestro create-maestro-consumer install-hyperfleet ## Full GCP install (terraform + googlepubsub + hyperfleet + maestro)
 
 .PHONY: install-all-rabbitmq
 install-all-rabbitmq: BROKER_TYPE = rabbitmq
-install-all-rabbitmq: install-rabbitmq tf-helm-values install-hyperfleet install-maestro create-maestro-consumer ## Full RabbitMQ install (rabbitmq + hyperfleet + maestro, no terraform)
+install-all-rabbitmq: install-rabbitmq tf-helm-values install-priority-classes install-hyperfleet install-maestro create-maestro-consumer ## Full RabbitMQ install (rabbitmq + hyperfleet + maestro, no terraform)
 
 # ──────────────────────────────────────────────
 # CI validation targets
