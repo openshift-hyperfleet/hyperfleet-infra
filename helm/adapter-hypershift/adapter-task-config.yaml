@@ -39,6 +39,7 @@ params:
   - name: "nodeAddress"
     source: "env.NODE_ADDRESS"
     type: "string"
+    required: true
 
 
 # Preconditions: check cluster details from API
