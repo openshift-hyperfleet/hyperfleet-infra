@@ -1,0 +1,67 @@
+# Values for adapter-hypershift-nodepool
+# Creates NodePool resources on a remote HyperShift management cluster
+
+hyperfleet-adapter:
+  image:
+    registry: CHANGE_ME
+    repository: CHANGE_ME
+    tag: latest
+
+  adapterConfig:
+    create: true
+    log:
+      level: debug
+
+  adapterTaskConfig:
+    create: true
+
+  broker:
+    type: googlepubsub
+    googlepubsub:
+      projectId: CHANGE_ME
+      subscriptionId: CHANGE_ME
+      topic: CHANGE_ME
+      deadLetterTopic: ""
+      createTopicIfMissing: true
+      createSubscriptionIfMissing: true
+    rabbitmq:
+      url: CHANGE_ME
+      queue: ""
+      exchange: ""
+      routingKey: ""
+
+  env:
+    - name: NAMESPACE
+      valueFrom:
+        fieldRef:
+          fieldPath: metadata.namespace
+    - name: CLUSTERS_NAMESPACE
+      value: clusters
+    - name: OCI_AD
+      value: US-SANJOSE-1-AD-1
+    - name: OCI_SUBNET_ID
+      value: CHANGE_ME
+    - name: OCI_SHAPE
+      value: VM.Standard.E4.Flex
+    - name: OCI_OCPUS
+      value: "4"
+    - name: OCI_MEMORY_GBS
+      value: "16"
+    - name: OCI_BOOT_VOLUME_GB
+      value: "120"
+
+  # Mount the management cluster kubeconfig
+  extraVolumeMounts:
+    - name: hypershift-kubeconfig
+      mountPath: /etc/hypershift
+      readOnly: true
+
+  extraVolumes:
+    - name: hypershift-kubeconfig
+      secret:
+        secretName: hypershift-mgmt-kubeconfig
+
+  # RBAC is for the local CLM cluster only; remote access uses the mounted kubeconfig
+  rbac:
+    resources:
+      - configmaps

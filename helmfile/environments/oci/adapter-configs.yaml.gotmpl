@@ -1,0 +1,26 @@
+{{ $namespace := requiredEnv "NAMESPACE" }}
+adapters:
+  - name: adapter1
+    resourceType: clusters
+    values:
+      - adapterTaskConfig:
+          create: true
+        adapterConfig:
+          create: true
+          log:
+            level: debug
+        rbac:
+          resources:
+            - configmaps
+        broker:
+          create: true
+          rabbitmq:
+            url: "amqp://guest:guest@rabbitmq:5672"
+            queue: {{ $namespace }}-clusters-adapter1
+            exchange: {{ $namespace }}-clusters
+            routingKey: "#"
+    setFiles:
+      - name: adapterConfig.yaml
+        file: configs/oci/adapters/adapter1/adapter-config.yaml
+      - name: adapterTaskConfig.yaml
+        file: configs/oci/adapters/adapter1/adapter-task-config.yaml

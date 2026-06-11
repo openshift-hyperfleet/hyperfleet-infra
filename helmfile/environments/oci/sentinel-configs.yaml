@@ -1,0 +1,35 @@
+sentinels:
+  - name: clusters
+    values:
+      - config:
+          resourceType: clusters
+          resourceSelector: []
+        broker:
+          topic: hyperfleet-clusters
+          rabbitmq:
+            exchangeType: topic
+        monitoring:
+          podMonitoring:
+            enabled: false
+          prometheusRule:
+            enabled: false
+
+  - name: nodepools
+    values:
+      - config:
+          resourceType: nodepools
+          resourceSelector: []
+          messageData:
+            owner_references:
+              id: "resource.owner_references.id"
+              href: "resource.owner_references.href"
+              kind: "resource.owner_references.kind"
+        broker:
+          topic: hyperfleet-nodepools
+          rabbitmq:
+            exchangeType: topic
+        monitoring:
+          podMonitoring:
+            enabled: false
+          prometheusRule:
+            enabled: false
