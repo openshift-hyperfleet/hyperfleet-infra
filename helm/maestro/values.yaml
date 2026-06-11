@@ -9,6 +9,9 @@ server:
     name: maestro-server
 
   server:
+    annotations:
+      # Prevent the cluster autoscaler from evicting the maestro server pod during scale-down
+      cluster-autoscaler.kubernetes.io/safe-to-evict: "false"
     grpc:
       tls:
         enabled: false
