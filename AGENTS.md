@@ -158,7 +158,7 @@ There is no `.github/workflows/`. CI is managed by **Prow** (OpenShift CI). The 
 Running it for any other env silently no-ops. E2E envs (`e2e-kind`, `e2e-gcp`) have broker configs hardcoded in helmfile and need no generated files.
 
 **`check-kubectl-context` enforces context shape, not just env**
-`make install-hyperfleet` (and most helmfile targets) run `check-kubectl-context`, which hard-fails if your current kubectl context doesn't contain `gke_` (for gcp envs) or `kind-` (for kind envs). Switching `HELMFILE_ENV` without switching your kubeconfig context will fail immediately.
+`check-kubectl-context`, hard-fails if your current kubectl context doesn't output `kind-` if your `HELMFILE_ENV=kind` or `HELMFILE_ENV=e2e-kind`. Switching `HELMFILE_ENV` to `e2e-kind` or `kind` without switching your kubeconfig context to the cluster will fail immediately.
 
 **`install-maestro` installs the AppliedManifestWorks CRD manually**
 The upstream Maestro Helm chart CRD install is broken. `install-maestro` works around this by applying the CRD directly from `open-cluster-management-io/api` before the chart, and sets `--set agent.installWorkCRDs=false`. Do not remove or reorder these steps.

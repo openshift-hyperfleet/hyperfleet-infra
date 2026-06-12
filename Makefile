@@ -276,35 +276,15 @@ check-helmfile-env-generated: ## Check that the generated directory exists based
 	fi
 	@echo "OK: Did not need to validate generated values for environment: $(HELMFILE_ENV)"
 
-
 .PHONY: check-kubectl-context
-check-kubectl-context: check-kubectl ## Verify kubectl context matches HELMFILE_ENV
-	@CONTEXT=$$(kubectl config current-context); \
-	case "$(HELMFILE_ENV)" in \
-		gcp|e2e-gcp) \
-			if echo "$$CONTEXT" | grep -q "gke_"; then \
-				echo "OK: connected to GKE cluster (context: $$CONTEXT)"; \
-			else \
-				echo "WARNING: current context '$$CONTEXT' does not appear to be a GKE cluster"; \
-				echo "         Expected context name containing 'gke_'"; \
-				exit 1; \
-			fi \
-			;; \
-		kind|e2e-kind) \
-			if echo "$$CONTEXT" | grep -q "kind-"; then \
-				echo "OK: connected to kind cluster (context: $$CONTEXT)"; \
-			else \
-				echo "WARNING: current context '$$CONTEXT' does not appear to be a kind cluster"; \
-				echo "         Expected context name containing 'kind-'"; \
-				exit 1; \
-			fi \
-			;; \
-		*) \
-			echo "ERROR: invalid HELMFILE_ENV: $(HELMFILE_ENV)"; \
-			echo "       Valid values: gcp, e2e-gcp, kind, e2e-kind"; \
-			exit 1 \
-			;; \
-	esac \
+check-kubectl-context: check-kubectl ## Verify kubectl context matches HELMFILE_ENV for kind and e2e-kind
+	@if [ "$(HELMFILE_ENV)" = "kind" ] || [ "$(HELMFILE_ENV)" = "e2e-kind" ]; then \
+		if ! kubectl config current-context | grep -q "kind-"; then \
+			echo "ERROR: HELMFILE_ENV=$(HELMFILE_ENV) requires kind context"; \
+			exit 1; \
+		fi; \
+		echo "OK: kubectl context matches HELMFILE_ENV=$(HELMFILE_ENV)"; \
+	fi;
 
 .PHONY: check-terraform
 check-terraform: ## Verify terraform is installed
