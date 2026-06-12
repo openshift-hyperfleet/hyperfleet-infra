@@ -1,0 +1,56 @@
+# Values for adapter-hypershift-kubeconfig
+# Reads HostedCluster kubeconfig and exposes it via the CLM API
+
+hyperfleet-adapter:
+  image:
+    registry: CHANGE_ME
+    repository: CHANGE_ME
+    tag: latest
+
+  adapterConfig:
+    create: true
+    log:
+      level: debug
+
+  adapterTaskConfig:
+    create: true
+
+  broker:
+    type: googlepubsub
+    googlepubsub:
+      projectId: CHANGE_ME
+      subscriptionId: CHANGE_ME
+      topic: CHANGE_ME
+      deadLetterTopic: ""
+      createTopicIfMissing: true
+      createSubscriptionIfMissing: true
+    rabbitmq:
+      url: CHANGE_ME
+      queue: ""
+      exchange: ""
+      routingKey: ""
+
+  env:
+    - name: NAMESPACE
+      valueFrom:
+        fieldRef:
+          fieldPath: metadata.namespace
+    - name: CLUSTERS_NAMESPACE
+      value: clusters
+
+  # Mount the management cluster kubeconfig
+  extraVolumeMounts:
+    - name: hypershift-kubeconfig
+      mountPath: /etc/hypershift
+      readOnly: true
+
+  extraVolumes:
+    - name: hypershift-kubeconfig
+      secret:
+        secretName: hypershift-mgmt-kubeconfig
+
+  # RBAC for reading Secrets on the local cluster (discovery uses the mounted kubeconfig)
+  rbac:
+    resources:
+      - configmaps
+      - secrets

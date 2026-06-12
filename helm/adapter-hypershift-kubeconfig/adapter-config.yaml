@@ -1,0 +1,26 @@
+# HyperShift kubeconfig adapter deployment configuration
+# Reads the HostedCluster kubeconfig Secret and reports it via the CLM API
+adapter:
+  name: adapter-hypershift-kubeconfig
+  version: "0.2.0"
+
+debug_config: true
+log:
+  level: debug
+
+clients:
+  hyperfleet_api:
+    base_url: http://hyperfleet-api:8000
+    version: v1
+    timeout: 10s
+    retry_attempts: 3
+    retry_backoff: exponential
+
+  broker:
+    subscription_id: "adapter-hypershift-kubeconfig"
+    topic: "hyperfleet-clusters"
+
+  kubernetes:
+    api_version: "v1"
+    # Use the mounted kubeconfig to target the remote HyperShift management cluster
+    kube_config_path: /etc/hypershift/kubeconfig

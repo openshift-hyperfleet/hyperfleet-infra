@@ -1,0 +1,110 @@
+# HyperShift kubeconfig adapter task configuration
+# Discovers the HostedCluster kubeconfig Secret and exposes it via the CLM API.
+# Platform-agnostic: works with any HyperShift management cluster.
+params:
+
+  - name: "clusterId"
+    source: "event.id"
+    type: "string"
+    required: true
+
+  - name: "generation"
+    source: "event.generation"
+    type: "int"
+    required: true
+
+  - name: "namespace"
+    source: "env.CLUSTERS_NAMESPACE"
+    type: "string"
+
+# Preconditions: fetch cluster name from API
+preconditions:
+  - name: "clusterStatus"
+    api_call:
+      method: "GET"
+      url: "/clusters/{{ .clusterId }}"
+      timeout: 10s
+      retry_attempts: 3
+      retry_backoff: "exponential"
+    capture:
+      - name: "clusterName"
+        field: "name"
+      - name: "generation"
+        field: "generation"
+
+# Resources: discover the kubeconfig Secret on the management cluster.
+# HyperShift creates a Secret named {clusterName}-admin-kubeconfig in the
+# clusters namespace. The adapter discovers it without modifying it.
+resources:
+
+  - name: "kubeconfigSecret"
+    transport:
+      client: "kubernetes"
+    manifest:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: "{{ .clusterName }}-admin-kubeconfig"
+        namespace: "{{ .namespace }}"
+    discovery:
+      namespace: "{{ .namespace }}"
+      by_name: "{{ .clusterName }}-admin-kubeconfig"
+
+# Post-processing: report kubeconfig back to the CLM API
+post:
+  payloads:
+    - name: "statusPayload"
+      build:
+        adapter: "{{ .adapter.name }}"
+        conditions:
+          - type: "Applied"
+            status:
+              expression: |
+                resources.?kubeconfigSecret.?metadata.?name.hasValue() ? "True" : "False"
+            reason:
+              expression: |
+                resources.?kubeconfigSecret.?metadata.?name.hasValue() ? "KubeconfigFound" : "KubeconfigNotFound"
+            message:
+              expression: |
+                resources.?kubeconfigSecret.?metadata.?name.hasValue()
+                ? "Kubeconfig secret discovered on management cluster"
+                : "Kubeconfig secret not yet available"
+          - type: "Available"
+            status:
+              expression: |
+                resources.?kubeconfigSecret.?data.?kubeconfig.hasValue() ? "True" : "False"
+            reason:
+              expression: |
+                resources.?kubeconfigSecret.?data.?kubeconfig.hasValue() ? "KubeconfigReady" : "KubeconfigPending"
+            message:
+              expression: |
+                resources.?kubeconfigSecret.?data.?kubeconfig.hasValue()
+                ? "Kubeconfig is available"
+                : "Waiting for kubeconfig to be populated"
+          - type: "Health"
+            status:
+              expression: |
+                adapter.?executionStatus.orValue("") == "success" ? "True" : (adapter.?executionStatus.orValue("") == "failed" ? "False" : "Unknown")
+            reason:
+              expression: |
+                adapter.?errorReason.orValue("") != "" ? adapter.?errorReason.orValue("") : "Healthy"
+            message:
+              expression: |
+                adapter.?errorMessage.orValue("") != "" ? adapter.?errorMessage.orValue("") : "Adapter executed successfully"
+        observed_generation:
+          expression: "generation"
+        observed_time: "{{ now | date \"2006-01-02T15:04:05Z07:00\" }}"
+        data:
+          kubeconfig:
+            expression: |
+              resources.?kubeconfigSecret.?data.?kubeconfig.orValue("")
+
+  post_actions:
+    - name: "reportClusterStatus"
+      api_call:
+        method: "POST"
+        url: "/clusters/{{ .clusterId }}/statuses"
+        headers:
+          - name: "Content-Type"
+            value: "application/json"
+        body: "{{ .statusPayload }}"
