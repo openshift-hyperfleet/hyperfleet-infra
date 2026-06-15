@@ -1,5 +1,5 @@
-# Hackathon — Cluster 1: "Dog Food" (Broken deployment)
-# Standard sentinel pair — sentinels are not broken, only adapter3 is
+# Hackathon — Cluster 1: "Dog Food" (Broken deployment — Americas region)
+# Standard sentinel pair — sentinels are not broken, only adapter1 is
 sentinels:
   - name: clusters
     values:
@@ -8,7 +8,7 @@ sentinels:
           resourceSelector: []
       - broker:
           type: rabbitmq
-          topic: hyperfleet-broken-clusters
+          topic: hyperfleet-broken-americas-clusters
           rabbitmq:
             url: "amqp://guest:guest@rabbitmq:5672"
             exchangeType: topic
@@ -25,7 +25,7 @@ sentinels:
               kind: "resource.owner_references.kind"
       - broker:
           type: rabbitmq
-          topic: hyperfleet-broken-nodepools
+          topic: hyperfleet-broken-americas-nodepools
           rabbitmq:
             url: "amqp://guest:guest@rabbitmq:5672"
             exchangeType: topic

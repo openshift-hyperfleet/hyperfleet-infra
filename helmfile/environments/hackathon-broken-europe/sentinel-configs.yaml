@@ -1,0 +1,31 @@
+# Hackathon — Cluster 1: "Dog Food" (Broken deployment — Europe region)
+# Standard sentinel pair — sentinels are not broken, only adapter1 is
+sentinels:
+  - name: clusters
+    values:
+      - config:
+          resourceType: clusters
+          resourceSelector: []
+      - broker:
+          type: rabbitmq
+          topic: hyperfleet-broken-europe-clusters
+          rabbitmq:
+            url: "amqp://guest:guest@rabbitmq:5672"
+            exchangeType: topic
+
+  - name: nodepools
+    values:
+      - config:
+          resourceType: nodepools
+          resourceSelector: []
+          messageData:
+            owner_references:
+              id: "resource.owner_references.id"
+              href: "resource.owner_references.href"
+              kind: "resource.owner_references.kind"
+      - broker:
+          type: rabbitmq
+          topic: hyperfleet-broken-europe-nodepools
+          rabbitmq:
+            url: "amqp://guest:guest@rabbitmq:5672"
+            exchangeType: topic

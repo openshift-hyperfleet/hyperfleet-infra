@@ -1,0 +1,60 @@
+# Hackathon — Cluster 1: "Dog Food" (Broken deployment — Europe region)
+# Scenario 3 (Something Is Wrong)
+# adapter1 uses a broken precondition URL (/clusters-BROKEN/) causing HTTP 404 errors.
+# This makes clusters stuck in Reconciled=False because adapter1 never completes.
+# Isolated per-region to prevent cross-team interference during the hackathon.
+adapters:
+  # BROKEN: adapter1 has a broken precondition URL — intentional for Scenario 3
+  - name: adapter1
+    resourceType: clusters
+    setFiles:
+      - name: adapterConfig.yaml
+        file: configs/base/adapters/adapter1-broken/adapter-config.yaml
+      - name: adapterTaskConfig.yaml
+        file: configs/base/adapters/adapter1-broken/adapter-task-config.yaml
+    values:
+      - broker:
+          type: rabbitmq
+          rabbitmq:
+            url: "amqp://guest:guest@rabbitmq:5672"
+            queue: {{ requiredEnv "NAMESPACE" }}-clusters-adapter1
+            exchange: {{ requiredEnv "NAMESPACE" }}-clusters
+            routingKey: "#"
+        rbac:
+          resources:
+            - configmaps
+
+  - name: adapter2
+    resourceType: clusters
+    setFiles:
+      - name: adapterConfig.yaml
+        file: configs/base/adapters/adapter2/adapter-config.yaml
+      - name: adapterTaskConfig.yaml
+        file: configs/base/adapters/adapter2/adapter-task-config.yaml
+    values:
+      - broker:
+          type: rabbitmq
+          rabbitmq:
+            url: "amqp://guest:guest@rabbitmq:5672"
+            queue: {{ requiredEnv "NAMESPACE" }}-clusters-adapter2
+            exchange: {{ requiredEnv "NAMESPACE" }}-clusters
+            routingKey: "#"
+
+  - name: adapter3
+    resourceType: nodepools
+    setFiles:
+      - name: adapterConfig.yaml
+        file: configs/base/adapters/adapter3/adapter-config.yaml
+      - name: adapterTaskConfig.yaml
+        file: configs/base/adapters/adapter3/adapter-task-config.yaml
+    values:
+      - broker:
+          type: rabbitmq
+          rabbitmq:
+            url: "amqp://guest:guest@rabbitmq:5672"
+            queue: {{ requiredEnv "NAMESPACE" }}-nodepools-adapter3
+            exchange: {{ requiredEnv "NAMESPACE" }}-nodepools
+            routingKey: "#"
+        rbac:
+          resources:
+            - configmaps

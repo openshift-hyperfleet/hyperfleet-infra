@@ -19,9 +19,11 @@ CTX_DOGFOOD="gke_hcm-hyperfleet_us-central1-a_hyperfleet-dev-hackathon-dogfood"
 CTX_BUILD="gke_hcm-hyperfleet_us-central1-a_hyperfleet-dev-hackathon-build"
 CTX_OPERATE="gke_hcm-hyperfleet_us-central1-a_hyperfleet-dev-hackathon-operate"
 NS_HEALTHY="hyperfleet-healthy"
-NS_BROKEN="hyperfleet-broken"
+NS_BROKEN_AMERICAS="hyperfleet-broken-americas"
+NS_BROKEN_EUROPE="hyperfleet-broken-europe"
 NS_HYPERFLEET="hyperfleet"
 
+API_IDENTITY_HEADER="-H X-HyperFleet-Identity:scenario-test@redhat.com"
 API_PORT=8000
 RECONCILE_TIMEOUT=120
 DATE_SUFFIX=$(date +%Y%m%d%H%M)
@@ -39,6 +41,7 @@ FAIL_COUNT=0
 WARN_COUNT=0
 FAILURES=()
 SCENARIO_FILTER="all"
+REGION_FILTER="all"
 CLEANUP=true
 
 # ── Argument Parsing ──
@@ -47,6 +50,10 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --scenario)
       SCENARIO_FILTER="$2"
+      shift 2
+      ;;
+    --region)
+      REGION_FILTER="$2"
       shift 2
       ;;
     --no-cleanup)
@@ -62,7 +69,7 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     *)
-      echo "Usage: $0 [--scenario 1|2|3|4|all] [--no-cleanup] [--timeout N] [--namespace NS]"
+      echo "Usage: $0 [--scenario 1|2|3|4|5|all] [--region americas|europe|all] [--no-cleanup] [--timeout N] [--namespace NS]"
       exit 1
       ;;
   esac
@@ -129,7 +136,7 @@ create_cluster() {
   local response status_code body
 
   response=$(curl -sS -w "\n%{http_code}" -X POST \
-    -H "Content-Type: application/json" \
+    -H "Content-Type: application/json" ${API_IDENTITY_HEADER} \
     "${api_url}/api/hyperfleet/v1/clusters" \
     -d "{\"name\":\"${name}\",\"kind\":\"Cluster\",\"spec\":{\"provider\":\"gcp\",\"region\":\"us-central1\"}}" \
     --connect-timeout 5 --max-time 15 2>/dev/null)
@@ -186,7 +193,7 @@ wait_deleted() {
 # Clean up a cluster (soft delete + wait for removal). Silent on failure.
 cleanup_cluster() {
   local api_url="$1" cluster_id="$2"
-  curl -s -o /dev/null -X DELETE --max-time 5 \
+  curl -s -o /dev/null -X DELETE --max-time 5 ${API_IDENTITY_HEADER} \
     "${api_url}/api/hyperfleet/v1/clusters/${cluster_id}" 2>/dev/null || true
 }
 
@@ -276,7 +283,7 @@ test_scenario_1() {
 
   # PATCH cluster
   local new_gen
-  new_gen=$(curl -s -X PATCH -H "Content-Type: application/json" --max-time 5 \
+  new_gen=$(curl -s -X PATCH -H "Content-Type: application/json" ${API_IDENTITY_HEADER} --max-time 5 \
     "${api_url}/api/hyperfleet/v1/clusters/${cluster_id}" \
     -d '{"labels":{"team":"platform","env":"staging"}}' 2>/dev/null \
     | jq -r '.generation // 0') || new_gen=0
@@ -297,7 +304,7 @@ test_scenario_1() {
   # Create node pool
   local np_status
   np_status=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
-    -H "Content-Type: application/json" --max-time 10 \
+    -H "Content-Type: application/json" ${API_IDENTITY_HEADER} --max-time 10 \
     "${api_url}/api/hyperfleet/v1/clusters/${cluster_id}/nodepools" \
     -d '{"name":"test-pool","kind":"NodePool","spec":{"instance_type":"e2-standard-4","replicas":3}}' 2>/dev/null)
 
@@ -326,7 +333,7 @@ test_scenario_1() {
   # Duplicate name
   local dup_status
   dup_status=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
-    -H "Content-Type: application/json" --max-time 5 \
+    -H "Content-Type: application/json" ${API_IDENTITY_HEADER} --max-time 5 \
     "${api_url}/api/hyperfleet/v1/clusters" \
     -d "{\"name\":\"scenario1-test-${DATE_SUFFIX}\",\"kind\":\"Cluster\",\"spec\":{\"provider\":\"gcp\"}}" 2>/dev/null)
 
@@ -339,7 +346,7 @@ test_scenario_1() {
   # Missing kind
   local kind_status
   kind_status=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
-    -H "Content-Type: application/json" --max-time 5 \
+    -H "Content-Type: application/json" ${API_IDENTITY_HEADER} --max-time 5 \
     "${api_url}/api/hyperfleet/v1/clusters" \
     -d '{"name":"no-kind","spec":{"provider":"gcp"}}' 2>/dev/null)
 
@@ -352,7 +359,7 @@ test_scenario_1() {
   # Invalid name
   local invalid_status
   invalid_status=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
-    -H "Content-Type: application/json" --max-time 5 \
+    -H "Content-Type: application/json" ${API_IDENTITY_HEADER} --max-time 5 \
     "${api_url}/api/hyperfleet/v1/clusters" \
     -d '{"name":"INVALID!@#","kind":"Cluster","spec":{"provider":"gcp"}}' 2>/dev/null)
 
@@ -378,7 +385,7 @@ test_scenario_1() {
   section "S1: Delete Lifecycle"
 
   local delete_gen
-  delete_gen=$(curl -s -X DELETE --max-time 5 \
+  delete_gen=$(curl -s -X DELETE ${API_IDENTITY_HEADER} --max-time 5 \
     "${api_url}/api/hyperfleet/v1/clusters/${cluster_id}" 2>/dev/null \
     | jq -r '.generation // 0') || delete_gen=0
 
@@ -582,96 +589,97 @@ test_scenario_2() {
 
 # ── Scenario 3: Something Is Wrong ──
 
-test_scenario_3() {
+# Runs Scenario 3 tests against a specific broken namespace.
+# $1: namespace (e.g., hyperfleet-broken-americas)
+# $2: region label for output (e.g., americas)
+_test_scenario_3_region() {
+  local ns_broken="$1" region="$2"
+  local tag="S3/${region}"
+
   local api_url
-  api_url=$(get_api_url "$CTX_DOGFOOD" "$NS_BROKEN") || {
-    fail "[S3] Could not get API LoadBalancer IP for $NS_BROKEN"
+  api_url=$(get_api_url "$CTX_DOGFOOD" "$ns_broken") || {
+    fail "[$tag] Could not get API LoadBalancer IP for $ns_broken"
     return
   }
 
-  section "Scenario 3: Something Is Wrong"
+  section "Scenario 3: Something Is Wrong ($region)"
   echo "  API: $api_url"
+  echo "  Namespace: $ns_broken"
 
   # ── Broken adapter verification ──
 
-  section "S3: Broken Adapter"
+  section "$tag: Broken Adapter"
 
-  # Adapter1 pod running
   local adapter1_ready
   adapter1_ready=$(kubectl --context "$CTX_DOGFOOD" get deploy adapter1-hyperfleet-adapter \
-    -n "$NS_BROKEN" -o jsonpath='{.status.readyReplicas}' 2>/dev/null) || adapter1_ready=0
+    -n "$ns_broken" -o jsonpath='{.status.readyReplicas}' 2>/dev/null) || adapter1_ready=0
 
   if [[ "$adapter1_ready" -ge 1 ]]; then
-    pass "[S3] Broken adapter1 pod running"
+    pass "[$tag] Broken adapter1 pod running"
   else
-    fail "[S3] Broken adapter1 pod not ready"
+    fail "[$tag] Broken adapter1 pod not ready"
   fi
 
-  # Verify adapter1 is using the broken config by checking the configmap
   local configmap_data
   configmap_data=$(kubectl --context "$CTX_DOGFOOD" get configmap adapter1-hyperfleet-adapter-config \
-    -n "$NS_BROKEN" -o jsonpath='{.data.adapter-config\.yaml}' 2>/dev/null) || configmap_data=""
+    -n "$ns_broken" -o jsonpath='{.data.adapter-config\.yaml}' 2>/dev/null) || configmap_data=""
 
   if echo "$configmap_data" | grep -q "adapter1" 2>/dev/null; then
-    pass "[S3] Adapter1 config deployed"
+    pass "[$tag] Adapter1 config deployed"
   else
-    warn "[S3] Could not verify adapter1 config content"
+    warn "[$tag] Could not verify adapter1 config content"
   fi
 
-  # Verify broken task config is active by checking the task configmap for the broken URL
   local task_config_data
   task_config_data=$(kubectl --context "$CTX_DOGFOOD" get configmap adapter1-hyperfleet-adapter-task \
-    -n "$NS_BROKEN" -o jsonpath='{.data.task-config\.yaml}' 2>/dev/null) || task_config_data=""
+    -n "$ns_broken" -o jsonpath='{.data.task-config\.yaml}' 2>/dev/null) || task_config_data=""
 
   if echo "$task_config_data" | grep -q "clusters-BROKEN" 2>/dev/null; then
-    pass "[S3] Broken precondition URL (/clusters-BROKEN/) active in task config"
+    pass "[$tag] Broken precondition URL (/clusters-BROKEN/) active in task config"
   else
-    fail "[S3] Broken precondition URL not found in task config"
+    fail "[$tag] Broken precondition URL not found in task config"
   fi
 
   # ── Pre-seeded stuck clusters ──
 
-  section "S3: Pre-seeded Stuck Clusters"
+  section "$tag: Pre-seeded Stuck Clusters"
 
   local total_broken
   total_broken=$(curl -s --max-time 5 "${api_url}/api/hyperfleet/v1/clusters" 2>/dev/null \
     | jq '.total // 0') || total_broken=0
 
   if [[ "$total_broken" -ge 2 ]]; then
-    pass "[S3] Pre-seeded clusters exist ($total_broken found)"
+    pass "[$tag] Pre-seeded clusters exist ($total_broken found)"
   else
-    fail "[S3] Expected >= 2 pre-seeded clusters, found $total_broken"
+    fail "[$tag] Expected >= 2 pre-seeded clusters, found $total_broken"
   fi
 
-  # Check they are stuck (Reconciled=False)
   local stuck_count
   stuck_count=$(curl -s --max-time 5 "${api_url}/api/hyperfleet/v1/clusters" 2>/dev/null \
     | jq '[.items[]? | select(.status.conditions[]? | select(.type=="Reconciled" and .status=="False"))] | length') || stuck_count=0
 
   if [[ "$stuck_count" -ge 2 ]]; then
-    pass "[S3] $stuck_count clusters stuck at Reconciled=False"
+    pass "[$tag] $stuck_count clusters stuck at Reconciled=False"
   else
-    fail "[S3] Only $stuck_count clusters stuck (expected >= 2)"
+    fail "[$tag] Only $stuck_count clusters stuck (expected >= 2)"
   fi
 
   # ── New cluster stays stuck ──
 
-  section "S3: New Cluster Stays Stuck"
+  section "$tag: New Cluster Stays Stuck"
 
-  # Clean up stale test clusters
   cleanup_stale "$api_url" "scenario3-"
 
   local broken_id
   broken_id=$(create_cluster "$api_url" "scenario3-test-${DATE_SUFFIX}") || true
 
   if [[ -n "$broken_id" ]]; then
-    pass "[S3] Test cluster created on broken API (id=${broken_id:0:12}...)"
+    pass "[$tag] Test cluster created on broken API (id=${broken_id:0:12}...)"
   else
-    fail "[S3] Failed to create test cluster on broken API"
+    fail "[$tag] Failed to create test cluster on broken API"
     return
   fi
 
-  # Wait 30s and verify it stays stuck
   echo "  Waiting 30s to confirm cluster stays stuck..."
   sleep 30
 
@@ -681,14 +689,14 @@ test_scenario_3() {
     | jq -r '.status.conditions[]? | select(.type=="Reconciled") | .status // "unknown"') || broken_reconciled="unknown"
 
   if [[ "$broken_reconciled" == "False" ]]; then
-    pass "[S3] Test cluster stays Reconciled=False after 30s (stuck as expected)"
+    pass "[$tag] Test cluster stays Reconciled=False after 30s (stuck as expected)"
   else
-    fail "[S3] Test cluster is Reconciled=$broken_reconciled (expected False, should be stuck)"
+    fail "[$tag] Test cluster is Reconciled=$broken_reconciled (expected False, should be stuck)"
   fi
 
   # ── Status observability ──
 
-  section "S3: Status Observability"
+  section "$tag: Status Observability"
 
   local broken_statuses
   broken_statuses=$(curl -s --max-time 5 \
@@ -697,42 +705,47 @@ test_scenario_3() {
   local broken_status_count
   broken_status_count=$(echo "$broken_statuses" | jq '.total // 0') || broken_status_count=0
 
-  # adapter1 should be reporting failure or not reporting at all
-  # When the precondition fails, adapter1 never reaches post-actions and may not report status
   local adapter1_reported
   adapter1_reported=$(echo "$broken_statuses" \
     | jq '[.items[]? | select(.adapter=="adapter1")] | length') || adapter1_reported=0
 
   if [[ "$adapter1_reported" -eq 0 ]]; then
-    pass "[S3] Adapter1 has not reported status (broken precondition prevents reporting)"
+    pass "[$tag] Adapter1 has not reported status (broken precondition prevents reporting)"
   else
     local adapter1_health
     adapter1_health=$(echo "$broken_statuses" \
       | jq -r '.items[]? | select(.adapter=="adapter1") | .conditions[]? | select(.type=="Health") | .status // "unknown"') || adapter1_health="unknown"
     if [[ "$adapter1_health" == "False" || "$adapter1_health" == "Unknown" ]]; then
-      pass "[S3] Adapter1 reports Health=$adapter1_health (broken as expected)"
+      pass "[$tag] Adapter1 reports Health=$adapter1_health (broken as expected)"
     else
-      fail "[S3] Adapter1 reports Health=$adapter1_health (expected False, Unknown, or no report)"
+      fail "[$tag] Adapter1 reports Health=$adapter1_health (expected False, Unknown, or no report)"
     fi
   fi
 
-  # adapter2 should still be reporting normally
   local adapter2_available
   adapter2_available=$(echo "$broken_statuses" \
     | jq -r '.items[]? | select(.adapter=="adapter2") | .conditions[]? | select(.type=="Available") | .status // "missing"') || adapter2_available="missing"
 
   if [[ "$adapter2_available" == "True" ]]; then
-    pass "[S3] Adapter2 still reports Available=True (not broken)"
+    pass "[$tag] Adapter2 still reports Available=True (not broken)"
   elif [[ "$adapter2_available" == "missing" ]]; then
-    warn "[S3] Adapter2 status not yet reported (may need more time)"
+    warn "[$tag] Adapter2 status not yet reported (may need more time)"
   else
-    warn "[S3] Adapter2 reports Available=$adapter2_available"
+    warn "[$tag] Adapter2 reports Available=$adapter2_available"
   fi
 
-  # Cleanup test cluster (leave pre-seeded ones)
   if [[ "$CLEANUP" == true ]]; then
     cleanup_cluster "$api_url" "$broken_id"
     echo "  Test cluster cleaned up (pre-seeded stuck clusters preserved)"
+  fi
+}
+
+test_scenario_3() {
+  if [[ "$REGION_FILTER" == "all" || "$REGION_FILTER" == "americas" ]]; then
+    _test_scenario_3_region "$NS_BROKEN_AMERICAS" "americas"
+  fi
+  if [[ "$REGION_FILTER" == "all" || "$REGION_FILTER" == "europe" ]]; then
+    _test_scenario_3_region "$NS_BROKEN_EUROPE" "europe"
   fi
 }
 
@@ -1149,7 +1162,7 @@ test_scenario_5() {
   # Create a us-east cluster -- should be picked up by the regional sentinel
   local cluster_id
   cluster_id=$(curl -sS -w "" -X POST \
-    -H "Content-Type: application/json" \
+    -H "Content-Type: application/json" ${API_IDENTITY_HEADER} \
     "${api_url}/api/hyperfleet/v1/clusters" \
     -d "{\"name\":\"scenario5-test-${DATE_SUFFIX}\",\"kind\":\"Cluster\",\"spec\":{\"provider\":\"gcp\",\"region\":\"us-east1\"},\"labels\":{\"region\":\"us-east\",\"environment\":\"hackathon\"}}" \
     --connect-timeout 5 --max-time 15 2>/dev/null \
@@ -1212,6 +1225,7 @@ echo "════════════════════════�
 echo "  Timeout: ${RECONCILE_TIMEOUT}s"
 echo "  Cleanup: ${CLEANUP}"
 echo "  Scenarios: ${SCENARIO_FILTER}"
+echo "  Region: ${REGION_FILTER}"
 
 check_prereqs
 

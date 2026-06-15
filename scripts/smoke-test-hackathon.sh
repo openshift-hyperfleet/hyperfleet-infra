@@ -8,10 +8,12 @@ CTX_BUILD="gke_hcm-hyperfleet_us-central1-a_hyperfleet-dev-hackathon-build"
 CTX_OPERATE="gke_hcm-hyperfleet_us-central1-a_hyperfleet-dev-hackathon-operate"
 
 NS_HEALTHY="hyperfleet-healthy"
-NS_BROKEN="hyperfleet-broken"
+NS_BROKEN_AMERICAS="hyperfleet-broken-americas"
+NS_BROKEN_EUROPE="hyperfleet-broken-europe"
 NS_HYPERFLEET="hyperfleet"
 NS_MONITORING="monitoring"
 
+API_IDENTITY_HEADER="-H X-HyperFleet-Identity:smoke-test@redhat.com"
 API_PORT=8000
 RECONCILE_TIMEOUT=120
 SMOKE_CLUSTER_NAME="smoke-test-$(date +%Y%m%d)"
@@ -291,7 +293,7 @@ test_dogfood() {
       "${api_healthy}/api/hyperfleet/v1/clusters?name=${SMOKE_CLUSTER_NAME}" 2>/dev/null \
       | jq -r '.items[0].id // empty')
     if [[ -n "$stale_id" ]]; then
-      curl -s -X DELETE --max-time 10 \
+      curl -s -X DELETE --max-time 10 ${API_IDENTITY_HEADER} \
         "${api_healthy}/api/hyperfleet/v1/clusters/${stale_id}" &>/dev/null || true
       sleep 2
     fi
@@ -300,7 +302,7 @@ test_dogfood() {
     local create_status
     create_status=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 \
       -X POST "${api_healthy}/api/hyperfleet/v1/clusters" \
-      -H "Content-Type: application/json" \
+      -H "Content-Type: application/json" ${API_IDENTITY_HEADER} \
       -d "{
         \"name\": \"${SMOKE_CLUSTER_NAME}\",
         \"kind\": \"Cluster\",
@@ -355,7 +357,7 @@ test_dogfood() {
 
         # Cleanup
         if [[ "$CLEANUP" == true ]]; then
-          curl -s -X DELETE --max-time 10 \
+          curl -s -X DELETE --max-time 10 ${API_IDENTITY_HEADER} \
             "${api_healthy}/api/hyperfleet/v1/clusters/${cluster_id}" &>/dev/null || true
           echo "  Test cluster cleaned up"
         else
@@ -369,49 +371,52 @@ test_dogfood() {
     fi
   fi
 
-  # ── Broken deployment ──
-  section "Cluster 1: Broken Deployment ($NS_BROKEN)"
-  test_common_infra "$ctx" "$NS_BROKEN" "dogfood/broken" 8
+  # ── Broken deployments (per-region) ──
+  local broken_ns broken_label
+  for broken_ns in "$NS_BROKEN_AMERICAS" "$NS_BROKEN_EUROPE"; do
+    broken_label="dogfood/${broken_ns#hyperfleet-}"
 
-  # Check adapter1 is using the broken config (adapter1-broken)
-  local adapter1_broken_logs
-  adapter1_broken_logs=$(kubectl --context "$ctx" logs deploy/adapter1-hyperfleet-adapter \
-    -n "$NS_BROKEN" --tail=20 2>/dev/null) || adapter1_broken_logs=""
+    section "Cluster 1: Broken Deployment ($broken_ns)"
+    test_common_infra "$ctx" "$broken_ns" "$broken_label" 8
 
-  if echo "$adapter1_broken_logs" | grep -q "clusters-BROKEN"; then
-    pass "[dogfood/broken] adapter1 is using broken precondition URL (/clusters-BROKEN/)"
-  elif echo "$adapter1_broken_logs" | grep -qi "error\|failed\|404"; then
-    pass "[dogfood/broken] adapter1 is reporting errors (broken config active)"
-  else
-    fail "[dogfood/broken] adapter1 does not appear to be using the broken config"
-  fi
+    local adapter1_broken_logs
+    adapter1_broken_logs=$(kubectl --context "$ctx" logs deploy/adapter1-hyperfleet-adapter \
+      -n "$broken_ns" --tail=20 2>/dev/null) || adapter1_broken_logs=""
 
-  # Check if broken clusters are actually stuck
-  local api_broken
-  api_broken=$(get_api_url "$ctx" "$NS_BROKEN" 2>/dev/null) || true
-
-  if [[ -n "$api_broken" ]]; then
-    local total_broken
-    total_broken=$(curl -s --max-time 10 "${api_broken}/api/hyperfleet/v1/clusters" 2>/dev/null \
-      | jq '.total // 0') || total_broken=0
-
-    if [[ "$total_broken" -eq 0 ]]; then
-      warn "[dogfood/broken] No clusters in broken deployment -- run seed-hackathon-clusters.sh with --broken flag"
+    if echo "$adapter1_broken_logs" | grep -q "clusters-BROKEN"; then
+      pass "[$broken_label] adapter1 is using broken precondition URL (/clusters-BROKEN/)"
+    elif echo "$adapter1_broken_logs" | grep -qi "error\|failed\|404"; then
+      pass "[$broken_label] adapter1 is reporting errors (broken config active)"
     else
-      local stuck_clusters
-      stuck_clusters=$(curl -s --max-time 10 "${api_broken}/api/hyperfleet/v1/clusters" 2>/dev/null \
-        | jq '[.items[] | select(
-            (.status.conditions | length == 0) or
-            (.status.conditions[]? | select(.type=="Reconciled" and .status!="True"))
-          )] | length') || stuck_clusters=0
+      fail "[$broken_label] adapter1 does not appear to be using the broken config"
+    fi
 
-      if [[ "$stuck_clusters" -gt 0 ]]; then
-        pass "[dogfood/broken] $stuck_clusters/$total_broken cluster(s) stuck (not reconciled)"
+    local api_broken
+    api_broken=$(get_api_url "$ctx" "$broken_ns" 2>/dev/null) || true
+
+    if [[ -n "$api_broken" ]]; then
+      local total_broken
+      total_broken=$(curl -s --max-time 10 "${api_broken}/api/hyperfleet/v1/clusters" 2>/dev/null \
+        | jq '.total // 0') || total_broken=0
+
+      if [[ "$total_broken" -eq 0 ]]; then
+        warn "[$broken_label] No clusters in broken deployment -- run seed-hackathon-clusters.sh with --broken-${broken_ns#hyperfleet-broken-} flag"
       else
-        fail "[dogfood/broken] All $total_broken clusters are Reconciled=True -- broken deployment is not broken"
+        local stuck_clusters
+        stuck_clusters=$(curl -s --max-time 10 "${api_broken}/api/hyperfleet/v1/clusters" 2>/dev/null \
+          | jq '[.items[] | select(
+              (.status.conditions | length == 0) or
+              (.status.conditions[]? | select(.type=="Reconciled" and .status!="True"))
+            )] | length') || stuck_clusters=0
+
+        if [[ "$stuck_clusters" -gt 0 ]]; then
+          pass "[$broken_label] $stuck_clusters/$total_broken cluster(s) stuck (not reconciled)"
+        else
+          fail "[$broken_label] All $total_broken clusters are Reconciled=True -- broken deployment is not broken"
+        fi
       fi
     fi
-  fi
+  done
 
   # ── Monitoring ──
   section "Cluster 1: Monitoring"
@@ -443,18 +448,31 @@ test_dogfood() {
   # ── Isolation ──
   section "Cluster 1: Isolation"
 
-  local ip_healthy ip_broken
+  local ip_healthy ip_broken_americas ip_broken_europe
   ip_healthy=$(kubectl --context "$ctx" get svc hyperfleet-api -n "$NS_HEALTHY" \
     -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null) || ip_healthy=""
-  ip_broken=$(kubectl --context "$ctx" get svc hyperfleet-api -n "$NS_BROKEN" \
-    -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null) || ip_broken=""
+  ip_broken_americas=$(kubectl --context "$ctx" get svc hyperfleet-api -n "$NS_BROKEN_AMERICAS" \
+    -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null) || ip_broken_americas=""
+  ip_broken_europe=$(kubectl --context "$ctx" get svc hyperfleet-api -n "$NS_BROKEN_EUROPE" \
+    -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null) || ip_broken_europe=""
 
-  if [[ -n "$ip_healthy" && -n "$ip_broken" && "$ip_healthy" != "$ip_broken" ]]; then
-    pass "[dogfood] Healthy ($ip_healthy) and Broken ($ip_broken) have different API IPs"
-  elif [[ "$ip_healthy" == "$ip_broken" ]]; then
-    fail "[dogfood] Healthy and Broken share the same API IP -- not isolated"
-  else
+  local all_ips_unique=true
+  if [[ -z "$ip_healthy" || -z "$ip_broken_americas" || -z "$ip_broken_europe" ]]; then
     fail "[dogfood] Could not determine API IPs for isolation check"
+    all_ips_unique=false
+  else
+    if [[ "$ip_healthy" == "$ip_broken_americas" || "$ip_healthy" == "$ip_broken_europe" ]]; then
+      fail "[dogfood] Healthy shares API IP with a broken deployment -- not isolated"
+      all_ips_unique=false
+    fi
+    if [[ "$ip_broken_americas" == "$ip_broken_europe" ]]; then
+      fail "[dogfood] Broken Americas and Europe share the same API IP -- not isolated"
+      all_ips_unique=false
+    fi
+  fi
+
+  if [[ "$all_ips_unique" == true ]]; then
+    pass "[dogfood] All 3 deployments have different API IPs (healthy=$ip_healthy, americas=$ip_broken_americas, europe=$ip_broken_europe)"
   fi
 }
 

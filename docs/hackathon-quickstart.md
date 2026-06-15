@@ -8,11 +8,13 @@ A half-day hackathon where you dog-food HyperFleet, break silos, and hunt bugs. 
 
 Three GKE clusters are provisioned, one per scenario group:
 
-| Cluster | Scenarios | What's Running |
-|---------|-----------|---------------|
-| **Dog Food** | 1 (Fresh Eyes), 2 (Reconciliation Loop), 3 (Something Is Wrong) | Full HyperFleet stack. Healthy + broken deployments. |
-| **Build** | 4 (Build Your Own Adapter) | HyperFleet API + sentinels + broker. No adapters — you deploy your own. |
-| **Operate** | 5 (Shard the Sentinel) | Full stack with catch-all sentinel + pre-seeded regional clusters. |
+| Cluster | Scenarios | Namespace | What's Running |
+|---------|-----------|-----------|---------------|
+| **Dog Food** | 1 (Fresh Eyes), 2 (Reconciliation Loop) | `hyperfleet-healthy` | Full HyperFleet stack. Healthy deployment. |
+| **Dog Food** | 3 (Something Is Wrong — Americas) | `hyperfleet-broken-americas` | Broken adapter1. Isolated per-region. |
+| **Dog Food** | 3 (Something Is Wrong — Europe) | `hyperfleet-broken-europe` | Broken adapter1. Isolated per-region. |
+| **Build** | 4 (Build Your Own Adapter) | `hyperfleet` | HyperFleet API + sentinels + broker. No adapters — you deploy your own. |
+| **Operate** | 5 (Shard the Sentinel) | `hyperfleet` | Full stack with catch-all sentinel + pre-seeded regional clusters. |
 
 ### Access
 
@@ -28,14 +30,14 @@ Your facilitator will provide:
 |---|----------|---------|-------------|
 | 1 | First Cluster, Fresh Eyes | Dog Food (healthy) | Dog-food the API: create clusters, node pools, PATCH, DELETE |
 | 2 | The Reconciliation Loop | Dog Food (healthy) | Trace Sentinel → broker → adapters → status → loop |
-| 3 | Something Is Wrong | Dog Food (broken) | Debug a stuck cluster — one adapter is deliberately broken |
+| 3 | Something Is Wrong | Dog Food (your region's broken namespace) | Debug a stuck cluster — one adapter is deliberately broken |
 | 4 | Build Your Own Adapter | Build | Write adapter config from the docs, deploy via Helm, join the loop |
 | 5 | Shard the Sentinel | Operate | Scale down the catch-all, deploy region-specific sentinels |
 
 ## For Scenario 4: Building an Adapter
 
 Skeleton configs are at:
-```
+```text
 helmfile/configs/hackathon/adapters/skeleton/
 ├── adapter-config.yaml           # Adapter identity and client connections
 └── adapter-task-config.yaml      # Task logic: params, preconditions, resources, status
@@ -60,7 +62,7 @@ helm upgrade --install my-adapter hyperfleet-adapter/hyperfleet-adapter \
 ## For Scenario 5: Sharding the Sentinel
 
 Skeleton config is at:
-```
+```text
 helmfile/configs/hackathon/sentinels/skeleton/
 └── sentinel-values.yaml          # Sentinel identity, resource type, selectors
 ```
@@ -83,7 +85,7 @@ No time boxing — move at your own pace. If you finish, pick up another scenari
 
 Post to the Slack channel using this format:
 
-```
+```text
 **Type:** Bug / Paper Cut
 **Area:** [Component/Adapter/Flow]
 **Severity:** Critical / Major / Minor / Cosmetic

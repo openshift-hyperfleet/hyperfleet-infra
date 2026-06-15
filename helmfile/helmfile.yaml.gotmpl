@@ -55,12 +55,18 @@ environments:
         serviceType: {{ env "API_SERVICE_TYPE" | default "LoadBalancer" }}
       - environments/hackathon-dogfood/adapter-configs.yaml.gotmpl
       - environments/hackathon-dogfood/sentinel-configs.yaml
-  hackathon-broken:
+  hackathon-broken-americas:
     values:
       - brokerType: rabbitmq
         serviceType: {{ env "API_SERVICE_TYPE" | default "LoadBalancer" }}
-      - environments/hackathon-broken/adapter-configs.yaml.gotmpl
-      - environments/hackathon-broken/sentinel-configs.yaml
+      - environments/hackathon-broken-americas/adapter-configs.yaml.gotmpl
+      - environments/hackathon-broken-americas/sentinel-configs.yaml
+  hackathon-broken-europe:
+    values:
+      - brokerType: rabbitmq
+        serviceType: {{ env "API_SERVICE_TYPE" | default "LoadBalancer" }}
+      - environments/hackathon-broken-europe/adapter-configs.yaml.gotmpl
+      - environments/hackathon-broken-europe/sentinel-configs.yaml
   hackathon-build:
     values:
       - brokerType: rabbitmq

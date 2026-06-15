@@ -1,26 +1,31 @@
 #!/usr/bin/env bash
 # Seeds the HyperFleet API with clusters for the hackathon.
 #
-# Usage: ./scripts/seed-hackathon-clusters.sh [API_URL] [--broken BROKEN_API_URL]
+# Usage: ./scripts/seed-hackathon-clusters.sh [API_URL] [--broken-americas URL] [--broken-europe URL]
 #
 # Default API_URL: http://localhost:8000 (use kubectl port-forward first)
 #
 # Creates:
 #   - 12 region-labeled clusters for Scenario 5 (Sentinel sharding)
-#   - 2 clusters on the broken API for Scenario 3 (Something Is Wrong)
+#   - 2 clusters on each broken API for Scenario 3 (per-region isolation)
 
 set -euo pipefail
 
 API_URL="${1:-http://localhost:8000}"
 API_BASE="${API_URL}/api/hyperfleet/v1"
-BROKEN_API_URL=""
+BROKEN_AMERICAS_API_URL=""
+BROKEN_EUROPE_API_URL=""
 
-# Parse --broken flag
+# Parse flags
 shift || true
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --broken)
-      BROKEN_API_URL="$2"
+    --broken-americas)
+      BROKEN_AMERICAS_API_URL="$2"
+      shift 2
+      ;;
+    --broken-europe)
+      BROKEN_EUROPE_API_URL="$2"
       shift 2
       ;;
     *)
@@ -37,6 +42,7 @@ create_cluster() {
   local status
   status=$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
     -H "Content-Type: application/json" \
+    -H "X-HyperFleet-Identity: hackathon-facilitator@redhat.com" \
     "${api_base}/clusters" \
     -d "{
       \"name\": \"${name}\",
@@ -75,32 +81,44 @@ done
 echo ""
 echo "Done. ${CREATED} regional clusters seeded."
 
-# ── Scenario 3: Stuck clusters on the broken API ──
+# ── Scenario 3: Stuck clusters on the broken APIs (per-region) ──
 
-if [[ -n "$BROKEN_API_URL" ]]; then
-  BROKEN_BASE="${BROKEN_API_URL}/api/hyperfleet/v1"
+seed_broken_region() {
+  local region="$1" api_url="$2"
+  local broken_base="${api_url}/api/hyperfleet/v1"
   echo ""
-  echo "Seeding broken clusters via ${BROKEN_BASE}..."
+  echo "Seeding broken clusters for ${region} via ${broken_base}..."
   echo ""
 
-  BROKEN_CREATED=0
-  BROKEN_CLUSTERS=("stuck-cluster-alpha" "stuck-cluster-beta")
+  local broken_created=0
+  local broken_clusters=("stuck-cluster-alpha" "stuck-cluster-beta")
 
-  for name in "${BROKEN_CLUSTERS[@]}"; do
-    labels="{\"environment\": \"hackathon\", \"scenario\": \"debugging\", \"purpose\": \"stuck-cluster\"}"
+  for name in "${broken_clusters[@]}"; do
+    local labels="{\"environment\": \"hackathon\", \"scenario\": \"debugging\", \"purpose\": \"stuck-cluster\", \"region\": \"${region}\"}"
 
-    if create_cluster "$BROKEN_BASE" "$name" "Cluster" "$labels"; then
-      BROKEN_CREATED=$((BROKEN_CREATED + 1))
+    if create_cluster "$broken_base" "$name" "Cluster" "$labels"; then
+      broken_created=$((broken_created + 1))
     fi
   done
 
   echo ""
-  echo "Done. ${BROKEN_CREATED} broken clusters seeded."
+  echo "Done. ${broken_created} broken clusters seeded for ${region}."
+}
+
+if [[ -n "$BROKEN_AMERICAS_API_URL" ]]; then
+  seed_broken_region "americas" "$BROKEN_AMERICAS_API_URL"
+fi
+
+if [[ -n "$BROKEN_EUROPE_API_URL" ]]; then
+  seed_broken_region "europe" "$BROKEN_EUROPE_API_URL"
 fi
 
 echo ""
 echo "Verify with:"
 echo "  curl ${API_BASE}/clusters | jq '.total'"
-if [[ -n "$BROKEN_API_URL" ]]; then
-  echo "  curl ${BROKEN_BASE}/clusters | jq '.total'"
+if [[ -n "$BROKEN_AMERICAS_API_URL" ]]; then
+  echo "  curl ${BROKEN_AMERICAS_API_URL}/api/hyperfleet/v1/clusters | jq '.total'"
+fi
+if [[ -n "$BROKEN_EUROPE_API_URL" ]]; then
+  echo "  curl ${BROKEN_EUROPE_API_URL}/api/hyperfleet/v1/clusters | jq '.total'"
 fi

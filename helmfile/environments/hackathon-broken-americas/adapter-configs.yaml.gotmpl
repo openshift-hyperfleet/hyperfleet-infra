@@ -1,7 +1,8 @@
-# Hackathon — Cluster 1: "Dog Food" (Broken deployment)
+# Hackathon — Cluster 1: "Dog Food" (Broken deployment — Americas region)
 # Scenario 3 (Something Is Wrong)
 # adapter1 uses a broken precondition URL (/clusters-BROKEN/) causing HTTP 404 errors.
 # This makes clusters stuck in Reconciled=False because adapter1 never completes.
+# Isolated per-region to prevent cross-team interference during the hackathon.
 adapters:
   # BROKEN: adapter1 has a broken precondition URL — intentional for Scenario 3
   - name: adapter1
