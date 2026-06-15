@@ -6,6 +6,9 @@ image:
   tag: {{ env "ADAPTER_IMAGE_TAG" | default "latest" }}
   pullPolicy: {{ env "IMAGE_PULL_POLICY" | default "IfNotPresent" }}
 
+tracing:
+  enabled: true
+
 adapterConfig:
   log:
     level: debug

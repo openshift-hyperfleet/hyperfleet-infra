@@ -9,7 +9,15 @@ image:
 service:
   type: {{ .Values.serviceType }}
 
+tracing:
+  enabled: true
+
 config:
+  logging:
+    otel:
+      enabled: true
+  server:
+    identity_header: "X-HyperFleet-Identity"
   adapters:
     required:
       cluster:

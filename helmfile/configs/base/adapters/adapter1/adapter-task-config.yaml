@@ -183,4 +183,6 @@ post:
         headers:
           - name: "Content-Type"
             value: "application/json"
+          - name: "X-HyperFleet-Identity"
+            value: "adapter1@redhat.com"
         body: "{{ .statusPayload }}"
