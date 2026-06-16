@@ -81,7 +81,7 @@ releases:
       - values/base-api.yaml.gotmpl
 
 {{ range .Values.sentinels }}
-  - name: {{ .name }}
+  - name: sentinel-{{ .name }}
     namespace: {{ $.Values.namespace }}
     chart: hyperfleet-sentinel/hyperfleet-sentinel
     needs:
