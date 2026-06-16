@@ -39,6 +39,12 @@ MAESTRO_CONSUMER ?= cluster1
 MAESTRO_NAMESPACE ?= maestro
 KUBECONFIG ?= $(HOME)/.kube/config
 
+CLEANER_NAMESPACE    ?= $(NAMESPACE)
+CLEANER_SCHEDULE     ?= 0 * * * *
+CLEANER_LABEL_SELECTOR ?= hyperfleet.io/cluster-id
+CLEANER_AGE_MINUTES  ?= 180
+CLEANER_MAESTRO_URL  ?= http://maestro.$(MAESTRO_NAMESPACE).svc.cluster.local:8000
+
 # ==== Terraform Targets ====
 .PHONY: install-terraform
 install-terraform: check-terraform check-tf-files ## Run Terraform init and apply
@@ -231,6 +237,24 @@ uninstall-hyperfleet-sentinels: check-kubectl-context ## Uninstall Hyperfleet Se
 uninstall-hyperfleet-adapters: check-kubectl-context ## Uninstall Hyperfleet Adapters
 	helmfile -f helmfile/helmfile.yaml.gotmpl -e $(HELMFILE_ENV) -l component=adapter destroy
 
+
+# ==== Namespace Cleaner Targets ====
+.PHONY: install-cleaner
+install-cleaner: check-helm check-kubectl ## Install namespace cleaner CronJob (CLEANER_SCHEDULE, CLEANER_LABEL_SELECTOR, CLEANER_AGE_MINUTES)
+	$(call check-namespace,$(CLEANER_NAMESPACE))
+	helm upgrade --install namespace-cleaner $(HELM_DIR)/namespace-cleaner \
+		--namespace $(CLEANER_NAMESPACE) \
+		--set-string "schedule=$(CLEANER_SCHEDULE)" \
+		--set-string "labelSelector=$(CLEANER_LABEL_SELECTOR)" \
+		--set "ageMinutes=$(CLEANER_AGE_MINUTES)" \
+		--set "maestroURL=$(CLEANER_MAESTRO_URL)" \
+		--wait
+	@echo "OK: namespace cleaner installed in namespace $(CLEANER_NAMESPACE)"
+
+.PHONY: uninstall-cleaner
+uninstall-cleaner: check-helm check-kubectl ## Uninstall namespace cleaner CronJob
+	helm uninstall namespace-cleaner --namespace $(CLEANER_NAMESPACE) || true
+	@echo "OK: namespace cleaner uninstalled"
 
 # ==== Prerequisite/Utility Targets ====
 .PHONY: check-helm

@@ -124,6 +124,13 @@ Configuration precedence (highest to lowest):
 | `make generate-rabbitmq-values` | Generate RabbitMQ broker Helm values (`HELMFILE_ENV=kind` only) |
 | `make clean-generated` | Remove all generated value directories |
 
+### Namespace Cleaner
+
+| Target | Description |
+|--------|-------------|
+| `make install-cleaner` | Install namespace cleaner CronJob (configurable via `CLEANER_*` variables) |
+| `make uninstall-cleaner` | Uninstall namespace cleaner CronJob |
+
 ### Validation / CI
 
 | Target | Description |
@@ -158,6 +165,11 @@ Configuration precedence (highest to lowest):
 | `KIND_CLUSTER_NAME` | N/A | `kind` | |
 | `PROJECTS_DIR` | N/A | `~/openshift-hyperfleet` | Parent dir for sibling repos (image builds) |
 | BUILD_IMAGES | N/A | true | Set to false to skip image builds |
+| `CLEANER_NAMESPACE` | `$(NAMESPACE)` | `$(NAMESPACE)` | Namespace to install the cleaner into |
+| `CLEANER_SCHEDULE` | `0 * * * *` | `0 * * * *` | Cron schedule for the cleaner job |
+| `CLEANER_LABEL_SELECTOR` | `hyperfleet.io/cluster-id` | `hyperfleet.io/cluster-id` | Label selector to identify orphan namespaces |
+| `CLEANER_AGE_MINUTES` | `180` | `180` | Minimum age (minutes) before a namespace is eligible for cleanup |
+| `CLEANER_MAESTRO_URL` | `http://maestro.$(MAESTRO_NAMESPACE).svc.cluster.local:8000` | `http://maestro.$(MAESTRO_NAMESPACE).svc.cluster.local:8000` | Maestro API URL used by the cleaner |
 
 ## Repository Structure
 

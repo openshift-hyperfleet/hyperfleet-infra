@@ -1,0 +1,47 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "namespace-cleaner.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "namespace-cleaner.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            {{- include "namespace-cleaner.selectorLabels" . | nindent 12 }}
+        spec:
+          serviceAccountName: {{ include "namespace-cleaner.fullname" . }}
+          restartPolicy: OnFailure
+          volumes:
+          - name: script
+            configMap:
+              name: {{ include "namespace-cleaner.fullname" . }}
+              defaultMode: 0755
+          containers:
+          - name: cleaner
+            image: "{{ .Values.image.repository }}"
+            imagePullPolicy: {{ .Values.image.pullPolicy }}
+            env:
+            - name: LABEL_SELECTOR
+              value: {{ .Values.labelSelector | quote }}
+            - name: AGE_MINUTES
+              value: {{ .Values.ageMinutes | quote }}
+            - name: MAESTRO_URL
+              value: {{ .Values.maestroURL | quote }}
+            - name: DRY_RUN
+              value: {{ .Values.dryRun | quote }}
+            resources:
+              {{- toYaml .Values.resources | nindent 14 }}
+            volumeMounts:
+            - name: script
+              mountPath: /scripts
+            command:
+            - /bin/bash
+            - /scripts/namespace-cleaner.sh
