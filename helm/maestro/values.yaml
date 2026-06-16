@@ -10,8 +10,8 @@ server:
 
   server:
     annotations:
-      # Prevent the cluster autoscaler from evicting the maestro server pod during scale-down
       cluster-autoscaler.kubernetes.io/safe-to-evict: "false"
+    priorityClassName: hyperfleet-critical
     grpc:
       tls:
         enabled: false
@@ -36,6 +36,7 @@ server:
   postgresql:
     podAnnotations:
       cluster-autoscaler.kubernetes.io/safe-to-evict: "false"
+    priorityClassName: hyperfleet-critical
     enabled: true
     database:
       name: maestro
@@ -51,6 +52,7 @@ server:
   mosquitto:
     podAnnotations:
       cluster-autoscaler.kubernetes.io/safe-to-evict: "false"
+    priorityClassName: hyperfleet-critical
     enabled: true
     service:
       name: maestro-mqtt
@@ -74,6 +76,8 @@ agent:
 
   podAnnotations:
     cluster-autoscaler.kubernetes.io/safe-to-evict: "false"
+
+  priorityClassName: hyperfleet-critical
 
   consumerName: "cluster1"
   cloudeventsClientId: "cluster1-work-agent"

@@ -1,0 +1,7 @@
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: hyperfleet-critical
+value: 1000000000
+globalDefault: false
+description: "HyperFleet critical infrastructure pods — above default but below system-critical"

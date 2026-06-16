@@ -112,8 +112,13 @@ install-applied-manifest-crd: check-kubectl ## Install AppliedManifestWorks CRD 
 	@kubectl apply -f https://raw.githubusercontent.com/open-cluster-management-io/api/main/work/v1/0000_01_work.open-cluster-management.io_appliedmanifestworks.crd.yaml
 	@echo "OK: AppliedManifestWorks CRD installed"
 
+.PHONY: install-priority-classes
+install-priority-classes: check-kubectl ## Install PriorityClasses for critical infrastructure pods
+	@kubectl apply -f "$(MANIFESTS_DIR)/priority-classes.yaml"
+	@echo "OK: PriorityClasses applied"
+
 .PHONY: install-maestro
-install-maestro: check-helm check-kubectl check-maestro-namespace install-applied-manifest-crd ## Install Maestro (server + agent)
+install-maestro: check-helm check-kubectl check-maestro-namespace install-applied-manifest-crd install-priority-classes ## Install Maestro (server + agent)
 	helm dependency update $(HELM_DIR)/maestro
 	@echo "Installing Maestro..."
 	if ! helm upgrade --install $(DRY_RUN_FLAG) $(MAESTRO_NAMESPACE)-maestro $(HELM_DIR)/maestro \
@@ -437,7 +442,7 @@ health-check-maestro: check-kubectl ## Verify Maestro Components
 	@echo "OK: all components healthy"
 
 .PHONY: ci-test
-ci-test: install-terraform get-credentials install-maestro create-maestro-consumer health-check-maestro ## Ci test: install terraform + get credentials + install maestro + create maestro consumer + health check maestro
+ci-test: install-terraform get-credentials install-priority-classes install-maestro create-maestro-consumer health-check-maestro ## Ci test: install terraform + get credentials + install maestro + create maestro consumer + health check maestro
 
 # CI-CLEANUP
 .PHONY: ci-cleanup
@@ -447,14 +452,14 @@ ci-cleanup: uninstall-maestro destroy-terraform ## Ci cleanup: uninstall maestro
 # Kind targets
 
 .PHONY: local-up-kind
-local-up-kind: create-kind-cluster kind-build-images install-maestro-all generate-rabbitmq-values install-hyperfleet ## Full local kind setup (cluster + images + maestro + hyperfleet)
+local-up-kind: create-kind-cluster kind-build-images install-priority-classes install-maestro-all generate-rabbitmq-values install-hyperfleet ## Full local kind setup (cluster + images + maestro + hyperfleet)
 
 .PHONY: local-down-kind
 local-down-kind: uninstall-hyperfleet uninstall-maestro delete-kind-cluster ## Tear down kind: uninstall all + delete cluster
 
 # GKE targets
 .PHONY: local-up-gcp
-local-up-gcp: install-terraform get-credentials install-maestro-all install-hyperfleet ## Full gke setup (cluster + maestro + hyperfleet)
+local-up-gcp: install-terraform get-credentials install-priority-classes install-maestro-all install-hyperfleet ## Full gke setup (cluster + maestro + hyperfleet)
 
 .PHONY: local-down-gcp
 local-down-gcp: get-credentials uninstall-maestro uninstall-hyperfleet destroy-terraform ## Tear down gke: (cluster + maestro + hyperfleet)
