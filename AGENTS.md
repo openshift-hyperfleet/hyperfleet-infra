@@ -85,10 +85,10 @@ Key variables:
 |----------|------------|--------------|-------|
 | `HELMFILE_ENV` | `gcp` | `kind` | Also `e2e-gcp`, `e2e-kind` |
 | `NAMESPACE` | `hyperfleet` | `hyperfleet-local` | e2e envs use `hyperfleet-e2e[-$USER]` |
-| `REGISTRY` | `registry.ci.openshift.org` | `localhost` | |
+| `REGISTRY` | `quay.io` | `localhost` | |
 | `TF_ENV` | `dev` | N/A | Selects `envs/gke/<TF_ENV>.tfvars` |
 | `BROKER_TYPE` | `googlepubsub` | `rabbitmq` | |
-| `API_IMAGE_TAG` | `latest` | `local` | |
+| `API_IMAGE_TAG` | `dev` | `local` | |
 | `IMAGE_PULL_POLICY` | `Always` | `IfNotPresent` | |
 
 ---

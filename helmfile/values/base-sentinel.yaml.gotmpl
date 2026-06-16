@@ -1,9 +1,9 @@
 # Base values for HyperFleet Sentinel
 
 image:
-  registry: {{ env "REGISTRY" | default "registry.ci.openshift.org" }}
-  repository: {{ env "SENTINEL_REPOSITORY" | default "ci/hyperfleet-sentinel" }}
-  tag: {{ env "SENTINEL_IMAGE_TAG" | default "latest" }}
+  registry: {{ env "REGISTRY" | default "quay.io" }}
+  repository: {{ env "SENTINEL_REPOSITORY" | default "redhat-services-prod/hyperfleet-tenant/hyperfleet/hyperfleet-sentinel" }}
+  tag: {{ env "SENTINEL_IMAGE_TAG" | default "dev" }}
   pullPolicy: {{ env "IMAGE_PULL_POLICY" | default "IfNotPresent" }}
 
 config:

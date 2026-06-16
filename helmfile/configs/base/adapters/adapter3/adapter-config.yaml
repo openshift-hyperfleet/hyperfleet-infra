@@ -1,7 +1,6 @@
 # HyperFleet Adapter deployment configuration for adapter3
 adapter:
   name: adapter3
-  version: "0.2.0"
 
 # Log the full merged configuration after load (default: false)
 debug_config: false

@@ -1,9 +1,9 @@
 # Values that get applied to all adapter charts
 
 image:
-  registry: {{ env "REGISTRY" | default "registry.ci.openshift.org" }}
-  repository: {{ env "ADAPTER_REPOSITORY" | default "ci/hyperfleet-adapter" }}
-  tag: {{ env "ADAPTER_IMAGE_TAG" | default "latest" }}
+  registry: {{ env "REGISTRY" | default "quay.io" }}
+  repository: {{ env "ADAPTER_REPOSITORY" | default "redhat-services-prod/hyperfleet-tenant/hyperfleet/hyperfleet-adapter" }}
+  tag: {{ env "ADAPTER_IMAGE_TAG" | default "dev" }}
   pullPolicy: {{ env "IMAGE_PULL_POLICY" | default "IfNotPresent" }}
 
 adapterConfig:

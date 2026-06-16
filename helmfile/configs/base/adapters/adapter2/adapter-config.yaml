@@ -1,7 +1,6 @@
 # Example HyperFleet Adapter deployment configuration
 adapter:
   name: adapter2
-  version: "0.2.0"
 
 # Log the full merged configuration after load (default: false)
 debug_config: true

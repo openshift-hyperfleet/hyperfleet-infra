@@ -1,9 +1,9 @@
 # Base values for HyperFleet API
 
 image:
-  registry: {{ env "REGISTRY" | default "registry.ci.openshift.org" }}
-  repository: {{ env "API_REPOSITORY" | default "ci/hyperfleet-api" }}
-  tag: {{ env "API_IMAGE_TAG" | default "latest" }}
+  registry: {{ env "REGISTRY" | default "quay.io" }}
+  repository: {{ env "API_REPOSITORY" | default "redhat-services-prod/hyperfleet-tenant/hyperfleet/hyperfleet-api" }}
+  tag: {{ env "API_IMAGE_TAG" | default "dev" }}
   pullPolicy: {{ env "IMAGE_PULL_POLICY" | default "IfNotPresent" }}
 
 service:

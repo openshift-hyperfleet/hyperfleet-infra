@@ -140,13 +140,13 @@ Configuration precedence (highest to lowest):
 | `HELMFILE_ENV` | `gcp` | `kind` | Also `e2e-gcp`, `e2e-kind` |
 | `NAMESPACE` | `hyperfleet` | `hyperfleet-local` | e2e envs use `hyperfleet-e2e[-$USER]` |
 | `MAESTRO_NAMESPACE` | `maestro` | `maestro` | |
-| `REGISTRY` | `registry.ci.openshift.org` | `localhost` | |
-| `API_REPOSITORY` | `ci/hyperfleet-api` | `hyperfleet-api` | |
-| `SENTINEL_REPOSITORY` | `ci/hyperfleet-sentinel` | `hyperfleet-sentinel` | |
-| `ADAPTER_REPOSITORY` | `ci/hyperfleet-adapter` | `hyperfleet-adapter` | |
-| `API_IMAGE_TAG` | `latest` | `local` | |
-| `SENTINEL_IMAGE_TAG` | `latest` | `local` | |
-| `ADAPTER_IMAGE_TAG` | `latest` | `local` | |
+| `REGISTRY` | `quay.io` | `localhost` | |
+| `API_REPOSITORY` | `redhat-services-prod/hyperfleet-tenant/hyperfleet/hyperfleet-api` | `hyperfleet-api` | |
+| `SENTINEL_REPOSITORY` | `redhat-services-prod/hyperfleet-tenant/hyperfleet/hyperfleet-sentinel` | `hyperfleet-sentinel` | |
+| `ADAPTER_REPOSITORY` | `redhat-services-prod/hyperfleet-tenant/hyperfleet/hyperfleet-adapter` | `hyperfleet-adapter` | |
+| `API_IMAGE_TAG` | `dev` | `local` | |
+| `SENTINEL_IMAGE_TAG` | `dev` | `local` | |
+| `ADAPTER_IMAGE_TAG` | `dev` | `local` | |
 | `IMAGE_PULL_POLICY` | `Always` | `IfNotPresent` | |
 | `CHART_ORG` | `openshift-hyperfleet` | `openshift-hyperfleet` | GitHub org for helm-git chart repos |
 | `API_CHART_REF` | `main` | `main` | Git ref for API chart |
