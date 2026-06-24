@@ -8,22 +8,26 @@ metadata:
     hyperfleet.io/cluster-id: "{{ .clusterId }}"
     hyperfleet.io/resource-type: "job"
     app: test-job
+    e2e.hyperfleet.io/run-id: "{{ .e2eRunId }}"
   annotations:
     hyperfleet.io/generation: "{{ .generationSpec }}"
 spec:
   backoffLimit: 0
   template:
+    metadata:
+      labels:
+        e2e.hyperfleet.io/run-id: "{{ .e2eRunId }}"
     spec:
       restartPolicy: Never
       containers:
-      - name: hello-world
-        image: alpine:3.19
-        imagePullPolicy: IfNotPresent
-        command: ["/bin/sh", "-c", "echo 'Hello, World!'"]
-        resources:
-          requests:
-            memory: "32Mi"
-            cpu: "50m"
-          limits:
-            memory: "64Mi"
-            cpu: "100m"
+        - name: hello-world
+          image: alpine:3.19
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-c", "echo 'Hello, World!'"]
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "50m"
+            limits:
+              memory: "64Mi"
+              cpu: "100m"

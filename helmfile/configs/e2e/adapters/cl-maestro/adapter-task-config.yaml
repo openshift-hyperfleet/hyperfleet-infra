@@ -17,6 +17,11 @@ params:
     source: "env.NAMESPACE"
     type: "string"
 
+  - name: "e2eRunId"
+    source: "env.E2E_RUN_ID"
+    type: "string"
+    required: false
+
 # Preconditions with valid operators and CEL expressions
 preconditions:
   - name: "clusterStatus"

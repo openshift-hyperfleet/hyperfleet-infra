@@ -27,6 +27,9 @@ environments:
       - projectId: {{ env "PROJECT_ID" | default "hcm-hyperfleet" }}
         brokerType: googlepubsub
         serviceType: {{ env "API_SERVICE_TYPE" | default "LoadBalancer" }}
+        e2eRunId: {{ env "E2E_RUN_ID" }}
+        labels:
+          e2e.hyperfleet.io/run-id: {{ env "E2E_RUN_ID" }}
       - environments/e2e-gcp/adapter-configs.yaml.gotmpl
       - environments/e2e-gcp/sentinel-configs.yaml
   e2e-kind:
