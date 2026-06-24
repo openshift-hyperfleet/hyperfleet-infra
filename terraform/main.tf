@@ -2,11 +2,14 @@ locals {
   cluster_name         = "hyperfleet-dev-${var.developer_name}"
   kubernetes_namespace = "${var.developer_name}-${var.kubernetes_suffix}"
 
+  ttl_date = formatdate("YYYY-MM-DD", timeadd(plantimestamp(), "120h"))
+
   common_labels = {
-    environment = "dev"
+    environment = var.environment
     owner       = var.developer_name
     managed-by  = "terraform"
     project     = "hyperfleet"
+    ttl         = local.ttl_date
   }
 }
 

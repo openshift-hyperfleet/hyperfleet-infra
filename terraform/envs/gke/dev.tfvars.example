@@ -16,6 +16,11 @@ developer_name     = "CHANGE_THIS"  # Your username (e.g., "your-username")
 kubernetes_suffix  = "default"    # Namespace suffix (allows multiple deployments to share a cluster)
 
 # =============================================================================
+# Environment (dev = subject to lifecycle enforcement, cicd = exempt)
+# =============================================================================
+environment = "dev"
+
+# =============================================================================
 # Cloud Provider
 # =============================================================================
 cloud_provider = "gke"

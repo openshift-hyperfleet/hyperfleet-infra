@@ -226,6 +226,7 @@ Shared clusters (like Prow) have **deletion protection enabled**. To destroy:
 | `node_count` | Number of nodes | `1` |
 | `machine_type` | VM instance type | `e2-standard-4` |
 | `use_spot_vms` | Use Spot VMs for cost savings | `true` |
+| `environment` | Environment label (`dev`, `cicd`). Clusters with `cicd` are exempt from lifecycle enforcement | `dev` |
 | `enable_deletion_protection` | Enable deletion protection for shared clusters | `false` |
 | `use_pubsub` | Use Google Pub/Sub for messaging (instead of RabbitMQ) | `false` |
 | `enable_dead_letter` | Enable dead letter queue for Pub/Sub | `true` |
@@ -483,6 +484,7 @@ terraform/
 ├── modules/
 │   ├── cluster/
 │   │   └── gke/            # GKE cluster module
+│   ├── lifecycle/          # Lifecycle enforcer Cloud Function module
 │   └── pubsub/             # Google Pub/Sub module
 └── envs/
     └── gke/
@@ -491,7 +493,7 @@ terraform/
 
 ## Shared Infrastructure
 
-The `shared/` directory contains Terraform for the VPC and networking that developer clusters use.
+The `shared/` directory contains Terraform for the VPC, networking, and project-wide services that developer clusters use.
 
 **This only needs to be deployed once per GCP project.**
 
@@ -506,6 +508,8 @@ The `shared/` directory contains Terraform for the VPC and networking that devel
 | Firewall | `allow-internal` | Allow traffic within VPC |
 | Firewall | `allow-iap-ssh` | Allow SSH via IAP |
 | Cloud NAT | `hyperfleet-dev-vpc-nat` | Internet access for private nodes |
+| Cloud Function | `lifecycle-enforcer` | Enforces TTL on dev GKE clusters |
+| Cloud Scheduler | `lifecycle-enforcer-trigger` | Triggers the enforcer on a cron schedule |
 
 ### Deploy Shared Infrastructure
 

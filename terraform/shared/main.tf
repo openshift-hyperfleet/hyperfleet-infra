@@ -102,3 +102,21 @@ resource "google_compute_router_nat" "nat" {
     filter = "ERRORS_ONLY"
   }
 }
+
+# =============================================================================
+# Lifecycle Enforcer (Cloud Function + Cloud Scheduler)
+# =============================================================================
+module "lifecycle_enforcer" {
+  source = "../modules/lifecycle"
+
+  project_id = var.project_id
+  region     = var.region
+  schedule   = var.lifecycle_enforcer_schedule
+  dry_run    = var.lifecycle_enforcer_dry_run
+  source_dir = "${path.module}/../../functions/lifecycle-enforcer"
+
+  labels = {
+    managed-by = "terraform"
+    project    = "hyperfleet"
+  }
+}
