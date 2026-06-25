@@ -10,6 +10,8 @@ service:
   type: {{ .Values.serviceType }}
 
 config:
+  server:
+    identity_header: {{ env "API_IDENTITY_HEADER" | default "X-HyperFleet-Identity" }}
   adapters:
     required:
       cluster:
