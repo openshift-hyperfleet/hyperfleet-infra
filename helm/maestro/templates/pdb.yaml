@@ -1,0 +1,89 @@
+{{/*
+PodDisruptionBudgets for Maestro deployments
+Protects against voluntary disruptions (node drains, upgrades, kubectl drain)
+HYPERFLEET-1122
+*/}}
+
+{{- if .Values.server.enabled }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: maestro-pdb
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: maestro
+    app.kubernetes.io/name: server
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: maestro
+      app.kubernetes.io/name: server
+      app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}
+
+{{- if .Values.server.postgresql.enabled }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: maestro-db-pdb
+  namespace: {{ .Release.Namespace }}
+  labels:
+    name: maestro-db
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/component: database
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      name: maestro-db
+{{- end }}
+
+{{- if .Values.server.mosquitto.enabled }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: maestro-mqtt-pdb
+  namespace: {{ .Release.Namespace }}
+  labels:
+    name: maestro-mqtt
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/component: message-broker
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      name: maestro-mqtt
+{{- end }}
+
+{{- if .Values.agent.enabled }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: maestro-agent-pdb
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: maestro-agent
+    app.kubernetes.io/name: agent
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: maestro-agent
+      app.kubernetes.io/name: agent
+      app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}
