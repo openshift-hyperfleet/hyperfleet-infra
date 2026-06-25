@@ -4,7 +4,7 @@ Protects against voluntary disruptions (node drains, upgrades, kubectl drain)
 HYPERFLEET-1122
 */}}
 
-{{- if .Values.server.enabled | default true }}
+{{- if .Values.server.enabled }}
 ---
 apiVersion: policy/v1
 kind: PodDisruptionBudget
