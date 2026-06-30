@@ -292,7 +292,7 @@ check-jq: ## Verify jq is installed
 	@echo "OK: jq found"
 
 .PHONY: check-helmfile-env
-check-helmfile-env: check-helmfile check-kubectl-context check-helmfile-env-generated ## Verify kubectl context and generated values directory exists
+check-helmfile-env: check-helmfile check-kubectl-context check-helmfile-env-generated check-e2e-run-id ## Verify kubectl context and generated values directory exists
 
 .PHONY: check-helmfile-env-generated
 check-helmfile-env-generated: ## Check that the generated directory exists based on HELMFILE_ENV
@@ -313,6 +313,17 @@ check-kubectl-context: check-kubectl ## Verify kubectl context matches HELMFILE_
 			exit 1; \
 		fi; \
 		echo "OK: kubectl context matches HELMFILE_ENV=$(HELMFILE_ENV)"; \
+	fi;
+
+.PHONY: check-e2e-run-id
+check-e2e-run-id: ## Verify E2E_RUN_ID is set for e2e-gcp environment
+	@if [ "$(HELMFILE_ENV)" = "e2e-gcp" ]; then \
+		if [ -z "$(E2E_RUN_ID)" ]; then \
+			echo "ERROR: E2E_RUN_ID must be set when HELMFILE_ENV=e2e-gcp"; \
+			echo "       Usage: E2E_RUN_ID=<run-id> make install-hyperfleet"; \
+			exit 1; \
+		fi; \
+		echo "OK: E2E_RUN_ID=$(E2E_RUN_ID)"; \
 	fi;
 
 .PHONY: check-terraform

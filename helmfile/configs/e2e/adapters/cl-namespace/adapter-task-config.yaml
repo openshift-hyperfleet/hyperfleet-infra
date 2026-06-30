@@ -6,11 +6,10 @@ params:
     source: "event.id"
     type: "string"
     required: true
-  - name: "testRunId"
-    source: "env.TEST_RUN_ID"
+  - name: "e2eRunId"
+    source: "env.E2E_RUN_ID"
     type: "string"
     required: false
-    default: "TEST_RUN_ID"
   - name: "ci"
     source: "env.CI"
     type: "string"
@@ -64,7 +63,7 @@ resources:
         labels:
           hyperfleet.io/cluster-id: "{{ .clusterId }}"
           hyperfleet.io/cluster-name: "{{ .clusterName }}"
-          e2e.hyperfleet.io/test-run-id: "{{ .testRunId }}"
+          e2e.hyperfleet.io/run-id: "{{ .e2eRunId }}"
           e2e.hyperfleet.io/ci: "{{ .ci }}"
           e2e.hyperfleet.io/managed-by: "test-framework"
         annotations:
