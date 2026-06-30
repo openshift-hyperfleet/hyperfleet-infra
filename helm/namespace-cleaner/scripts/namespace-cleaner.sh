@@ -1,7 +1,7 @@
 #!/bin/bash
 set -eo pipefail
 
-LABEL_SELECTOR="${LABEL_SELECTOR:-hyperfleet.io/cluster-id}"
+LABEL_SELECTOR="${LABEL_SELECTOR:-hyperfleet.io/cluster-id hyperfleet.io/test-run}"
 AGE_MINUTES="${AGE_MINUTES:-180}"
 MAESTRO_URL="${MAESTRO_URL:-http://maestro.maestro.svc.cluster.local:8000}"
 DRY_RUN="${DRY_RUN:-false}"
@@ -72,26 +72,31 @@ else
 fi
 
 # --- Step 2: delete stale namespaces (non-blocking) ---
-kubectl get namespaces -l "${LABEL_SELECTOR}" \
-  -o go-template='{{range .items}}{{.metadata.name}}|{{.metadata.creationTimestamp}}|{{.status.phase}}{{"\n"}}{{end}}' \
-| while IFS='|' read -r ns_name created_at phase; do
-    [ -z "${ns_name}" ] && continue
-    [ "${phase}" != "Active" ] && continue
+# LABEL_SELECTOR may contain multiple space-separated selectors; each is matched
+# independently (OR semantics). Namespaces already Terminating are skipped.
+IFS=' ' read -ra _selectors <<< "${LABEL_SELECTOR}"
+for selector in "${_selectors[@]}"; do
+  kubectl get namespaces -l "${selector}" \
+    -o go-template='{{range .items}}{{.metadata.name}}|{{.metadata.creationTimestamp}}|{{.status.phase}}{{"\n"}}{{end}}' \
+  | while IFS='|' read -r ns_name created_at phase; do
+      [ -z "${ns_name}" ] && continue
+      [ "${phase}" != "Active" ] && continue
 
-    created_seconds=$(parse_timestamp "${created_at}") || continue
-    age=$((NOW - created_seconds))
+      created_seconds=$(parse_timestamp "${created_at}") || continue
+      age=$((NOW - created_seconds))
 
-    if [ "${age}" -gt "${AGE_SECONDS}" ]; then
-      age_m=$((age / 60))
-      if [ "${DRY_RUN}" = "true" ]; then
-        echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) [DRY-RUN] Would delete namespace '${ns_name}' (age=${age_m}m)"
-      else
-        echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) [INFO] Deleting namespace '${ns_name}' (age=${age_m}m)"
-        kubectl delete namespace "${ns_name}" --wait=false \
-          && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) [INFO] Delete requested for namespace '${ns_name}'" \
-          || echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) [WARN] Failed to delete namespace '${ns_name}'"
+      if [ "${age}" -gt "${AGE_SECONDS}" ]; then
+        age_m=$((age / 60))
+        if [ "${DRY_RUN}" = "true" ]; then
+          echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) [DRY-RUN] Would delete namespace '${ns_name}' (age=${age_m}m)"
+        else
+          echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) [INFO] Deleting namespace '${ns_name}' (age=${age_m}m)"
+          kubectl delete namespace "${ns_name}" --wait=false \
+            && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) [INFO] Delete requested for namespace '${ns_name}'" \
+            || echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) [WARN] Failed to delete namespace '${ns_name}'"
+        fi
       fi
-    fi
-  done
+    done
+done
 
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) [INFO] Namespace cleaner run complete"

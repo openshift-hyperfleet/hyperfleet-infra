@@ -41,6 +41,14 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end }}
 
 {{/*
+Name for cluster-scoped resources (ClusterRole, ClusterRoleBinding).
+Includes the release namespace so multiple installs don't collide.
+*/}}
+{{- define "namespace-cleaner.clusterResourceName" -}}
+{{- printf "%s-%s" (include "namespace-cleaner.fullname" .) .Release.Namespace | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
+{{/*
 Selector labels
 */}}
 {{- define "namespace-cleaner.selectorLabels" -}}

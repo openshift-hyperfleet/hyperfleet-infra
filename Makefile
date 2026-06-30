@@ -41,7 +41,7 @@ KUBECONFIG ?= $(HOME)/.kube/config
 
 CLEANER_NAMESPACE    ?= $(NAMESPACE)
 CLEANER_SCHEDULE     ?= 0 * * * *
-CLEANER_LABEL_SELECTOR ?= hyperfleet.io/cluster-id
+CLEANER_LABEL_SELECTOR ?= hyperfleet.io/cluster-id hyperfleet.io/test-run
 CLEANER_AGE_MINUTES  ?= 180
 CLEANER_MAESTRO_URL  ?= http://maestro.$(MAESTRO_NAMESPACE).svc.cluster.local:8000
 
@@ -211,7 +211,7 @@ install-repos: check-helmfile-env ## Add all hyperfleet helm repos
 	$(call add-helm-repo,adapter,$(ADAPTER_CHART_REF))
 
 .PHONY: install-hyperfleet
-install-hyperfleet: check-helmfile-env ## Install all HyperFleet components
+install-hyperfleet: check-helmfile-env check-hyperfleet-namespace ## Install all HyperFleet components
 	helmfile -f helmfile/helmfile.yaml.gotmpl -e $(HELMFILE_ENV) apply
 
 .PHONY: install-api
@@ -334,8 +334,12 @@ define check-namespace
 endef
 
 .PHONY: check-hyperfleet-namespace
-check-hyperfleet-namespace: ## Create Hyperfleet namespace if it doesn't exist
+check-hyperfleet-namespace: ## Create Hyperfleet namespace if it doesn't exist and label it
+	@printf '%s' "$(NAMESPACE)" | grep -qE '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$$' \
+		|| { echo "ERROR: NAMESPACE '$(NAMESPACE)' is not a valid DNS label (lowercase alphanumeric and hyphens, 1-63 chars)"; exit 1; }
 	$(call check-namespace,$(NAMESPACE))
+	@kubectl label namespace "$(NAMESPACE)" "hyperfleet.io/test-run=$(NAMESPACE)" --overwrite >/dev/null
+	@echo "OK: namespace $(NAMESPACE) labeled with hyperfleet.io/test-run=$(NAMESPACE)"
 
 .PHONY: check-maestro-namespace
 check-maestro-namespace: ## Create Maestro namespace if it doesn't exist

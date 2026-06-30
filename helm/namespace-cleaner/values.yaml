@@ -8,8 +8,9 @@ image:
 # Cron schedule for the cleaner job (default: every hour)
 schedule: "0 * * * *"
 
-# Kubernetes label selector used to identify namespaces eligible for deletion
-labelSelector: "hyperfleet.io/cluster-id"
+# Space-separated label selectors used to identify namespaces eligible for deletion.
+# Each selector is matched independently (OR semantics).
+labelSelector: "hyperfleet.io/cluster-id hyperfleet.io/test-run"
 
 # Delete namespaces older than this many minutes
 ageMinutes: 180

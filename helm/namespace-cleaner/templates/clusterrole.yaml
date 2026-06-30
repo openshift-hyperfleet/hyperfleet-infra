@@ -1,7 +1,7 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: {{ include "namespace-cleaner.fullname" . }}
+  name: {{ include "namespace-cleaner.clusterResourceName" . }}
   labels:
     {{- include "namespace-cleaner.labels" . | nindent 4 }}
 rules:
