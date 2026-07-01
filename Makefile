@@ -39,6 +39,8 @@ MAESTRO_CONSUMER ?= cluster1
 MAESTRO_NAMESPACE ?= maestro
 KUBECONFIG ?= $(HOME)/.kube/config
 
+LIFECYCLE_DIR        ?= functions/lifecycle-enforcer
+
 CLEANER_NAMESPACE    ?= $(NAMESPACE)
 CLEANER_SCHEDULE     ?= 0 * * * *
 CLEANER_LABEL_SELECTOR ?= hyperfleet.io/cluster-id hyperfleet.io/test-run e2e/hyperfleet.io/run-id
@@ -242,6 +244,26 @@ uninstall-hyperfleet-sentinels: check-kubectl-context ## Uninstall Hyperfleet Se
 uninstall-hyperfleet-adapters: check-kubectl-context ## Uninstall Hyperfleet Adapters
 	helmfile -f helmfile/helmfile.yaml.gotmpl -e $(HELMFILE_ENV) -l component=adapter destroy
 
+
+# ==== Lifecycle Function Targets ====
+.PHONY: test-lifecycle-function
+test-lifecycle-function: ## Run unit tests for the lifecycle enforcer function
+	@command -v go >/dev/null 2>&1 || { echo "ERROR: go is not installed"; exit 1; }
+	cd "$(LIFECYCLE_DIR)" && go test ./... -v
+
+.PHONY: build-lifecycle-function
+build-lifecycle-function: ## Build the lifecycle enforcer function
+	@command -v go >/dev/null 2>&1 || { echo "ERROR: go is not installed"; exit 1; }
+	cd "$(LIFECYCLE_DIR)" && go build ./...
+
+.PHONY: lint-lifecycle-function
+lint-lifecycle-function: ## Lint the lifecycle enforcer function
+	@command -v go >/dev/null 2>&1 || { echo "ERROR: go is not installed"; exit 1; }
+	cd "$(LIFECYCLE_DIR)" && go vet ./...
+
+.PHONY: add-ttl-labels
+add-ttl-labels: ## Add TTL labels to existing GKE clusters (DRY_RUN=true by default)
+	./scripts/add-ttl-labels.sh
 
 # ==== Namespace Cleaner Targets ====
 .PHONY: install-cleaner

@@ -131,6 +131,15 @@ Configuration precedence (highest to lowest):
 | `make install-cleaner` | Install namespace cleaner CronJob (configurable via `CLEANER_*` variables) |
 | `make uninstall-cleaner` | Uninstall namespace cleaner CronJob |
 
+### Lifecycle Enforcer
+
+| Target | Description |
+|--------|-------------|
+| `make test-lifecycle-function` | Run unit tests for the lifecycle enforcer Cloud Function |
+| `make build-lifecycle-function` | Build the lifecycle enforcer Cloud Function |
+| `make lint-lifecycle-function` | Lint the lifecycle enforcer Cloud Function |
+| `make add-ttl-labels` | Add TTL labels to existing GKE clusters (`DRY_RUN=true` by default) |
+
 ### Validation / CI
 
 | Target | Description |
@@ -189,16 +198,20 @@ hyperfleet-infra/
 │   ├── maestro/                     # Maestro umbrella chart (deps via helm-git)
 │   └── rabbitmq/                    # Dev-only RabbitMQ (not production-ready)
 ├── scripts/
+│   ├── add-ttl-labels.sh            # Adds TTL labels to existing GKE clusters
 │   ├── generate-rabbitmq-values.sh  # Generates RabbitMQ broker config
 │   └── kind-build-images.sh         # Builds and loads images into kind
+├── functions/
+│   └── lifecycle-enforcer/          # Cloud Function: GKE cluster lifecycle enforcement
 ├── terraform/
 │   ├── README.md                    # Detailed Terraform documentation
-│   ├── main.tf                      # Root module (GKE cluster, Pub/Sub, firewall)
+│   ├── main.tf                      # Root module (GKE cluster, Pub/Sub, firewall, lifecycle)
 │   ├── helm-values-files.tf         # Writes generated Helm values via local_file
 │   ├── bootstrap/                   # One-time GCP setup scripts (admin only)
 │   ├── shared/                      # Shared VPC infrastructure (deploy once)
 │   ├── modules/
 │   │   ├── cluster/gke/             # GKE cluster module
+│   │   ├── lifecycle/               # Lifecycle enforcer (Cloud Function + Scheduler)
 │   │   └── pubsub/                  # Google Pub/Sub module
 │   └── envs/gke/                    # Per-developer tfvars and tfbackend files
 ├── generated-values-from-terraform/ # Auto-generated, gitignored
@@ -236,6 +249,12 @@ terraform apply
 ```
 
 See [terraform/shared/README.md](terraform/shared/README.md) for details.
+
+## Lifecycle Enforcer
+
+A Cloud Function (Go) that enforces the [GCP Developer Cluster Lifecycle Policy](https://github.com/openshift-hyperfleet/architecture/blob/main/hyperfleet/docs/gcp-developer-cluster-lifecycle.md) — idle shutdown (>12h), TTL expiration, and missing owner enforcement. Runs hourly via Cloud Scheduler, deployed via Terraform (`enable_lifecycle_enforcer = true`).
+
+See [functions/lifecycle-enforcer/README.md](functions/lifecycle-enforcer/README.md) for architecture, deployment, rollout, and configuration details.
 
 ## Related Repositories
 

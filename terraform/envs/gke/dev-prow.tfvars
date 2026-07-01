@@ -12,6 +12,11 @@ developer_name    = "prow"       # Your username (e.g., "your-username")
 kubernetes_suffix = "hyperfleet" # Namespace suffix (allows multiple deployments to share a cluster)
 
 # =============================================================================
+# Environment (cicd = exempt from lifecycle enforcement)
+# =============================================================================
+environment = "cicd"
+
+# =============================================================================
 # Cloud Provider
 # =============================================================================
 cloud_provider = "gke"

@@ -26,6 +26,17 @@ variable "kubernetes_suffix" {
   default     = "default"
 }
 
+variable "environment" {
+  description = "Environment label for the cluster (dev, cicd). Clusters with 'cicd' are exempt from lifecycle enforcement."
+  type        = string
+  default     = "dev"
+
+  validation {
+    condition     = contains(["dev", "cicd"], var.environment)
+    error_message = "environment must be one of: dev, cicd"
+  }
+}
+
 # =============================================================================
 # Cluster Configuration
 # =============================================================================

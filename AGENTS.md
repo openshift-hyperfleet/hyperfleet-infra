@@ -25,6 +25,13 @@ make lint-shellcheck      # shellcheck all *.sh
 make validate-maestro     # renders maestro chart to /dev/null
 ```
 
+Lifecycle function checks:
+```bash
+make test-lifecycle-function   # go test ./... in functions/lifecycle-enforcer/
+make build-lifecycle-function  # go build ./... in functions/lifecycle-enforcer/
+make lint-lifecycle-function   # go vet ./... in functions/lifecycle-enforcer/
+```
+
 Template/dry-run all four Helmfile environments explicitly:
 ```bash
 # environment specific
@@ -90,6 +97,7 @@ Key variables:
 | `BROKER_TYPE` | `googlepubsub` | `rabbitmq` | |
 | `API_IMAGE_TAG` | `dev` | `local` | |
 | `IMAGE_PULL_POLICY` | `Always` | `IfNotPresent` | |
+| `LIFECYCLE_DIR` | `functions/lifecycle-enforcer` | `functions/lifecycle-enforcer` | Go Cloud Function source |
 
 ---
 

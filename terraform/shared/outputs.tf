@@ -44,3 +44,21 @@ output "developer_config" {
 
   EOT
 }
+
+# =============================================================================
+# Lifecycle Enforcer
+# =============================================================================
+output "lifecycle_function_uri" {
+  description = "URI of the lifecycle enforcer Cloud Function"
+  value       = module.lifecycle_enforcer.function_uri
+}
+
+output "lifecycle_scheduler_job" {
+  description = "Name of the lifecycle enforcer Cloud Scheduler job"
+  value       = module.lifecycle_enforcer.scheduler_job_name
+}
+
+output "lifecycle_function_service_account" {
+  description = "Email of the lifecycle enforcer Cloud Function service account"
+  value       = module.lifecycle_enforcer.function_service_account
+}
