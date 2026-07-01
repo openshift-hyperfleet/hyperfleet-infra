@@ -381,6 +381,8 @@ post:
         method: "PUT"
         url: "/clusters/{{ .clusterId }}/statuses"
         headers:
+          - name: "X-HyperFleet-Identity"
+            value: "adapter@adapter.local"
           - name: "Content-Type"
             value: "application/json"
         body: "{{ .statusPayload }}"
