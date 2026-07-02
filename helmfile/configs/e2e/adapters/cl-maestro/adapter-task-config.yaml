@@ -52,8 +52,8 @@ preconditions:
           has(spec.platform) && has(spec.platform.type) ? spec.platform.type : ""
       - name: "subnets"
         expression: |
-          has(spec.platform) && has(spec.platform.gcp) && has(spec.platform.gcp.subnets)
-            ? spec.platform.gcp.subnets
+          has(spec.platform) && has(spec.platform.template) && has(spec.platform.template.subnets)
+            ? spec.platform.template.subnets
             : []
 
 

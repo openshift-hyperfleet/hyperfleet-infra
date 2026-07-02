@@ -74,7 +74,7 @@ spec:
       data:
         cluster_id: "{{ .clusterId }}"
         cluster_name: "{{ .clusterName }}"
-{{ if eq .platformType "gcp" }}
+{{ if eq .platformType "template" }}
         platform_tier: "cloud"
 {{ else }}
         platform_tier: "onprem"
