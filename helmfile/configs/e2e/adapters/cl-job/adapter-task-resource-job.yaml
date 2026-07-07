@@ -7,8 +7,8 @@ metadata:
   labels:
     hyperfleet.io/cluster-id: "{{ .clusterId }}"
     hyperfleet.io/resource-type: "job"
-    e2e.hyperfleet.io/run-id: "{{ .runId }}"
     app: test-job
+    e2e.hyperfleet.io/run-id: "{{ .runId }}"
   annotations:
     hyperfleet.io/generation: "{{ .generationSpec }}"
 spec:

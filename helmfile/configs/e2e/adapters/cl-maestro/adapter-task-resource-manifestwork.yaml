@@ -13,6 +13,7 @@ metadata:
     hyperfleet.io/component: "infrastructure"
     hyperfleet.io/generation: "{{ .generation }}"
     hyperfleet.io/resource-group: "cluster-setup"
+    e2e.hyperfleet.io/run-id: "{{ .runId }}"
 
     # Maestro-specific labels
     maestro.io/source-id: "{{ .adapter.name }}"
@@ -27,7 +28,6 @@ metadata:
     app.kubernetes.io/part-of: "hyperfleet"
     app.kubernetes.io/managed-by: "cl-maestro"
     app.kubernetes.io/created-by: "{{ .adapter.name }}"
-    e2e.hyperfleet.io/run-id: "{{ .runId }}"
 {{ if .platformType }}
     hyperfleet.io/platform-type: "{{ .platformType }}"
 {{ end }}

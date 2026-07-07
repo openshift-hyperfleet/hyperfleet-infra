@@ -24,6 +24,12 @@ broker:
   rabbitmq:
     url: {{ env "RABBITMQ_URL" | default "amqp://guest:guest@rabbitmq:5672" }}
   {{ end }}
+
+{{- if hasKey .Values "labels" }}
+labels:
+    {{- toYaml .Values.labels | nindent 2 }}
+{{- end }}
+
 env:
   - name: SIMULATE_RESULT
     value: success
@@ -31,7 +37,7 @@ env:
     valueFrom:
       fieldRef:
         fieldPath: metadata.namespace
-  {{- if and (hasKey .Values "runId") .Values.runId }}
+  {{- if hasKey .Values "runId" }}
   - name: RUN_ID
     value: {{ .Values.runId | quote }}
   {{- end }}

@@ -27,14 +27,18 @@ environments:
       - projectId: {{ env "PROJECT_ID" | default "hcm-hyperfleet" }}
         brokerType: googlepubsub
         serviceType: {{ env "API_SERVICE_TYPE" | default "LoadBalancer" }}
-        runId: {{ env "RUN_ID" | quote }}
+        runId: {{ requiredEnv "RUN_ID" | quote }}
+        labels:
+          e2e.hyperfleet.io/run-id: {{ requiredEnv "RUN_ID" }}
       - environments/e2e-gcp/adapter-configs.yaml.gotmpl
       - environments/e2e-gcp/sentinel-configs.yaml
   e2e-kind:
     values:
       - brokerType: rabbitmq
         serviceType: {{ env "API_SERVICE_TYPE" | default "ClusterIP" }}
-        runId: {{ env "RUN_ID" | quote }}
+        runId: {{ requiredEnv "RUN_ID" | quote }}
+        labels:
+          e2e.hyperfleet.io/run-id: {{ requiredEnv "RUN_ID" }}
       - environments/e2e-kind/adapter-configs.yaml.gotmpl
       - environments/e2e-kind/sentinel-configs.yaml
   kind:

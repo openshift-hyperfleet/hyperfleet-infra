@@ -24,3 +24,8 @@ config:
         - {{ .name }}
         {{- end }}
         {{- end }}
+
+{{- if hasKey .Values "labels" }}
+labels:
+    {{- toYaml .Values.labels | nindent 2 }}
+{{- end }}
