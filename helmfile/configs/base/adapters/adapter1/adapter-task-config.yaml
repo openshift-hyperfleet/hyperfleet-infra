@@ -95,11 +95,18 @@ resources:
         when:
           expression: "is_deleting"
 
-# Post-processing with valid CEL expressions
-# This example contains a ConfigMap resource - we check ConfigMap creation and data availability
+# Post-processing with conditional payloads and post-actions using `when` gates.
+# Two paths: normal (resources applied) and skipped (preconditions not met).
+# The `when` condition on payloads prevents CEL evaluation of resources.* that
+# don't exist in the skipped path. The `when` on post-actions provides an
+# explicit gate — a post-action referencing a skipped payload would also be
+# auto-skipped, but the explicit gate makes intent clear in the config.
 post:
   payloads:
+    # Normal path: resources were applied — report full resource-derived status
     - name: "statusPayload"
+      when:
+        expression: "!adapter.resourcesSkipped"
       build:
         adapter: "{{ .adapter.name }}"
         conditions:
@@ -169,11 +176,9 @@ post:
                       : (adapter.?executionStatus.orValue("") == "failed"
                           ? "Deletion failed during adapter execution"
                           : "Deletion in progress"))
-        # Event generation ID metadata field needs to use expression to avoid interpolation issues
         observed_generation:
           expression: "generation"
         observed_time: "{{ now | date \"2006-01-02T15:04:05Z07:00\" }}"
-        # Optional data field for adapter-specific metrics extracted from resources
         data:
           namespace:
             name:
@@ -183,8 +188,42 @@ post:
               expression: |
                 resources.?resource0.?metadata.?creationTimestamp.orValue("")
 
+    # Skipped path: preconditions not met — report simplified status without
+    # evaluating resources.* (which may not exist in this context)
+    - name: "skippedStatusPayload"
+      when:
+        expression: "adapter.resourcesSkipped"
+      build:
+        adapter: "{{ .adapter.name }}"
+        conditions:
+          - type: "Applied"
+            status: "False"
+            reason: "PreconditionsNotMet"
+            message:
+              expression: |
+                "Resources skipped: " + adapter.?skipReason.orValue("preconditions not met")
+          - type: "Available"
+            status: "False"
+            reason: "PreconditionsNotMet"
+            message:
+              expression: |
+                "Resources not available: " + adapter.?skipReason.orValue("preconditions not met")
+          - type: "Health"
+            status: "True"
+            reason: "NoErrors"
+            message: "Adapter is healthy, no work performed due to preconditions"
+          - type: "Finalized"
+            status: "False"
+            reason: "ResourceActive"
+            message: "Resource is active, not scheduled for deletion"
+        observed_generation:
+          expression: "generation"
+        observed_time: "{{ now | date \"2006-01-02T15:04:05Z07:00\" }}"
+
   post_actions:
     - name: "reportClusterStatus"
+      when:
+        expression: "!adapter.resourcesSkipped"
       api_call:
         method: "PUT"
         url: "/clusters/{{ .clusterId }}/statuses"
@@ -192,3 +231,14 @@ post:
           - name: "Content-Type"
             value: "application/json"
         body: "{{ .statusPayload }}"
+
+    - name: "reportClusterStatusSkipped"
+      when:
+        expression: "adapter.resourcesSkipped"
+      api_call:
+        method: "PUT"
+        url: "/clusters/{{ .clusterId }}/statuses"
+        headers:
+          - name: "Content-Type"
+            value: "application/json"
+        body: "{{ .skippedStatusPayload }}"
