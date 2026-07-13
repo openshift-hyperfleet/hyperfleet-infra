@@ -80,7 +80,6 @@ Setting `JWT_AUTH_ENABLED=true` enables JWT authentication on the API using the 
 ```bash
 HELMFILE_ENV=e2e-kind NAMESPACE=hyperfleet-e2e REGISTRY=quay.io RUN_ID=my-run \
     JWT_AUTH_ENABLED=true \
-    OIDC_JWKS_CA_FILE=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt \
     make install-hyperfleet
 ```
 
@@ -94,7 +93,7 @@ How it works:
 | `JWT_AUTH_ENABLED` | `false` | Set to `true` to enable |
 | `OIDC_ISSUER_URL` | `https://kubernetes.default.svc.cluster.local` | JWT issuer; must match the cluster OIDC issuer |
 | `OIDC_JWKS_URL` | `https://kubernetes.default.svc/openid/v1/jwks` | JWKS endpoint the API fetches public keys from |
-| `OIDC_JWKS_CA_FILE` | _(none — must be set explicitly)_ | CA cert to trust the JWKS endpoint TLS; set to `/var/run/secrets/kubernetes.io/serviceaccount/ca.crt` for kind; omit for GCP |
+| `OIDC_JWKS_CA_FILE` | `/var/run/secrets/kubernetes.io/serviceaccount/ca.crt` | CA cert to trust the JWKS endpoint TLS; defaults are set in `env.kind`; omit (unset) for GCP |
 
 ## Makefile Targets
 
@@ -202,7 +201,7 @@ How it works:
 | `JWT_AUTH_ENABLED` | `false` | `false` | Set to `true` to enable JWT auth (kind/e2e-kind only) |
 | `OIDC_ISSUER_URL` | N/A | `https://kubernetes.default.svc.cluster.local` | JWT issuer URL |
 | `OIDC_JWKS_URL` | N/A | `https://kubernetes.default.svc/openid/v1/jwks` | JWKS endpoint for public key fetch |
-| `OIDC_JWKS_CA_FILE` | N/A | _(must be set explicitly for kind)_ | CA cert to trust the JWKS endpoint TLS; omit for GCP |
+| `OIDC_JWKS_CA_FILE` | N/A | `/var/run/secrets/kubernetes.io/serviceaccount/ca.crt` | CA cert to trust the JWKS endpoint TLS; omit for GCP |
 
 ### GCP JWT Authentication (optional)
 
