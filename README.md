@@ -73,6 +73,29 @@ Configuration precedence (highest to lowest):
 2. `env.gcp` or `env.kind`
 3. Makefile defaults
 
+### JWT Authentication (kind/e2e-kind)
+
+Setting `JWT_AUTH_ENABLED=true` enables JWT authentication on the API using the kind cluster's built-in OIDC server — no external identity provider required. Sentinels and adapters authenticate via projected Kubernetes ServiceAccount tokens.
+
+```bash
+HELMFILE_ENV=e2e-kind NAMESPACE=hyperfleet-e2e REGISTRY=quay.io RUN_ID=my-run \
+    JWT_AUTH_ENABLED=true \
+    OIDC_JWKS_CA_FILE=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt \
+    make install-hyperfleet
+```
+
+How it works:
+
+- The API validates tokens against the cluster OIDC endpoint (`https://kubernetes.default.svc.cluster.local`) using the service account CA cert already mounted in every pod — no extra volumes or secrets needed
+- Sentinels and adapters receive a projected ServiceAccount token (audience: `hyperfleet-api`) and present it as a Bearer token on every API request
+
+| Variable | kind default | Notes |
+|----------|-------------|-------|
+| `JWT_AUTH_ENABLED` | `false` | Set to `true` to enable |
+| `OIDC_ISSUER_URL` | `https://kubernetes.default.svc.cluster.local` | JWT issuer; must match the cluster OIDC issuer |
+| `OIDC_JWKS_URL` | `https://kubernetes.default.svc/openid/v1/jwks` | JWKS endpoint the API fetches public keys from |
+| `OIDC_JWKS_CA_FILE` | _(none — must be set explicitly)_ | CA cert to trust the JWKS endpoint TLS; set to `/var/run/secrets/kubernetes.io/serviceaccount/ca.crt` for kind; omit for GCP |
+
 ## Makefile Targets
 
 ### HyperFleet
@@ -176,6 +199,10 @@ Configuration precedence (highest to lowest):
 | `CLEANER_LABEL_SELECTOR` | `hyperfleet.io/cluster-id` | `hyperfleet.io/cluster-id` | Label selector to identify orphan namespaces |
 | `CLEANER_AGE_MINUTES` | `180` | `180` | Minimum age (minutes) before a namespace is eligible for cleanup |
 | `CLEANER_MAESTRO_URL` | `http://maestro.$(MAESTRO_NAMESPACE).svc.cluster.local:8000` | `http://maestro.$(MAESTRO_NAMESPACE).svc.cluster.local:8000` | Maestro API URL used by the cleaner |
+| `JWT_AUTH_ENABLED` | `false` | `false` | Set to `true` to enable JWT auth (kind/e2e-kind only) |
+| `OIDC_ISSUER_URL` | N/A | `https://kubernetes.default.svc.cluster.local` | JWT issuer URL |
+| `OIDC_JWKS_URL` | N/A | `https://kubernetes.default.svc/openid/v1/jwks` | JWKS endpoint for public key fetch |
+| `OIDC_JWKS_CA_FILE` | N/A | _(must be set explicitly for kind)_ | CA cert to trust the JWKS endpoint TLS; omit for GCP |
 
 ### GCP JWT Authentication (optional)
 

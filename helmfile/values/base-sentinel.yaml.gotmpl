@@ -16,6 +16,10 @@ config:
         audience: hyperfleet-api
       {{ end }}
 
+resources:
+  requests:
+    memory: 100Mi
+
 broker:
   type: {{ .Values.brokerType }}
   {{ if eq .Values.brokerType "googlepubsub" }}

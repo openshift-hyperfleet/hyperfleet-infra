@@ -29,8 +29,11 @@ config:
     jwt:
       enabled: true
       configs:
-        - issuer_url: {{ requiredEnv "OIDC_ISSUER_URL" }}
-          jwk_cert_url: {{ requiredEnv "OIDC_JWKS_URL" }}
+        - issuer_url: {{ env "OIDC_ISSUER_URL" | default "https://kubernetes.default.svc.cluster.local" }}
+          jwk_cert_url: {{ env "OIDC_JWKS_URL" | default "https://kubernetes.default.svc/openid/v1/jwks" }}
+          {{- if env "OIDC_JWKS_CA_FILE" }}
+          jwk_cert_ca_file: {{ env "OIDC_JWKS_CA_FILE" }}
+          {{- end }}
           audience: hyperfleet-api
           identity_claim: sub
         - issuer_url: https://accounts.google.com

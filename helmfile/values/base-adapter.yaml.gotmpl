@@ -7,6 +7,10 @@ image:
   pullPolicy: {{ env "IMAGE_PULL_POLICY" | default "IfNotPresent" }}
 
 
+resources:
+  requests:
+    memory: 64Mi
+
 adapterConfig:
   log:
     level: debug
