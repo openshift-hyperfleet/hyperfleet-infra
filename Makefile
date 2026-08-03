@@ -330,20 +330,20 @@ endif
 .PHONY: install-tracing
 install-tracing: check-helmfile check-kubectl-context ## Install Tempo + Grafana Alloy (OTel Collector) tracing backend
 	$(call check-namespace,$(MONITORING_NAMESPACE))
-	helmfile -f $(OBSERVABILITY_HELMFILE) -e $(HELMFILE_ENV) -l component=tempo apply
-	helmfile -f $(OBSERVABILITY_HELMFILE) -e $(HELMFILE_ENV) -l component=alloy apply
+	helmfile -f "$(OBSERVABILITY_HELMFILE)" -e "$(HELMFILE_ENV)" -l component=tempo apply
+	helmfile -f "$(OBSERVABILITY_HELMFILE)" -e "$(HELMFILE_ENV)" -l component=alloy apply
 
 .PHONY: uninstall-tracing
 uninstall-tracing: check-kubectl-context ## Uninstall Tempo + Grafana Alloy
-	@helm_out=$$(helm list --namespace $(MONITORING_NAMESPACE) --short) || exit 1; \
+	@helm_out=$$(helm list --namespace "$(MONITORING_NAMESPACE)" --short) || exit 1; \
 	if echo "$$helm_out" | grep -q '^alloy$$'; then \
-		helmfile -f $(OBSERVABILITY_HELMFILE) -e $(HELMFILE_ENV) -l component=alloy destroy; \
+		helmfile -f "$(OBSERVABILITY_HELMFILE)" -e "$(HELMFILE_ENV)" -l component=alloy destroy; \
 	else \
 		echo "[NOTE: alloy not installed, skipping uninstall]"; \
 	fi
-	@helm_out=$$(helm list --namespace $(MONITORING_NAMESPACE) --short) || exit 1; \
+	@helm_out=$$(helm list --namespace "$(MONITORING_NAMESPACE)" --short) || exit 1; \
 	if echo "$$helm_out" | grep -q '^tempo$$'; then \
-		helmfile -f $(OBSERVABILITY_HELMFILE) -e $(HELMFILE_ENV) -l component=tempo destroy; \
+		helmfile -f "$(OBSERVABILITY_HELMFILE)" -e "$(HELMFILE_ENV)" -l component=tempo destroy; \
 	else \
 		echo "[NOTE: tempo not installed, skipping uninstall]"; \
 	fi
