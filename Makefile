@@ -329,6 +329,8 @@ endif
 
 .PHONY: install-tracing
 install-tracing: check-helmfile check-kubectl-context ## Install Tempo + Grafana Alloy (OTel Collector) tracing backend
+	@printf '%s' "$(MONITORING_NAMESPACE)" | grep -qE '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$$' \
+		|| { echo "ERROR: MONITORING_NAMESPACE '$(MONITORING_NAMESPACE)' is not a valid DNS label (lowercase alphanumeric and hyphens, 1-63 chars)"; exit 1; }
 	$(call check-namespace,$(MONITORING_NAMESPACE))
 	helmfile -f "$(OBSERVABILITY_HELMFILE)" -e "$(HELMFILE_ENV)" -l component=tempo apply
 	helmfile -f "$(OBSERVABILITY_HELMFILE)" -e "$(HELMFILE_ENV)" -l component=alloy apply
