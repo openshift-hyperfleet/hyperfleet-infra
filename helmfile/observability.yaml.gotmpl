@@ -1,5 +1,5 @@
 # Observability stack configuration
-# Components: kube-prometheus-stack
+# Components: kube-prometheus-stack, Tempo, Grafana Alloy
 
 helmDefaults:
   createNamespace: true
@@ -23,6 +23,12 @@ environments:
 commonLabels:
   group: observability
 
+# Grafana Alloy's chart is only published to the classic Helm repo, not OCI
+# (unlike kube-prometheus-stack and Tempo above).
+repositories:
+  - name: grafana
+    url: https://grafana.github.io/helm-charts
+
 ---
 
 # validation is disabled on install because of helm diff trying to fetch CRDs which do not exist at the time
@@ -36,3 +42,23 @@ releases:
       component: kube-prometheus-stack
     values:
       - values/base-kube-prometheus-stack.yaml.gotmpl
+
+  - name: tempo
+    namespace: {{ .Values.monitoringNamespace }}
+    chart: oci://ghcr.io/grafana-community/helm-charts/tempo
+    version: 2.2.3
+    labels:
+      component: tempo
+    values:
+      - values/base-tempo.yaml.gotmpl
+
+  - name: alloy
+    namespace: {{ .Values.monitoringNamespace }}
+    chart: grafana/alloy
+    version: 1.11.0
+    needs:
+      - tempo
+    labels:
+      component: alloy
+    values:
+      - values/base-alloy.yaml.gotmpl

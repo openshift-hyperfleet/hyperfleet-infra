@@ -8,6 +8,12 @@ monitoring:
     enabled: true
 {{ end }}
 
+{{ if eq (env "TRACING_ENABLED" | default "false") "true" }}
+tracing:
+  enabled: true
+  otlpEndpoint: "http://alloy.{{ env "MONITORING_NAMESPACE" | default "monitoring" }}.svc.cluster.local:4317"
+{{ end }}
+
 image:
   registry: {{ env "REGISTRY" | default "quay.io" }}
   repository: {{ env "API_REPOSITORY" | default "redhat-services-prod/hyperfleet-tenant/hyperfleet/hyperfleet-api" }}

@@ -5,6 +5,14 @@ grafana:
     existingSecret: grafana-admin-credentials
     userKey: admin-user
     passwordKey: admin-password
+{{ if eq (env "TRACING_ENABLED" | default "false") "true" }}
+  additionalDataSources:
+    - name: Tempo
+      type: tempo
+      uid: tempo
+      access: proxy
+      url: http://tempo.{{ env "MONITORING_NAMESPACE" | default "monitoring" }}.svc.cluster.local:3200
+{{ end }}
 
 alertmanager:
   enabled: false

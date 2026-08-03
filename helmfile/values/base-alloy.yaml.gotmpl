@@ -1,0 +1,91 @@
+# Alloy — OTLP receiver, tail sampling, Tempo export.
+
+alloy:
+  rbac:
+    create: false
+  serviceAccount:
+    automountServiceAccountToken: false
+  configReloader:
+    enabled: false
+  # Single replica: tail sampling needs all spans from a trace on one pod.
+  controller:
+    type: deployment
+    replicas: 1
+  configMap:
+    content: |
+      otelcol.receiver.otlp "default" {
+        grpc {
+          endpoint = "0.0.0.0:4317"
+        }
+        http {
+          endpoint = "0.0.0.0:4318"
+        }
+
+        output {
+          traces = [otelcol.processor.tail_sampling.default.input]
+        }
+      }
+
+      otelcol.processor.tail_sampling "default" {
+        policy {
+          name = "errors"
+          type = "status_code"
+
+          status_code {
+            status_codes = ["ERROR"]
+          }
+        }
+
+        policy {
+          name = "api-writes"
+          type = "string_attribute"
+
+          string_attribute {
+            key    = "http.request.method"
+            values = ["POST", "PATCH", "PUT", "DELETE"]
+          }
+        }
+
+        policy {
+          name = "reconciliations"
+          type = "string_attribute"
+
+          string_attribute {
+            key    = "messaging.operation.type"
+            values = ["publish"]
+          }
+        }
+
+        policy {
+          name = "baseline"
+          type = "probabilistic"
+
+          probabilistic {
+            sampling_percentage = 1
+          }
+        }
+
+        output {
+          traces = [otelcol.exporter.otlp.tempo.input]
+        }
+      }
+
+      otelcol.exporter.otlp "tempo" {
+        client {
+          endpoint = "tempo.{{ .Values.monitoringNamespace }}.svc.cluster.local:4317"
+
+          tls {
+            insecure = true
+          }
+        }
+      }
+
+  extraPorts:
+    - name: otlp-grpc
+      port: 4317
+      targetPort: 4317
+      protocol: TCP
+    - name: otlp-http
+      port: 4318
+      targetPort: 4318
+      protocol: TCP
