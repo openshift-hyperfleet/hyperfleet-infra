@@ -416,7 +416,7 @@ check-tf-files: ## Verify terraform env files exist
 # check-namespace: check if a namespace exists and create it if it doesn't
 # Usage: $(call check-namespace,<namespace-name>)
 define check-namespace
-	@kubectl get namespace $(1) >/dev/null 2>&1 || kubectl create namespace $(1) || { echo "ERROR: failed to create namespace $(1)"; exit 1; }
+	@kubectl get namespace "$(1)" >/dev/null 2>&1 || kubectl create namespace "$(1)" || { echo "ERROR: failed to create namespace $(1)"; exit 1; }
 	@echo "OK: namespace $(1) ready"
 endef
 

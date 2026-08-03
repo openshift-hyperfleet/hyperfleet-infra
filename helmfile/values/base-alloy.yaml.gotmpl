@@ -1,16 +1,34 @@
 # Alloy — OTLP receiver, tail sampling, Tempo export.
 
+rbac:
+  create: false
+serviceAccount:
+  automountServiceAccountToken: false
+configReloader:
+  enabled: false
+# Limit OTLP ingress to the HyperFleet app namespace (NAMESPACE env at install time).
+networkPolicy:
+  enabled: true
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ env "NAMESPACE" | default "hyperfleet-local" }}
+      ports:
+        - protocol: TCP
+          port: 4317
+        - protocol: TCP
+          port: 4318
+  egress:
+    - {}
+# Single replica: tail sampling needs all spans from a trace on one pod.
+controller:
+  type: deployment
+  replicas: 1
 alloy:
-  rbac:
-    create: false
-  serviceAccount:
-    automountServiceAccountToken: false
-  configReloader:
-    enabled: false
-  # Single replica: tail sampling needs all spans from a trace on one pod.
-  controller:
-    type: deployment
-    replicas: 1
   configMap:
     content: |
       otelcol.receiver.otlp "default" {
