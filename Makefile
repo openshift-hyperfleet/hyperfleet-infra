@@ -269,7 +269,7 @@ add-ttl-labels: ## Add TTL labels to existing GKE clusters (DRY_RUN=true by defa
 # ==== Namespace Cleaner Targets ====
 .PHONY: install-cleaner
 install-cleaner: check-helm check-kubectl ## Install namespace cleaner CronJob (CLEANER_SCHEDULE, CLEANER_LABEL_SELECTOR, CLEANER_AGE_MINUTES)
-	$(call check-namespace,$(CLEANER_NAMESPACE))
+	$(call check-namespace,CLEANER_NAMESPACE)
 	helm upgrade --install namespace-cleaner $(HELM_DIR)/namespace-cleaner \
 		--namespace $(CLEANER_NAMESPACE) \
 		--set-string "schedule=$(CLEANER_SCHEDULE)" \
@@ -301,7 +301,7 @@ endif
 .PHONY: install-grafana
 install-grafana: check-helmfile check-kubectl-context ## Install kube-prometheus-stack (Prometheus + Grafana + Operator + CRDs)
 	@test -n "$(GRAFANA_ADMIN_PASSWORD)" || { echo "ERROR: GRAFANA_ADMIN_PASSWORD is required"; exit 1; }
-	$(call check-namespace,$(MONITORING_NAMESPACE))
+	$(call check-namespace,MONITORING_NAMESPACE)
 	@kubectl create secret generic grafana-admin-credentials \
 		--namespace $(MONITORING_NAMESPACE) \
 		--from-literal=admin-user=$(GRAFANA_ADMIN_USER) \
@@ -329,14 +329,14 @@ endif
 
 .PHONY: install-tracing
 install-tracing: check-helmfile check-kubectl-context ## Install Tempo + OpenTelemetry Collector tracing backend
-	$(call check-dns-label,$(MONITORING_NAMESPACE),MONITORING_NAMESPACE)
-	$(call check-namespace,$(MONITORING_NAMESPACE))
+	$(call check-dns-label,MONITORING_NAMESPACE)
+	$(call check-namespace,MONITORING_NAMESPACE)
 	helmfile -f "$(OBSERVABILITY_HELMFILE)" -e "$(HELMFILE_ENV)" -l component=tempo apply
 	helmfile -f "$(OBSERVABILITY_HELMFILE)" -e "$(HELMFILE_ENV)" -l component=otel-collector apply
 
 .PHONY: uninstall-tracing
 uninstall-tracing: check-kubectl-context ## Uninstall Tempo + OpenTelemetry Collector
-	$(call check-dns-label,$(MONITORING_NAMESPACE),MONITORING_NAMESPACE)
+	$(call check-dns-label,MONITORING_NAMESPACE)
 	@helm_out=$$(helm list --namespace "$(MONITORING_NAMESPACE)" --short) || exit 1; \
 	if echo "$$helm_out" | grep -q '^otel-collector$$'; then \
 		helmfile -f "$(OBSERVABILITY_HELMFILE)" -e "$(HELMFILE_ENV)" -l component=otel-collector destroy; \
@@ -415,18 +415,21 @@ check-tf-files: ## Verify terraform env files exist
 	@test -f $(TF_DIR)/$(TF_VARS) || { echo "ERROR: tfvars file not found: $(TF_DIR)/$(TF_VARS)";  echo "Create a copy from $(TF_DIR)/$(TF_VARS).example and customize it"; exit 1; }
 	@echo "OK: terraform env files found for $(TF_ENV)"
 
-# check-dns-label: validate a value is a Kubernetes DNS label
-# Usage: $(call check-dns-label,<value>,<name-for-error>)
+# check-dns-label: validate a Make variable as a Kubernetes DNS label.
+# Pass the variable name (not its value) so the shell expands it safely.
+# Usage: $(call check-dns-label,VAR_NAME)
 define check-dns-label
-	@printf '%s' "$(1)" | grep -qE '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$$' \
-		|| { echo "ERROR: $(2) '$(1)' is not a valid DNS label (lowercase alphanumeric and hyphens, 1-63 chars)"; exit 1; }
+	@printf '%s' "$${$(1)}" | grep -qE '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$$' \
+		|| { echo "ERROR: $(1) '$${$(1)}' is not a valid DNS label (lowercase alphanumeric and hyphens, 1-63 chars)"; exit 1; }
 endef
 
-# check-namespace: check if a namespace exists and create it if it doesn't
-# Usage: $(call check-namespace,<namespace-name>)
+# check-namespace: check if a namespace exists and create it if it doesn't.
+# Pass the variable name (not its value) so the shell expands it safely.
+# Usage: $(call check-namespace,VAR_NAME)
 define check-namespace
-	@kubectl get namespace "$(1)" >/dev/null 2>&1 || kubectl create namespace "$(1)" || { echo "ERROR: failed to create namespace $(1)"; exit 1; }
-	@echo "OK: namespace $(1) ready"
+	@kubectl get namespace "$${$(1)}" >/dev/null 2>&1 || kubectl create namespace "$${$(1)}" \
+		|| { echo "ERROR: failed to create namespace $${$(1)}"; exit 1; }
+	@echo "OK: namespace $${$(1)} ready"
 endef
 
 .PHONY: check-jwt-config
@@ -447,15 +450,14 @@ check-jwt-config: ## Validate OIDC variables when JWT_AUTH_ENABLED=true with GCP
 
 .PHONY: check-hyperfleet-namespace
 check-hyperfleet-namespace: ## Create Hyperfleet namespace if it doesn't exist and label it
-	@printf '%s' "$(NAMESPACE)" | grep -qE '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$$' \
-		|| { echo "ERROR: NAMESPACE '$(NAMESPACE)' is not a valid DNS label (lowercase alphanumeric and hyphens, 1-63 chars)"; exit 1; }
-	$(call check-namespace,$(NAMESPACE))
-	@kubectl label namespace "$(NAMESPACE)" "hyperfleet.io/test-run=$(NAMESPACE)" --overwrite >/dev/null
-	@echo "OK: namespace $(NAMESPACE) labeled with hyperfleet.io/test-run=$(NAMESPACE)"
+	$(call check-dns-label,NAMESPACE)
+	$(call check-namespace,NAMESPACE)
+	@kubectl label namespace "$${NAMESPACE}" "hyperfleet.io/test-run=$${NAMESPACE}" --overwrite >/dev/null
+	@echo "OK: namespace $${NAMESPACE} labeled with hyperfleet.io/test-run=$${NAMESPACE}"
 
 .PHONY: check-maestro-namespace
 check-maestro-namespace: ## Create Maestro namespace if it doesn't exist
-	$(call check-namespace,$(MAESTRO_NAMESPACE))
+	$(call check-namespace,MAESTRO_NAMESPACE)
 
 .PHONY: check-gke-context
 check-gke-context: check-kubectl ## Verify kubectl context points to GKE cluster
