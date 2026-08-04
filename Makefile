@@ -318,6 +318,38 @@ uninstall-grafana: check-kubectl-context ## Uninstall kube-prometheus-stack
 		echo "[NOTE: kube-prometheus-stack not installed, skipping uninstall]"; \
 	fi
 
+.PHONY: maybe-install-tracing
+maybe-install-tracing:
+ifneq ($(strip $(TRACING_ENABLED)),true)
+	@echo "[NOTE: Skipping tracing backend]"
+	@echo "To enable set TRACING_ENABLED=true in env.kind or env.gcp"
+else
+	$(MAKE) install-tracing
+endif
+
+.PHONY: install-tracing
+install-tracing: check-helmfile check-kubectl-context ## Install Tempo + OpenTelemetry Collector tracing backend
+	$(call check-dns-label,$(MONITORING_NAMESPACE),MONITORING_NAMESPACE)
+	$(call check-namespace,$(MONITORING_NAMESPACE))
+	helmfile -f "$(OBSERVABILITY_HELMFILE)" -e "$(HELMFILE_ENV)" -l component=tempo apply
+	helmfile -f "$(OBSERVABILITY_HELMFILE)" -e "$(HELMFILE_ENV)" -l component=otel-collector apply
+
+.PHONY: uninstall-tracing
+uninstall-tracing: check-kubectl-context ## Uninstall Tempo + OpenTelemetry Collector
+	$(call check-dns-label,$(MONITORING_NAMESPACE),MONITORING_NAMESPACE)
+	@helm_out=$$(helm list --namespace "$(MONITORING_NAMESPACE)" --short) || exit 1; \
+	if echo "$$helm_out" | grep -q '^otel-collector$$'; then \
+		helmfile -f "$(OBSERVABILITY_HELMFILE)" -e "$(HELMFILE_ENV)" -l component=otel-collector destroy; \
+	else \
+		echo "[NOTE: otel-collector not installed, skipping uninstall]"; \
+	fi
+	@helm_out=$$(helm list --namespace "$(MONITORING_NAMESPACE)" --short) || exit 1; \
+	if echo "$$helm_out" | grep -q '^tempo$$'; then \
+		helmfile -f "$(OBSERVABILITY_HELMFILE)" -e "$(HELMFILE_ENV)" -l component=tempo destroy; \
+	else \
+		echo "[NOTE: tempo not installed, skipping uninstall]"; \
+	fi
+
 # ==== Prerequisite/Utility Targets ====
 .PHONY: check-helm
 check-helm: ## Verify helm and helm-git plugin are installed
@@ -383,10 +415,17 @@ check-tf-files: ## Verify terraform env files exist
 	@test -f $(TF_DIR)/$(TF_VARS) || { echo "ERROR: tfvars file not found: $(TF_DIR)/$(TF_VARS)";  echo "Create a copy from $(TF_DIR)/$(TF_VARS).example and customize it"; exit 1; }
 	@echo "OK: terraform env files found for $(TF_ENV)"
 
+# check-dns-label: validate a value is a Kubernetes DNS label
+# Usage: $(call check-dns-label,<value>,<name-for-error>)
+define check-dns-label
+	@printf '%s' "$(1)" | grep -qE '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$$' \
+		|| { echo "ERROR: $(2) '$(1)' is not a valid DNS label (lowercase alphanumeric and hyphens, 1-63 chars)"; exit 1; }
+endef
+
 # check-namespace: check if a namespace exists and create it if it doesn't
 # Usage: $(call check-namespace,<namespace-name>)
 define check-namespace
-	@kubectl get namespace $(1) >/dev/null 2>&1 || kubectl create namespace $(1) || { echo "ERROR: failed to create namespace $(1)"; exit 1; }
+	@kubectl get namespace "$(1)" >/dev/null 2>&1 || kubectl create namespace "$(1)" || { echo "ERROR: failed to create namespace $(1)"; exit 1; }
 	@echo "OK: namespace $(1) ready"
 endef
 
@@ -555,14 +594,14 @@ ci-cleanup: uninstall-maestro destroy-terraform ## Ci cleanup: uninstall maestro
 # Kind targets
 
 .PHONY: local-up-kind
-local-up-kind: create-kind-cluster kind-build-images install-priority-classes install-maestro-all generate-rabbitmq-values maybe-install-grafana install-hyperfleet ## Full local kind setup (cluster + images + maestro + hyperfleet)
+local-up-kind: create-kind-cluster kind-build-images install-priority-classes install-maestro-all generate-rabbitmq-values maybe-install-grafana maybe-install-tracing install-hyperfleet ## Full local kind setup
 
 .PHONY: local-down-kind
-local-down-kind: uninstall-hyperfleet uninstall-grafana uninstall-maestro delete-kind-cluster ## Tear down kind: uninstall all + delete cluster
+local-down-kind: uninstall-hyperfleet uninstall-tracing uninstall-grafana uninstall-maestro delete-kind-cluster ## Tear down kind stack and delete cluster
 
 # GKE targets
 .PHONY: local-up-gcp
-local-up-gcp: install-terraform get-credentials install-priority-classes install-maestro-all maybe-install-grafana install-hyperfleet ## Full gke setup (cluster + maestro + hyperfleet)
+local-up-gcp: install-terraform get-credentials install-priority-classes install-maestro-all maybe-install-grafana maybe-install-tracing install-hyperfleet ## Full gke setup
 
 .PHONY: local-down-gcp
-local-down-gcp: get-credentials uninstall-grafana uninstall-maestro uninstall-hyperfleet destroy-terraform ## Tear down gke (cluster + maestro + hyperfleet)
+local-down-gcp: get-credentials uninstall-hyperfleet uninstall-tracing uninstall-grafana uninstall-maestro destroy-terraform ## Tear down gke stack and destroy terraform

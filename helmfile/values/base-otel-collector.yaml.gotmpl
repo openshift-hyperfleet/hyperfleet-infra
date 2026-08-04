@@ -1,0 +1,92 @@
+# OpenTelemetry Collector — OTLP receiver, tail sampling, Tempo export.
+# Uses the contrib image for tail_sampling processor support.
+
+fullnameOverride: otel-collector
+
+mode: deployment
+replicaCount: 1
+
+image:
+  repository: otel/opentelemetry-collector-contrib
+
+serviceAccount:
+  create: true
+
+# Limit OTLP ingress to the HyperFleet app namespace.
+networkPolicy:
+  enabled: true
+  allowIngressFrom:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: {{ env "NAMESPACE" | default "hyperfleet-local" }}
+
+config:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+    jaeger: null
+    prometheus: null
+    zipkin: null
+
+  processors:
+    tail_sampling:
+      policies:
+        - name: errors
+          type: status_code
+          status_code:
+            status_codes:
+              - ERROR
+        - name: api-writes
+          type: string_attribute
+          string_attribute:
+            key: http.request.method
+            values:
+              - POST
+              - PATCH
+              - PUT
+              - DELETE
+        - name: reconciliations
+          type: string_attribute
+          string_attribute:
+            key: messaging.operation.type
+            values:
+              - publish
+        - name: baseline
+          type: probabilistic
+          probabilistic:
+            sampling_percentage: 1
+
+  exporters:
+    otlp/tempo:
+      endpoint: "tempo.{{ .Values.monitoringNamespace }}.svc.cluster.local:4317"
+      tls:
+        insecure: true
+    debug: null
+
+  service:
+    pipelines:
+      traces:
+        receivers:
+          - otlp
+        processors:
+          - tail_sampling
+        exporters:
+          - otlp/tempo
+      metrics: null
+      logs: null
+
+ports:
+  otlp:
+    enabled: true
+  otlp-http:
+    enabled: false
+  jaeger-compact:
+    enabled: false
+  jaeger-thrift:
+    enabled: false
+  jaeger-grpc:
+    enabled: false
+  zipkin:
+    enabled: false
