@@ -114,7 +114,7 @@ Configuration precedence (highest to lowest):
 ### Tracing
 
 | Target | Description |
-|--------|-------------|
+| -------- | ------------- |
 | `make install-tracing` | Install Tempo + OpenTelemetry Collector tracing backend |
 | `make uninstall-tracing` | Uninstall Tempo + OpenTelemetry Collector |
 

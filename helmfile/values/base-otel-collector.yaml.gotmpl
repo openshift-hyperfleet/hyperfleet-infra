@@ -12,6 +12,14 @@ image:
 serviceAccount:
   create: true
 
+# Memory request == limit (OOM at a hard ceiling, no throttling concern). No CPU limit to avoid CFS throttling.
+resources:
+  requests:
+    memory: 512Mi
+    cpu: 100m
+  limits:
+    memory: 512Mi
+
 # Limit OTLP ingress to the HyperFleet app namespace.
 networkPolicy:
   enabled: true
@@ -31,7 +39,13 @@ config:
     zipkin: null
 
   processors:
+    # Percentages are of resources.limits.memory above, keep them in sync.
+    memory_limiter:
+      check_interval: 1s
+      limit_percentage: 80
+      spike_limit_percentage: 25
     tail_sampling:
+      decision_wait: 60s
       policies:
         - name: errors
           type: status_code
@@ -57,12 +71,22 @@ config:
           type: probabilistic
           probabilistic:
             sampling_percentage: 1
+    batch:
+      timeout: 5s
+      send_batch_size: 512
 
   exporters:
     otlp/tempo:
       endpoint: "tempo.{{ .Values.monitoringNamespace }}.svc.cluster.local:4317"
       tls:
         insecure: true
+      timeout: 10s
+      sending_queue:
+        enabled: true
+        queue_size: 1000
+      retry_on_failure:
+        enabled: true
+        max_elapsed_time: 300s
     debug: null
 
   service:
@@ -71,7 +95,9 @@ config:
         receivers:
           - otlp
         processors:
+          - memory_limiter
           - tail_sampling
+          - batch
         exporters:
           - otlp/tempo
       metrics: null
@@ -90,3 +116,30 @@ ports:
     enabled: false
   zipkin:
     enabled: false
+
+# Tempo NetworkPolicy: restrict ingress to monitoring namespace (otel-collector, Grafana).
+# Deployed via extraManifests because the Tempo chart policy requires tempo-client labels
+# and only supports a single service port.
+extraManifests:
+  - apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata:
+      name: tempo-ingress
+      namespace: {{ .Values.monitoringNamespace }}
+    spec:
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: tempo
+          app.kubernetes.io/instance: tempo
+      policyTypes:
+        - Ingress
+      ingress:
+        - from:
+            - namespaceSelector:
+                matchLabels:
+                  kubernetes.io/metadata.name: {{ .Values.monitoringNamespace }}
+          ports:
+            - protocol: TCP
+              port: 4317
+            - protocol: TCP
+              port: 3200

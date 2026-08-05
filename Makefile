@@ -324,6 +324,9 @@ ifneq ($(strip $(TRACING_ENABLED)),true)
 	@echo "[NOTE: Skipping tracing backend]"
 	@echo "To enable set TRACING_ENABLED=true in env.kind or env.gcp"
 else
+	@if [ "$(strip $(OBSERVABILITY_ENABLED))" != "true" ]; then \
+		echo "ERROR: TRACING_ENABLED=true requires OBSERVABILITY_ENABLED=true (Tempo has no Grafana to attach to otherwise)"; exit 1; \
+	fi
 	$(MAKE) install-tracing
 endif
 
