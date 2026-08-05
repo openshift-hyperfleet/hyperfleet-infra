@@ -117,7 +117,7 @@ ports:
   zipkin:
     enabled: false
 
-# Tempo NetworkPolicy: restrict ingress to monitoring namespace (otel-collector, Grafana).
+# Tempo NetworkPolicy: restrict ingress to the monitoring namespace.
 # Deployed via extraManifests because the Tempo chart policy requires tempo-client labels
 # and only supports a single service port.
 extraManifests:

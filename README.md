@@ -113,6 +113,8 @@ Configuration precedence (highest to lowest):
 
 ### Tracing
 
+Set `TRACING_ENABLED=true` and `OBSERVABILITY_ENABLED=true`.
+
 | Target | Description |
 | -------- | ------------- |
 | `make install-tracing` | Install Tempo + OpenTelemetry Collector tracing backend |
@@ -186,7 +188,8 @@ Configuration precedence (highest to lowest):
 | `CLEANER_LABEL_SELECTOR` | `hyperfleet.io/cluster-id` | `hyperfleet.io/cluster-id` | Label selector to identify orphan namespaces |
 | `CLEANER_AGE_MINUTES` | `180` | `180` | Minimum age (minutes) before a namespace is eligible for cleanup |
 | `CLEANER_MAESTRO_URL` | `http://maestro.$(MAESTRO_NAMESPACE).svc.cluster.local:8000` | `http://maestro.$(MAESTRO_NAMESPACE).svc.cluster.local:8000` | Maestro API URL used by the cleaner |
-| `TRACING_ENABLED` | `false` | `false` | Set to `true` to deploy Tempo + OpenTelemetry Collector and enable OTLP tracing in API/Sentinel/Adapter |
+| `OBSERVABILITY_ENABLED` | `false` | `false` | Set to `true` to deploy kube-prometheus-stack (Prometheus + Grafana) and enable ServiceMonitors |
+| `TRACING_ENABLED` | `false` | `false` | Set to `true` to deploy Tempo + OpenTelemetry Collector and enable OTLP tracing (requires `OBSERVABILITY_ENABLED=true`) |
 | `MONITORING_NAMESPACE` | `monitoring` | `monitoring` | Namespace for the observability helmfile releases |
 
 ### JWT Authentication (optional)
