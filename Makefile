@@ -269,7 +269,7 @@ add-ttl-labels: ## Add TTL labels to existing GKE clusters (DRY_RUN=true by defa
 # ==== Namespace Cleaner Targets ====
 .PHONY: install-cleaner
 install-cleaner: check-helm check-kubectl ## Install namespace cleaner CronJob (CLEANER_SCHEDULE, CLEANER_LABEL_SELECTOR, CLEANER_AGE_MINUTES)
-	$(call check-namespace,$(CLEANER_NAMESPACE))
+	$(call check-namespace,CLEANER_NAMESPACE)
 	helm upgrade --install namespace-cleaner $(HELM_DIR)/namespace-cleaner \
 		--namespace $(CLEANER_NAMESPACE) \
 		--set-string "schedule=$(CLEANER_SCHEDULE)" \
@@ -301,7 +301,7 @@ endif
 .PHONY: install-grafana
 install-grafana: check-helmfile check-kubectl-context ## Install kube-prometheus-stack (Prometheus + Grafana + Operator + CRDs)
 	@test -n "$(GRAFANA_ADMIN_PASSWORD)" || { echo "ERROR: GRAFANA_ADMIN_PASSWORD is required"; exit 1; }
-	$(call check-namespace,$(MONITORING_NAMESPACE))
+	$(call check-namespace,MONITORING_NAMESPACE)
 	@kubectl create secret generic grafana-admin-credentials \
 		--namespace $(MONITORING_NAMESPACE) \
 		--from-literal=admin-user=$(GRAFANA_ADMIN_USER) \
@@ -316,6 +316,41 @@ uninstall-grafana: check-kubectl-context ## Uninstall kube-prometheus-stack
 		kubectl delete secret grafana-admin-credentials --namespace $(MONITORING_NAMESPACE) --ignore-not-found; \
 	else \
 		echo "[NOTE: kube-prometheus-stack not installed, skipping uninstall]"; \
+	fi
+
+.PHONY: maybe-install-tracing
+maybe-install-tracing:
+ifneq ($(strip $(TRACING_ENABLED)),true)
+	@echo "[NOTE: Skipping tracing backend]"
+	@echo "To enable set TRACING_ENABLED=true in env.kind or env.gcp"
+else
+	@if [ "$(strip $(OBSERVABILITY_ENABLED))" != "true" ]; then \
+		echo "ERROR: TRACING_ENABLED=true requires OBSERVABILITY_ENABLED=true"; exit 1; \
+	fi
+	$(MAKE) install-tracing
+endif
+
+.PHONY: install-tracing
+install-tracing: check-helmfile check-kubectl-context ## Install Tempo + OpenTelemetry Collector tracing backend
+	$(call check-dns-label,MONITORING_NAMESPACE)
+	$(call check-namespace,MONITORING_NAMESPACE)
+	helmfile -f "$(OBSERVABILITY_HELMFILE)" -e "$(HELMFILE_ENV)" -l component=tempo apply
+	helmfile -f "$(OBSERVABILITY_HELMFILE)" -e "$(HELMFILE_ENV)" -l component=otel-collector apply
+
+.PHONY: uninstall-tracing
+uninstall-tracing: check-kubectl-context ## Uninstall Tempo + OpenTelemetry Collector
+	$(call check-dns-label,MONITORING_NAMESPACE)
+	@helm_out=$$(helm list --namespace "$(MONITORING_NAMESPACE)" --short) || exit 1; \
+	if echo "$$helm_out" | grep -q '^otel-collector$$'; then \
+		helmfile -f "$(OBSERVABILITY_HELMFILE)" -e "$(HELMFILE_ENV)" -l component=otel-collector destroy; \
+	else \
+		echo "[NOTE: otel-collector not installed, skipping uninstall]"; \
+	fi
+	@helm_out=$$(helm list --namespace "$(MONITORING_NAMESPACE)" --short) || exit 1; \
+	if echo "$$helm_out" | grep -q '^tempo$$'; then \
+		helmfile -f "$(OBSERVABILITY_HELMFILE)" -e "$(HELMFILE_ENV)" -l component=tempo destroy; \
+	else \
+		echo "[NOTE: tempo not installed, skipping uninstall]"; \
 	fi
 
 # ==== Prerequisite/Utility Targets ====
@@ -383,11 +418,21 @@ check-tf-files: ## Verify terraform env files exist
 	@test -f $(TF_DIR)/$(TF_VARS) || { echo "ERROR: tfvars file not found: $(TF_DIR)/$(TF_VARS)";  echo "Create a copy from $(TF_DIR)/$(TF_VARS).example and customize it"; exit 1; }
 	@echo "OK: terraform env files found for $(TF_ENV)"
 
-# check-namespace: check if a namespace exists and create it if it doesn't
-# Usage: $(call check-namespace,<namespace-name>)
+# check-dns-label: validate a Make variable as a Kubernetes DNS label.
+# Pass the variable name (not its value) so the shell expands it safely.
+# Usage: $(call check-dns-label,VAR_NAME)
+define check-dns-label
+	@printf '%s' "$${$(1)}" | grep -qE '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$$' \
+		|| { echo "ERROR: $(1) '$${$(1)}' is not a valid DNS label (lowercase alphanumeric and hyphens, 1-63 chars)"; exit 1; }
+endef
+
+# check-namespace: check if a namespace exists and create it if it doesn't.
+# Pass the variable name (not its value) so the shell expands it safely.
+# Usage: $(call check-namespace,VAR_NAME)
 define check-namespace
-	@kubectl get namespace $(1) >/dev/null 2>&1 || kubectl create namespace $(1) || { echo "ERROR: failed to create namespace $(1)"; exit 1; }
-	@echo "OK: namespace $(1) ready"
+	@kubectl get namespace "$${$(1)}" >/dev/null 2>&1 || kubectl create namespace "$${$(1)}" \
+		|| { echo "ERROR: failed to create namespace $${$(1)}"; exit 1; }
+	@echo "OK: namespace $${$(1)} ready"
 endef
 
 .PHONY: check-jwt-config
@@ -395,8 +440,10 @@ check-jwt-config: ## Validate OIDC variables when JWT_AUTH_ENABLED=true with GCP
 	@if [ "$(JWT_AUTH_ENABLED)" = "true" ] && [ -n "$(OIDC_ISSUER_URL)" ]; then \
 		echo "$(OIDC_ISSUER_URL)" | grep -qE "^https://[a-zA-Z0-9]" \
 			|| { echo "ERROR: OIDC_ISSUER_URL must be a valid https:// URL (got: $(OIDC_ISSUER_URL))"; exit 1; }; \
-		echo "$(OIDC_JWKS_URL)" | grep -qE "^https://[a-zA-Z0-9]" \
-			|| { echo "ERROR: OIDC_JWKS_URL must be a valid https:// URL (got: $(OIDC_JWKS_URL))"; exit 1; }; \
+		if [ -n "$(OIDC_JWKS_URL)" ]; then \
+			echo "$(OIDC_JWKS_URL)" | grep -qE "^https://[a-zA-Z0-9]" \
+				|| { echo "ERROR: OIDC_JWKS_URL must be a valid https:// URL (got: $(OIDC_JWKS_URL))"; exit 1; }; \
+		fi; \
 		echo "OK: JWT auth config validated (OIDC_ISSUER_URL=$(OIDC_ISSUER_URL))"; \
 	elif [ "$(JWT_AUTH_ENABLED)" = "true" ] && [ -n "$(OIDC_JWKS_URL)" ]; then \
 		echo "ERROR: OIDC_JWKS_URL is set without OIDC_ISSUER_URL. Set both or neither."; exit 1; \
@@ -406,15 +453,14 @@ check-jwt-config: ## Validate OIDC variables when JWT_AUTH_ENABLED=true with GCP
 
 .PHONY: check-hyperfleet-namespace
 check-hyperfleet-namespace: ## Create Hyperfleet namespace if it doesn't exist and label it
-	@printf '%s' "$(NAMESPACE)" | grep -qE '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$$' \
-		|| { echo "ERROR: NAMESPACE '$(NAMESPACE)' is not a valid DNS label (lowercase alphanumeric and hyphens, 1-63 chars)"; exit 1; }
-	$(call check-namespace,$(NAMESPACE))
-	@kubectl label namespace "$(NAMESPACE)" "hyperfleet.io/test-run=$(NAMESPACE)" --overwrite >/dev/null
-	@echo "OK: namespace $(NAMESPACE) labeled with hyperfleet.io/test-run=$(NAMESPACE)"
+	$(call check-dns-label,NAMESPACE)
+	$(call check-namespace,NAMESPACE)
+	@kubectl label namespace "$${NAMESPACE}" "hyperfleet.io/test-run=$${NAMESPACE}" --overwrite >/dev/null
+	@echo "OK: namespace $${NAMESPACE} labeled with hyperfleet.io/test-run=$${NAMESPACE}"
 
 .PHONY: check-maestro-namespace
 check-maestro-namespace: ## Create Maestro namespace if it doesn't exist
-	$(call check-namespace,$(MAESTRO_NAMESPACE))
+	$(call check-namespace,MAESTRO_NAMESPACE)
 
 .PHONY: check-gke-context
 check-gke-context: check-kubectl ## Verify kubectl context points to GKE cluster
@@ -553,14 +599,14 @@ ci-cleanup: uninstall-maestro destroy-terraform ## Ci cleanup: uninstall maestro
 # Kind targets
 
 .PHONY: local-up-kind
-local-up-kind: create-kind-cluster kind-build-images install-priority-classes install-maestro-all generate-rabbitmq-values maybe-install-grafana install-hyperfleet ## Full local kind setup (cluster + images + maestro + hyperfleet)
+local-up-kind: create-kind-cluster kind-build-images install-priority-classes install-maestro-all generate-rabbitmq-values maybe-install-grafana maybe-install-tracing install-hyperfleet ## Full local kind setup
 
 .PHONY: local-down-kind
-local-down-kind: uninstall-hyperfleet uninstall-grafana uninstall-maestro delete-kind-cluster ## Tear down kind: uninstall all + delete cluster
+local-down-kind: uninstall-hyperfleet uninstall-tracing uninstall-grafana uninstall-maestro delete-kind-cluster ## Tear down kind stack and delete cluster
 
 # GKE targets
 .PHONY: local-up-gcp
-local-up-gcp: install-terraform get-credentials install-priority-classes install-maestro-all maybe-install-grafana install-hyperfleet ## Full gke setup (cluster + maestro + hyperfleet)
+local-up-gcp: install-terraform get-credentials install-priority-classes install-maestro-all maybe-install-grafana maybe-install-tracing install-hyperfleet ## Full gke setup
 
 .PHONY: local-down-gcp
-local-down-gcp: get-credentials uninstall-grafana uninstall-maestro uninstall-hyperfleet destroy-terraform ## Tear down gke (cluster + maestro + hyperfleet)
+local-down-gcp: get-credentials uninstall-hyperfleet uninstall-tracing uninstall-grafana uninstall-maestro destroy-terraform ## Tear down gke stack and destroy terraform

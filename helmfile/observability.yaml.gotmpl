@@ -1,5 +1,5 @@
 # Observability stack configuration
-# Components: kube-prometheus-stack
+# Components: kube-prometheus-stack, Tempo, OpenTelemetry Collector
 
 helmDefaults:
   createNamespace: true
@@ -23,6 +23,10 @@ environments:
 commonLabels:
   group: observability
 
+repositories:
+  - name: open-telemetry
+    url: https://open-telemetry.github.io/opentelemetry-helm-charts
+
 ---
 
 # validation is disabled on install because of helm diff trying to fetch CRDs which do not exist at the time
@@ -36,3 +40,23 @@ releases:
       component: kube-prometheus-stack
     values:
       - values/base-kube-prometheus-stack.yaml.gotmpl
+
+  - name: tempo
+    namespace: {{ .Values.monitoringNamespace }}
+    chart: oci://ghcr.io/grafana-community/helm-charts/tempo
+    version: 2.2.3
+    labels:
+      component: tempo
+    values:
+      - values/base-tempo.yaml.gotmpl
+
+  - name: otel-collector
+    namespace: {{ .Values.monitoringNamespace }}
+    chart: open-telemetry/opentelemetry-collector
+    version: 0.166.0
+    needs:
+      - tempo
+    labels:
+      component: otel-collector
+    values:
+      - values/base-otel-collector.yaml.gotmpl
