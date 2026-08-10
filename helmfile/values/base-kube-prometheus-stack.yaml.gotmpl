@@ -5,6 +5,9 @@ grafana:
     existingSecret: grafana-admin-credentials
     userKey: admin-user
     passwordKey: admin-password
+  sidecar:
+    dashboards:
+      searchNamespace: ALL
 {{ if eq (env "TRACING_ENABLED" | default "false") "true" }}
   additionalDataSources:
     - name: Tempo
