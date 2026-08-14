@@ -10,7 +10,7 @@ git clone https://github.com/openshift-hyperfleet/hyperfleet-infra.git
 cd hyperfleet-infra
 
 # 2. Install prerequisites
-#    - helm + helm-git plugin + helmfile
+#    - helm + helmfile + helm-diff plugin
 #    - kubectl
 #    - terraform 1.13.1 via asdf (GCP only)
 #    - Google Cloud SDK + gke-gcloud-auth-plugin (GCP only)
@@ -37,8 +37,7 @@ Notes:
 - Personal tfvars/tfbackend are gitignored — never commit them
 - For kind deployments, Terraform setup is not required
 - `NAMESPACE` controls which Kubernetes namespace is used; set it to run parallel deployments on the same cluster
-- `helm-git` plugin is required for helm to pull charts from sibling repos
-- `diff` plugin is required for helmfile to show the change on upgrade
+- `diff` plugin is required for helmfile to show changes on upgrade
 
 ## Environment Configuration Files
 
@@ -265,6 +264,6 @@ Full standard: https://github.com/openshift-hyperfleet/architecture/blob/main/hy
 
 No semantic versioning. Infrastructure changes deploy from `main` after review and approval via `OWNERS` (Prow enforced).
 
-- Helm charts live in component repos (`hyperfleet-api`, `hyperfleet-sentinel`, `hyperfleet-adapter`) and are pulled via helm-git at deploy time
+- Helm charts live in component repos (`hyperfleet-api`, `hyperfleet-sentinel`, `hyperfleet-adapter`) and are published as OCI artifacts to Quay
 - Terraform modules are versioned through git tags
 - Image tags default to `latest` (GCP) or `local` (kind); override with `API_IMAGE_TAG`, `SENTINEL_IMAGE_TAG`, `ADAPTER_IMAGE_TAG`

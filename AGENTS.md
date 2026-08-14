@@ -117,17 +117,20 @@ These files are gitignored — never commit personal tfvars/tfbackend. Remote st
 
 ## Helm charts and dependencies
 
-Two local charts under `helm/`:
-- `helm/maestro/` — umbrella chart; dependencies pulled from `github.com/openshift-online/maestro` via `helm-git` plugin at `ref=main`
+- `helm/maestro/` — umbrella chart; dependencies pulled from external `github.com/openshift-online/maestro` (Maestro project maintains charts via git)
 - `helm/rabbitmq/` — dev-only, NOT production-ready (no StatefulSet, hardcoded `guest/guest`)
 
 `helm/maestro/charts/` is gitignored; `Chart.lock` is committed. The `install-maestro` target runs `helm dependency update` automatically.
 
 **Required Helm plugins** (not standard):
 ```bash
+# helm-git: Only needed for Maestro external dependency
 helm plugin install https://github.com/aslafy-z/helm-git
+# helm-diff: Required for helmfile
 helm plugin install https://github.com/databus23/helm-diff --verify=false
 ```
+
+**Note**: HyperFleet charts (api, sentinel, adapter) are consumed via OCI from `quay.io/redhat-services-prod/hyperfleet-tenant/hyperfleet/`. No helm-git plugin required for HyperFleet chart deployment.
 
 ---
 
@@ -148,7 +151,7 @@ Helmfile uses Go template syntax (`.gotmpl` extension) throughout.
 
 ## Sibling repos
 
-Helm charts for `hyperfleet-api`, `hyperfleet-sentinel`, and `hyperfleet-adapter` live in their respective sibling repos and are pulled at deploy time via `helm-git`. The `CHART_ORG` and `API_CHART_REF` variables control which org/ref is used.
+Helm charts for `hyperfleet-api`, `hyperfleet-sentinel`, and `hyperfleet-adapter` are consumed via OCI from `quay.io/redhat-services-prod/hyperfleet-tenant/hyperfleet/`. The `API_CHART_VERSION`, `SENTINEL_CHART_VERSION`, and `ADAPTER_CHART_VERSION` environment variables control which versions are deployed (defaults to latest semantic version if unset).
 
 For kind image builds, `PROJECTS_DIR` must point to the parent directory containing those repos (default: `~/openshift-hyperfleet`).
 

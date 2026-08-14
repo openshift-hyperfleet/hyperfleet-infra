@@ -127,7 +127,7 @@ install-priority-classes: check-kubectl ## Install PriorityClasses for critical 
 	@echo "OK: PriorityClasses applied"
 
 .PHONY: install-maestro
-install-maestro: check-helm check-kubectl check-maestro-namespace install-applied-manifest-crd install-priority-classes ## Install Maestro (server + agent)
+install-maestro: check-helm-git check-kubectl check-maestro-namespace install-applied-manifest-crd install-priority-classes ## Install Maestro (server + agent)
 	helm dependency update $(HELM_DIR)/maestro
 	@echo "Installing Maestro..."
 	if ! helm upgrade --install $(DRY_RUN_FLAG) $(MAESTRO_NAMESPACE)-maestro $(HELM_DIR)/maestro \
@@ -200,18 +200,6 @@ endif
 
 
 # ==== Hyperfleet Targets ====
-# add-helm-repo: add a helm repo for a component
-# Usage: $(call add-helm-repo,<component-name>,<chart-ref>)
-define add-helm-repo
-	helm repo add hyperfleet-$(1) "git+https://github.com/$(CHART_ORG)/hyperfleet-$(1)@charts?ref=$(2)&sparse=0"
-	helm repo update hyperfleet-$(1)
-endef
-
-.PHONY: install-repos
-install-repos: check-helmfile-env ## Add all hyperfleet helm repos
-	$(call add-helm-repo,api,$(API_CHART_REF))
-	$(call add-helm-repo,sentinel,$(SENTINEL_CHART_REF))
-	$(call add-helm-repo,adapter,$(ADAPTER_CHART_REF))
 
 .PHONY: install-hyperfleet
 install-hyperfleet: check-helmfile-env check-hyperfleet-namespace check-jwt-config ## Install all HyperFleet components
@@ -355,10 +343,14 @@ uninstall-tracing: check-kubectl-context ## Uninstall Tempo + OpenTelemetry Coll
 
 # ==== Prerequisite/Utility Targets ====
 .PHONY: check-helm
-check-helm: ## Verify helm and helm-git plugin are installed
+check-helm: ## Verify helm is installed
 	@command -v helm >/dev/null 2>&1 || { echo "ERROR: helm is not installed"; exit 1; }
-	@helm plugin list | grep -q "helm-git" || { echo "ERROR: helm-git plugin is not installed. Install with: helm plugin install https://github.com/aslafy-z/helm-git"; exit 1; }
-	@echo "OK: helm and helm-git plugin found"
+	@echo "OK: helm found"
+
+.PHONY: check-helm-git
+check-helm-git: check-helm ## Verify helm-git plugin is installed (required for the Maestro umbrella chart)
+	@helm plugin list | grep -q "helm-git" || { echo "ERROR: helm-git plugin is not installed (required for Maestro charts). Install with: helm plugin install https://github.com/aslafy-z/helm-git"; exit 1; }
+	@echo "OK: helm-git plugin found"
 
 .PHONY: check-helmfile
 check-helmfile: check-helm ## Verify helmfile is installed
