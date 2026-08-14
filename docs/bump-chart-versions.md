@@ -16,12 +16,16 @@ Three environment variables control which chart versions are deployed:
 
 | Variable | Default | Component |
 |----------|---------|-----------|
-| `API_CHART_VERSION` | `0.3.1` | hyperfleet-api-chart |
-| `SENTINEL_CHART_VERSION` | `0.3.1` | hyperfleet-sentinel-chart |
-| `ADAPTER_CHART_VERSION` | `0.3.1` | hyperfleet-adapter-chart |
+| `API_CHART_VERSION` | `` (empty) | hyperfleet-api-chart |
+| `SENTINEL_CHART_VERSION` | `` (empty) | hyperfleet-sentinel-chart |
+| `ADAPTER_CHART_VERSION` | `` (empty) | hyperfleet-adapter-chart |
+
 
 These are defined in `helmfile/helmfile.yaml.gotmpl` and can be overridden via environment variables or `env.gcp`/`env.kind`.
 
+**Default Behavior (empty/unset)**: By default, the version is empty, which tells Helm to pull the latest semantic version available in the OCI registry. This maintains the same "always up-to-date" behavior as the previous helm-git setup with `ref=main`. Helm automatically selects the highest SemVer tag.
+
+**Pinning to a Specific Version**: For production deployments or when you need to test a specific chart version, set the variable to a SemVer version like `0.3.1`.
 ## Listing Available Versions
 
 ### Via Quay UI

@@ -13,11 +13,11 @@ values:
   - namespace: {{ requiredEnv "NAMESPACE" }}
   - charts:
       api:
-        version: {{ env "API_CHART_VERSION" | default "0.3.1" }}
+        version: {{ env "API_CHART_VERSION" | default "" }}
       sentinel:
-        version: {{ env "SENTINEL_CHART_VERSION" | default "0.3.1" }}
+        version: {{ env "SENTINEL_CHART_VERSION" | default "" }}
       adapter:
-        version: {{ env "ADAPTER_CHART_VERSION" | default "0.3.1" }}
+        version: {{ env "ADAPTER_CHART_VERSION" | default "" }}
 
 # Environment configurations - e2e, e2e-kind, kind, gcp
 environments:
@@ -69,7 +69,9 @@ releases:
   - name: hyperfleet-api
     namespace: {{ .Values.namespace }}
     chart: oci://quay.io/redhat-services-prod/hyperfleet-tenant/hyperfleet/hyperfleet-api-chart
+{{ if .Values.charts.api.version }}
     version: {{ .Values.charts.api.version }}
+{{ end }}
     labels:
       component: api
     values:
@@ -79,7 +81,9 @@ releases:
   - name: {{ .name }}
     namespace: {{ $.Values.namespace }}
     chart: oci://quay.io/redhat-services-prod/hyperfleet-tenant/hyperfleet/hyperfleet-sentinel-chart
+{{ if $.Values.charts.sentinel.version }}
     version: {{ $.Values.charts.sentinel.version }}
+{{ end }}
     needs:
       - hyperfleet-api
     labels:
@@ -99,7 +103,9 @@ releases:
   - name: {{ .name }}
     namespace: {{ $.Values.namespace }}
     chart: oci://quay.io/redhat-services-prod/hyperfleet-tenant/hyperfleet/hyperfleet-adapter-chart
+{{ if $.Values.charts.adapter.version }}
     version: {{ $.Values.charts.adapter.version }}
+{{ end }}
     labels:
       component: adapter
     values:

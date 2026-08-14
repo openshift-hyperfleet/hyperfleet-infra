@@ -175,9 +175,9 @@ Set `TRACING_ENABLED=true` and `OBSERVABILITY_ENABLED=true`.
 | `SENTINEL_IMAGE_TAG` | `dev` | `local` | |
 | `ADAPTER_IMAGE_TAG` | `dev` | `local` | |
 | `IMAGE_PULL_POLICY` | `Always` | `IfNotPresent` | |
-| `API_CHART_VERSION` | `0.3.1` | `0.3.1` | OCI chart version for API |
-| `SENTINEL_CHART_VERSION` | `0.3.1` | `0.3.1` | OCI chart version for Sentinel |
-| `ADAPTER_CHART_VERSION` | `0.3.1` | `0.3.1` | OCI chart version for Adapter |
+| `API_CHART_VERSION` | `` (empty) | `` (empty) | OCI chart version; empty=latest, or pin to version like `0.3.1` |
+| `SENTINEL_CHART_VERSION` | `` (empty) | `` (empty) | OCI chart version; empty=latest, or pin to version like `0.3.1` |
+| `ADAPTER_CHART_VERSION` | `` (empty) | `` (empty) | OCI chart version; empty=latest, or pin to version like `0.3.1` |
 | `TF_ENV` | `dev` | N/A | Selects `envs/gke/<TF_ENV>.tfvars` |
 | `RABBITMQ_URL` | N/A | `amqp://guest:guest@rabbitmq:5672` | |
 | `MAESTRO_CONSUMER` | `cluster1` | `cluster1` | |
