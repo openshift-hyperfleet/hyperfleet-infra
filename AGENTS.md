@@ -125,7 +125,6 @@ Two local charts under `helm/`:
 
 **Required Helm plugins** (not standard):
 ```bash
-helm plugin install https://github.com/aslafy-z/helm-git
 helm plugin install https://github.com/databus23/helm-diff --verify=false
 ```
 
@@ -148,7 +147,7 @@ Helmfile uses Go template syntax (`.gotmpl` extension) throughout.
 
 ## Sibling repos
 
-Helm charts for `hyperfleet-api`, `hyperfleet-sentinel`, and `hyperfleet-adapter` live in their respective sibling repos and are pulled at deploy time via `helm-git`. The `CHART_ORG` and `API_CHART_REF` variables control which org/ref is used.
+Helm charts for `hyperfleet-api`, `hyperfleet-sentinel`, and `hyperfleet-adapter` are published to Quay as OCI artifacts and pulled via standard `oci://` repositories. The `API_CHART_VERSION`, `SENTINEL_CHART_VERSION`, and `ADAPTER_CHART_VERSION` variables control which versions are deployed.
 
 For kind image builds, `PROJECTS_DIR` must point to the parent directory containing those repos (default: `~/openshift-hyperfleet`).
 
