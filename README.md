@@ -27,12 +27,11 @@ Two message broker backends are supported:
 
 ### All environments
 
-- `helm` + [`helm-git` plugin](https://github.com/aslafy-z/helm-git) + [`helm-diff` plugin](https://github.com/databus23/helm-diff)
+- `helm` + [`helm-diff` plugin](https://github.com/databus23/helm-diff)
 - `helmfile`
 - `kubectl` with a configured context
 
 ```bash
-helm plugin install https://github.com/aslafy-z/helm-git
 helm plugin install https://github.com/databus23/helm-diff --verify=false
 ```
 
@@ -176,10 +175,9 @@ Set `TRACING_ENABLED=true` and `OBSERVABILITY_ENABLED=true`.
 | `SENTINEL_IMAGE_TAG` | `dev` | `local` | |
 | `ADAPTER_IMAGE_TAG` | `dev` | `local` | |
 | `IMAGE_PULL_POLICY` | `Always` | `IfNotPresent` | |
-| `CHART_ORG` | `openshift-hyperfleet` | `openshift-hyperfleet` | GitHub org for helm-git chart repos |
-| `API_CHART_REF` | `main` | `main` | Git ref for API chart |
-| `SENTINEL_CHART_REF` | `main` | `main` | Git ref for Sentinel chart |
-| `ADAPTER_CHART_REF` | `main` | `main` | Git ref for Adapter chart |
+| `API_CHART_VERSION` | `` (empty) | `` (empty) | OCI chart version; empty=latest, or pin to version like `0.3.1` |
+| `SENTINEL_CHART_VERSION` | `` (empty) | `` (empty) | OCI chart version; empty=latest, or pin to version like `0.3.1` |
+| `ADAPTER_CHART_VERSION` | `` (empty) | `` (empty) | OCI chart version; empty=latest, or pin to version like `0.3.1` |
 | `TF_ENV` | `dev` | N/A | Selects `envs/gke/<TF_ENV>.tfvars` |
 | `RABBITMQ_URL` | N/A | `amqp://guest:guest@rabbitmq:5672` | |
 | `MAESTRO_CONSUMER` | `cluster1` | `cluster1` | |
