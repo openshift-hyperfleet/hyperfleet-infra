@@ -27,14 +27,15 @@ Two message broker backends are supported:
 
 ### All environments
 
-- `helm` + [`helm-git` plugin](https://github.com/aslafy-z/helm-git) + [`helm-diff` plugin](https://github.com/databus23/helm-diff)
+- `helm` + [`helm-diff` plugin](https://github.com/databus23/helm-diff)
 - `helmfile`
 - `kubectl` with a configured context
 
 ```bash
-helm plugin install https://github.com/aslafy-z/helm-git
 helm plugin install https://github.com/databus23/helm-diff --verify=false
 ```
+
+**Note**: [`helm-git` plugin](https://github.com/aslafy-z/helm-git) only needed for Maestro external dependency (dev-only). HyperFleet charts consumed via OCI.
 
 ### GCP only
 
@@ -176,10 +177,6 @@ Set `TRACING_ENABLED=true` and `OBSERVABILITY_ENABLED=true`.
 | `SENTINEL_IMAGE_TAG` | `dev` | `local` | |
 | `ADAPTER_IMAGE_TAG` | `dev` | `local` | |
 | `IMAGE_PULL_POLICY` | `Always` | `IfNotPresent` | |
-| `CHART_ORG` | `openshift-hyperfleet` | `openshift-hyperfleet` | GitHub org for helm-git chart repos |
-| `API_CHART_REF` | `main` | `main` | Git ref for API chart |
-| `SENTINEL_CHART_REF` | `main` | `main` | Git ref for Sentinel chart |
-| `ADAPTER_CHART_REF` | `main` | `main` | Git ref for Adapter chart |
 | `TF_ENV` | `dev` | N/A | Selects `envs/gke/<TF_ENV>.tfvars` |
 | `RABBITMQ_URL` | N/A | `amqp://guest:guest@rabbitmq:5672` | |
 | `MAESTRO_CONSUMER` | `cluster1` | `cluster1` | |
@@ -264,7 +261,7 @@ hyperfleet-infra/
 │   │   └── e2e/adapters/            # E2E adapter configs
 │   └── values/                      # Helm value templates (.gotmpl)
 ├── helm/
-│   ├── maestro/                     # Maestro umbrella chart (deps via helm-git)
+│   ├── maestro/                     # Maestro umbrella chart (external dependency)
 │   └── rabbitmq/                    # Dev-only RabbitMQ (not production-ready)
 ├── scripts/
 │   ├── add-ttl-labels.sh            # Adds TTL labels to existing GKE clusters
