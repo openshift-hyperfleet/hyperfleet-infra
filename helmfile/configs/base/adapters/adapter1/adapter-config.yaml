@@ -9,7 +9,7 @@ log:
 
 clients:
   hyperfleet_api:
-    base_url: http://hyperfleet-api:8000
+    base_url: http://hyperfleet-gateway:8000
     version: v1
     timeout: 2s
     retry_attempts: 3

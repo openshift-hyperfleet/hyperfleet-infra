@@ -26,7 +26,10 @@ image:
   pullPolicy: {{ env "IMAGE_PULL_POLICY" | default "IfNotPresent" }}
 
 service:
-  type: {{ .Values.serviceType }}
+  # hyperfleet-gateway is the intended external entry point (see its own
+  # gatewayServiceType wiring in helmfile.yaml.gotmpl) — hyperfleet-api itself
+  # stays ClusterIP so it can't be reached directly, bypassing gateway header stripping.
+  type: ClusterIP
 
 config:
   entities:

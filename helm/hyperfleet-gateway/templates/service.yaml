@@ -1,0 +1,32 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "hyperfleet-gateway.fullname" . }}
+  labels:
+    {{- include "hyperfleet-gateway.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    {{- include "hyperfleet-gateway.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: http
+---
+# ClusterIP-only, regardless of the main Service type above, so admin/metrics
+# (locked down to /ready and /stats/prometheus, see configmap.yaml) stays
+# reachable to other in-cluster pods without ever going out an external LB.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "hyperfleet-gateway.fullname" . }}-admin
+  labels:
+    {{- include "hyperfleet-gateway.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "hyperfleet-gateway.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: admin
+      port: {{ .Values.service.adminPort }}
+      targetPort: admin
