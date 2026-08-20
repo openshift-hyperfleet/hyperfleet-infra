@@ -226,7 +226,7 @@ HELMFILE_ENV=e2e-gcp NAMESPACE=<your-namespace> \
 To call the API as a human, use a GCP identity token via `kubectl port-forward` (traffic is tunnelled through the encrypted k8s API server connection — avoids sending the token over cleartext HTTP):
 
 ```bash
-kubectl port-forward svc/hyperfleet-api 8000:8000 &
+kubectl port-forward svc/hyperfleet-gateway 8000:8000 &
 TOKEN=$(gcloud auth print-identity-token)
 curl -H "Authorization: Bearer $TOKEN" http://localhost:8000/api/hyperfleet/v1/clusters
 ```

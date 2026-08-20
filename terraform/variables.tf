@@ -179,10 +179,10 @@ variable "pubsub_topic_configs" {
 }
 
 # =============================================================================
-# External API Access
+# External Gateway Access
 # =============================================================================
-variable "enable_external_api" {
-  description = "Enable external access to HyperFleet API via LoadBalancer service"
+variable "enable_external_gateway" {
+  description = "Enable external access to HyperFleet Gateway via LoadBalancer service"
   type        = bool
   default     = false
 }

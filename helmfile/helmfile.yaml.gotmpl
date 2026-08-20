@@ -26,28 +26,28 @@ environments:
     values:
       - projectId: {{ env "PROJECT_ID" | default "hcm-hyperfleet" }}
         brokerType: googlepubsub
-        serviceType: {{ env "API_SERVICE_TYPE" | default "LoadBalancer" }}
+        gatewayServiceType: {{ env "GATEWAY_SERVICE_TYPE" | default "LoadBalancer" }}
         runId: {{ env "RUN_ID" | quote }}
       - environments/e2e-gcp/adapter-configs.yaml.gotmpl
       - environments/e2e-gcp/sentinel-configs.yaml
   e2e-kind:
     values:
       - brokerType: rabbitmq
-        serviceType: {{ env "API_SERVICE_TYPE" | default "ClusterIP" }}
+        gatewayServiceType: {{ env "GATEWAY_SERVICE_TYPE" | default "ClusterIP" }}
         runId: {{ env "RUN_ID" | quote }}
       - environments/e2e-kind/adapter-configs.yaml.gotmpl
       - environments/e2e-kind/sentinel-configs.yaml
   kind:
     values:
       - brokerType: rabbitmq
-        serviceType: {{ env "API_SERVICE_TYPE" | default "ClusterIP" }}
+        gatewayServiceType: {{ env "GATEWAY_SERVICE_TYPE" | default "ClusterIP" }}
       - environments/kind/adapter-configs.yaml.gotmpl
       - environments/kind/sentinel-configs.yaml.gotmpl
   gcp:
     values:
       - projectId: {{ env "PROJECT_ID" | default "hcm-hyperfleet" }}
         brokerType: googlepubsub
-        serviceType: {{ env "API_SERVICE_TYPE" | default "LoadBalancer" }}
+        gatewayServiceType: {{ env "GATEWAY_SERVICE_TYPE" | default "LoadBalancer" }}
       - environments/gcp/adapter-configs.yaml.gotmpl
       - environments/gcp/sentinel-configs.yaml.gotmpl
 
@@ -82,12 +82,23 @@ releases:
     values:
       - values/base-api.yaml.gotmpl
 
+  - name: hyperfleet-gateway
+    namespace: {{ .Values.namespace }}
+    chart: ../helm/hyperfleet-gateway
+    needs:
+      - hyperfleet-api
+    labels:
+      component: gateway
+    values:
+      - values/base-gateway.yaml.gotmpl
+
 {{ range .Values.sentinels }}
   - name: {{ .name }}
     namespace: {{ $.Values.namespace }}
     chart: hyperfleet-sentinel/hyperfleet-sentinel
     needs:
       - hyperfleet-api
+      - hyperfleet-gateway
     labels:
       component: sentinel
     values:
@@ -105,6 +116,9 @@ releases:
   - name: {{ .name }}
     namespace: {{ $.Values.namespace }}
     chart: hyperfleet-adapter/hyperfleet-adapter
+    needs:
+      - hyperfleet-api
+      - hyperfleet-gateway
     labels:
       component: adapter
     values:

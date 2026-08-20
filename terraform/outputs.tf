@@ -90,17 +90,17 @@ output "pubsub_resources" {
 }
 
 # =============================================================================
-# External API Access
+# External Gateway Access
 # =============================================================================
 
-output "external_api_enabled" {
-  description = "Whether external API access is enabled (LoadBalancer firewall rules)"
-  value       = var.enable_external_api
+output "external_gateway_enabled" {
+  description = "Whether external Gateway access is enabled (LoadBalancer firewall rules)"
+  value       = var.enable_external_gateway
 }
 
-output "external_api_note" {
-  description = "Instructions for external API access"
-  value       = var.enable_external_api ? "External API access is ENABLED. Deploy with: helm install hyperfleet charts/hyperfleet-gcp --set base.hyperfleet-api.service.type=LoadBalancer -n hyperfleet-system" : "External API access is DISABLED. Set enable_external_api=true to enable."
+output "external_gateway_note" {
+  description = "Instructions for external Gateway access"
+  value       = var.enable_external_gateway ? "External Gateway access is ENABLED. Deploy with: GATEWAY_SERVICE_TYPE=LoadBalancer HELMFILE_ENV=gcp make install-hyperfleet" : "External Gateway access is DISABLED. Set enable_external_gateway=true to enable."
 }
 
 # =============================================================================

@@ -27,12 +27,13 @@ image:
 adapterConfig:
   log:
     level: debug
-  {{ if eq (env "JWT_AUTH_ENABLED" | default "false") "true" }}
   hyperfleetApi:
+    baseUrl: {{ env "API_BASE_URL" | default "http://hyperfleet-gateway:8000" }}
+    {{ if eq (env "JWT_AUTH_ENABLED" | default "false") "true" }}
     auth:
       enabled: true
       audience: hyperfleet-api
-  {{ end }}
+    {{ end }}
 
 broker:
   type: {{ .Values.brokerType }}

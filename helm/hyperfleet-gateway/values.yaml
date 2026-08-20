@@ -1,0 +1,105 @@
+# Default values for hyperfleet-gateway
+
+# -----------------------------------------------------------------------------
+# Naming
+# -----------------------------------------------------------------------------
+nameOverride: ""
+fullnameOverride: ""
+
+# -----------------------------------------------------------------------------
+# Image
+# -----------------------------------------------------------------------------
+image:
+  registry: ""
+  repository: envoyproxy/envoy
+  tag: v1.39.0
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+# -----------------------------------------------------------------------------
+# Gateway — Envoy proxy behavior (listener, upstream, header handling)
+# -----------------------------------------------------------------------------
+service:
+  type: ClusterIP
+  port: 8000
+  adminPort: 9901
+
+# Backend hyperfleet-api is proxied to
+upstream:
+  host: hyperfleet-api
+  port: 8000
+
+# Headers to remove from client requests
+stripHeaders:
+  - x-tenant-org
+  - x-tenant-project
+  - x-hyperfleet-system
+  - x-hyperfleet-identity
+
+# -----------------------------------------------------------------------------
+# Monitoring — scrape Envoy's built-in /stats/prometheus endpoint
+# -----------------------------------------------------------------------------
+monitoring:
+  serviceMonitor:
+    enabled: false
+
+# -----------------------------------------------------------------------------
+# Availability — replicas, disruption budget, health checks, capacity
+# -----------------------------------------------------------------------------
+replicaCount: 2
+
+podDisruptionBudget:
+  enabled: true
+  maxUnavailable: 1
+
+probes:
+  readiness:
+    initialDelaySeconds: 5
+    periodSeconds: 5
+  liveness:
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    failureThreshold: 3
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+# Leave empty to use the chart's default anti-affinity (preferred, spread across nodes
+# within this release — see templates/deployment.yaml). Set to override or disable.
+affinity: {}
+
+# -----------------------------------------------------------------------------
+# Security — identity and pod/container hardening
+# -----------------------------------------------------------------------------
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+podSecurityContext:
+  fsGroup: 65532
+  runAsNonRoot: true
+  runAsUser: 65532
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: true
+  seccompProfile:
+    type: RuntimeDefault
+
+# -----------------------------------------------------------------------------
+# Scheduling and metadata
+# -----------------------------------------------------------------------------
+podAnnotations: {}
+podLabels: {}
+nodeSelector: {}
+tolerations: []

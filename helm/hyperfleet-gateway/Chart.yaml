@@ -1,0 +1,6 @@
+apiVersion: v2
+name: hyperfleet-gateway
+description: Envoy proxy in front of HyperFleet API
+type: application
+version: 0.1.0
+appVersion: "1.39"

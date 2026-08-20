@@ -1,0 +1,10 @@
+# Base values for HyperFleet Gateway
+
+{{ if eq (env "OBSERVABILITY_ENABLED" | default "false") "true" }}
+monitoring:
+  serviceMonitor:
+    enabled: true
+{{ end }}
+
+service:
+  type: {{ .Values.gatewayServiceType }}
