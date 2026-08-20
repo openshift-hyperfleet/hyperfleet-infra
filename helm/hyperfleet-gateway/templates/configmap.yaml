@@ -28,6 +28,21 @@ data:
                             - remove: {{ . }}
                             {{- end }}
                     http_filters:
+                      {{- if .Values.extAuthz.enabled }}
+                      # ext_authz runs before the router: Authorino authenticates
+                      # the request and injects trusted tenant headers, which the
+                      # router then forwards upstream. Fail-closed and not
+                      # configurable - this is the authentication boundary.
+                      - name: envoy.filters.http.ext_authz
+                        typed_config:
+                          "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz
+                          transport_api_version: V3
+                          failure_mode_allow: false
+                          grpc_service:
+                            envoy_grpc:
+                              cluster_name: authorino
+                            timeout: {{ .Values.extAuthz.timeout }}
+                      {{- end }}
                       - name: envoy.filters.http.router
                         typed_config:
                           "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
@@ -43,6 +58,27 @@ data:
                               route:
                                 cluster: upstream
       clusters:
+        {{- if .Values.extAuthz.enabled }}
+        - name: authorino
+          connect_timeout: 0.25s
+          type: STRICT_DNS
+          lb_policy: ROUND_ROBIN
+          # Authorino's authorization API is gRPC, which requires HTTP/2 upstream.
+          typed_extension_protocol_options:
+            envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+              "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+              explicit_http_config:
+                http2_protocol_options: {}
+          load_assignment:
+            cluster_name: authorino
+            endpoints:
+              - lb_endpoints:
+                  - endpoint:
+                      address:
+                        socket_address:
+                          address: {{ .Values.extAuthz.cluster }}.{{ .Release.Namespace }}.svc.cluster.local
+                          port_value: {{ .Values.extAuthz.port }}
+        {{- end }}
         - name: upstream
           connect_timeout: 1s
           type: STRICT_DNS

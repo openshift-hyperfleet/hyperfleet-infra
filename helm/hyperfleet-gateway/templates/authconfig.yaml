@@ -1,0 +1,80 @@
+{{- if .Values.extAuthz.enabled }}
+{{- $model := .Values.tenantModel | default "onprem" }}
+{{- $cfg := index .Values.tenantModels $model }}
+{{- if not $cfg }}
+{{- fail (printf "tenantModel %q not found in .Values.tenantModels (expected e.g. onprem|oracle)" $model) }}
+{{- end }}
+{{- if not .Values.oidc.issuerUrl }}
+{{- fail "oidc.issuerUrl (OIDC_ISSUER_URL) is required when extAuthz.enabled=true: the gateway is fail-closed and an empty issuer means every request is denied" }}
+{{- end }}
+{{- if not (regexMatch "^https://" .Values.oidc.issuerUrl) }}
+{{- fail (printf "oidc.issuerUrl must be an https:// URL (got: %q)" .Values.oidc.issuerUrl) }}
+{{- end }}
+# Human OIDC tenant policy (stable name; model swap replaces in place).
+# Machine identity: HYPERFLEET-1480 TODOs below.
+apiVersion: authorino.kuadrant.io/v1beta3
+kind: AuthConfig
+metadata:
+  name: hyperfleet-tenant-policy
+  labels:
+    {{- include "hyperfleet-gateway.labels" . | nindent 4 }}
+spec:
+  # Matched request authority: always the gateway Service DNS + localhost,
+  # plus any extra hostnames configured via authorino.hosts (AUTHORINO_HOSTS).
+  hosts:
+    - {{ include "hyperfleet-gateway.fullname" . | quote }}
+    - {{ printf "%s.%s.svc.cluster.local" (include "hyperfleet-gateway.fullname" .) .Release.Namespace | quote }}
+    - "localhost"
+    {{- range .Values.authorino.hosts }}
+    - {{ . | quote }}
+    {{- end }}
+  authentication:
+    # TODO(HYPERFLEET-1480): add machine identity - a hyperfleet-machines
+    # kubernetesTokenReview method (audiences: [hyperfleet-api]) plus a
+    # restrict-system-subjects authorization rule matching the adapter/sentinel
+    # ServiceAccounts (selector auth.identity.user.username), keyed off the
+    # x-hyperfleet-system discriminator (auth.identity.hf_system).
+    "human-jwt":
+      jwt:
+        # TODO(HYPERFLEET-1485): kind needs mock IdP for oidc.issuerUrl in e2e.
+        issuerUrl: {{ .Values.oidc.issuerUrl | quote }}
+      credentials:
+        authorizationHeader: {}
+      # hf_system default for humans; structure ready for HYPERFLEET-1480 machine method.
+      defaults:
+        hf_system:
+          value: "false"
+  authorization:
+    # Required tenant claim must be non-empty.
+    {{ $cfg.requiredRule | quote }}:
+      when:
+        - selector: auth.identity.hf_system
+          operator: neq
+          value: "true"
+      patternMatching:
+        patterns:
+          - selector: auth.identity.{{ $cfg.required.claim }}
+            operator: neq
+            value: ""
+  response:
+    success:
+      headers:
+        # TODO(HYPERFLEET-1480): machine callers set hf_system to "true".
+        x-hyperfleet-system:
+          plain:
+            selector: auth.identity.hf_system
+        x-hyperfleet-identity:
+          plain:
+            selector: auth.identity.email
+        {{ $cfg.required.header | quote }}:
+          plain:
+            selector: auth.identity.{{ $cfg.required.claim }}
+        {{ $cfg.optional.header | quote }}:
+          # when-gated: omit optional header when claim absent (avoids "<nil>").
+          when:
+            - selector: auth.identity.{{ $cfg.optional.claim }}
+              operator: neq
+              value: ""
+          plain:
+            selector: auth.identity.{{ $cfg.optional.claim }}
+{{- end }}

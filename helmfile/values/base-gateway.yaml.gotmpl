@@ -8,3 +8,32 @@ monitoring:
 
 service:
   type: {{ .Values.gatewayServiceType }}
+
+# External authorization (Authorino). When enabled, Envoy authenticates every
+# request through Authorino and injects trusted tenant headers; the Authorino
+# instance and the active AuthConfig are deployed by the gateway chart too.
+extAuthz:
+  enabled: {{ env "EXT_AUTHZ_ENABLED" | default "false" }}
+
+# Active tenant model for the rendered AuthConfig (onprem|oracle). Must stay in
+# lockstep with config.server.tenant.dimensions in base-api values when wired.
+tenantModel: {{ env "TENANT_MODEL" | default "onprem" }}
+
+# OIDC issuer the human-jwt AuthConfig validates tokens against. On GCP this is
+# populated by Terraform (generated-values-from-terraform/oidc.env).
+oidc:
+  issuerUrl: {{ env "OIDC_ISSUER_URL" | default "" | quote }}
+
+{{/*
+  Authorino matches the AuthConfig against the request authority. The chart
+  defaults to the in-cluster gateway Service DNS + localhost; set AUTHORINO_HOSTS
+  (comma-separated) to add external hostnames (e.g. the gcp LoadBalancer host)
+  so external callers are matched rather than denied by fail-closed host matching.
+*/}}
+{{- if env "AUTHORINO_HOSTS" }}
+authorino:
+  hosts:
+    {{- range (env "AUTHORINO_HOSTS" | splitList ",") }}
+    - {{ . | trim | quote }}
+    {{- end }}
+{{- end }}
