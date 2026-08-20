@@ -143,7 +143,7 @@ make local-up-kind
 ```bash
 export NAMESPACE=<e2e_namespace>
 kubectl port-forward -n maestro svc/maestro 8001:8000 &
-kubectl port-forward -n $NAMESPACE svc/hyperfleet-api 8000:8000 &
+kubectl port-forward -n $NAMESPACE svc/hyperfleet-gateway 8000:8000 &
 export MAESTRO_URL=http://localhost:8001
 export HYPERFLEET_API_URL=http://localhost:8000
 ```
@@ -179,7 +179,7 @@ make local-up-gcp
 kubectl patch svc maestro -n maestro -p '{"spec":{"type":"LoadBalancer"}}'
 export MAESTRO_EXTERNAL_IP=$(kubectl get svc maestro -n maestro -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
 export MAESTRO_URL=http://${MAESTRO_EXTERNAL_IP}:8000
-export API_EXTERNAL_IP=$(kubectl get svc hyperfleet-api -n $NAMESPACE -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+export API_EXTERNAL_IP=$(kubectl get svc hyperfleet-gateway -n $NAMESPACE -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
 export HYPERFLEET_API_URL=http://${API_EXTERNAL_IP}:8000
 ```
 
