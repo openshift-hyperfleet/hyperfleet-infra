@@ -39,6 +39,13 @@ stripHeaders:
   - x-hyperfleet-system
   - x-hyperfleet-identity
 
+retryPolicy:
+  enabled: true
+  retryOn: connect-failure,refused-stream,reset,gateway-error
+  numRetries: 3
+  perTryTimeout: 15s
+  timeout: 45s
+
 # -----------------------------------------------------------------------------
 # Authentication - Authorino ext_authz gateway and per-model AuthConfig
 # -----------------------------------------------------------------------------
