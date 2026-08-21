@@ -1,5 +1,7 @@
 # Base values for HyperFleet API
 
+replicaCount: 2
+
 {{ $obs := eq (env "OBSERVABILITY_ENABLED" | default "false") "true" }}
 {{ $tracing := eq (env "TRACING_ENABLED" | default "false") "true" }}
 {{ if or $obs $tracing }}

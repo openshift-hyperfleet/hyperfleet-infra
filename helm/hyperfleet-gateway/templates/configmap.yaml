@@ -38,6 +38,27 @@ data:
                           domains:
                             - "*"
                           routes:
+                            {{- if .Values.retryPolicy.enabled }}
+                            # Retries only apply to methods that are safe to duplicate on the
+                            # backend. POST (create) is excluded so a retried request can't
+                            # surface as a spurious 409. PATCH is excluded too: a patch that
+                            # includes "references" bumps the resource generation even when
+                            # the references are unchanged, so retrying it isn't a no-op.
+                            - match:
+                                prefix: /
+                                headers:
+                                  - name: ":method"
+                                    string_match:
+                                      safe_regex:
+                                        regex: "GET|HEAD|PUT|DELETE"
+                              route:
+                                cluster: upstream
+                                timeout: {{ .Values.retryPolicy.timeout }}
+                                retry_policy:
+                                  retry_on: "{{ .Values.retryPolicy.retryOn }}"
+                                  num_retries: {{ .Values.retryPolicy.numRetries }}
+                                  per_try_timeout: {{ .Values.retryPolicy.perTryTimeout }}
+                            {{- end }}
                             - match:
                                 prefix: /
                               route:

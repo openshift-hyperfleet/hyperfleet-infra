@@ -37,6 +37,13 @@ stripHeaders:
   - x-hyperfleet-system
   - x-hyperfleet-identity
 
+retryPolicy:
+  enabled: true
+  retryOn: connect-failure,refused-stream,reset,gateway-error
+  numRetries: 3
+  perTryTimeout: 15s
+  timeout: 45s
+
 # -----------------------------------------------------------------------------
 # Monitoring — scrape Envoy's built-in /stats/prometheus endpoint
 # -----------------------------------------------------------------------------
