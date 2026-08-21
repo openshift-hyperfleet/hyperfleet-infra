@@ -171,6 +171,9 @@ Running it for any other env silently no-ops. E2E envs (`e2e-kind`, `e2e-gcp`) h
 **`install-maestro` installs the AppliedManifestWorks CRD manually**
 The upstream Maestro Helm chart CRD install is broken. `install-maestro` works around this by applying the CRD directly from `open-cluster-management-io/api` before the chart, and sets `--set agent.installWorkCRDs=false`. Do not remove or reorder these steps.
 
+**The Authorino operator is a cluster-singleton prerequisite for gateway ext_authz**
+When `EXT_AUTHZ_ENABLED=true`, the `hyperfleet-gateway` chart renders `Authorino` and `AuthConfig` custom resources. Their CRDs are installed cluster-wide by `make install-authorino-operator` (pinned `AUTHORINO_OPERATOR_VERSION`), which `install-hyperfleet` runs automatically via `maybe-install-authorino-operator` only when `EXT_AUTHZ_ENABLED=true`. If those CRs are applied before the operator exists, helmfile fails on unknown CRDs. Analogous to the maestro CRD workaround above.
+
 **Terraform state lock is always disabled**
 `make install-terraform` and `make destroy-terraform` both pass `-lock=false`. If a previous apply left `terraform/errored.tfstate` (currently present in this repo), resolve it before re-running — Terraform may use it as a fallback.
 

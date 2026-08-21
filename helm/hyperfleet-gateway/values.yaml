@@ -30,12 +30,61 @@ upstream:
   host: hyperfleet-api
   port: 8000
 
-# Headers to remove from client requests
+# Strip forged identity/tenant headers before ext_authz.
 stripHeaders:
   - x-tenant-org
   - x-tenant-project
+  - x-tenant-tenancy-ocid
+  - x-tenant-compartment
   - x-hyperfleet-system
   - x-hyperfleet-identity
+
+# -----------------------------------------------------------------------------
+# Authentication - Authorino ext_authz gateway and per-model AuthConfig
+# -----------------------------------------------------------------------------
+# Authorino ext_authz (requires make install-authorino-operator).
+extAuthz:
+  enabled: false
+  # "<Authorino CR>-authorino-authorization" -> authorino-authorino-authorization
+  cluster: authorino-authorino-authorization
+  port: 50051
+  timeout: 1s
+
+# Rendered when extAuthz.enabled.
+authorino:
+  # Pin published image; align with AUTHORINO_OPERATOR_VERSION in Makefile.
+  image: quay.io/kuadrant/authorino:v0.26.2
+  # TODO(HYPERFLEET-1483): listener/oidcServer TLS and gateway->API NetworkPolicy.
+  tls:
+    enabled: false
+  # Empty: gateway Service DNS + localhost (see authconfig.yaml).
+  hosts: []
+
+# Active AuthConfig model (onprem|oracle). Keep in sync with base-api tenant dimensions.
+tenantModel: onprem
+
+# Per-model claim->header mappings.
+tenantModels:
+  onprem:
+    requiredRule: require-org
+    required:
+      claim: org_id
+      header: x-tenant-org
+    optional:
+      claim: project_id
+      header: x-tenant-project
+  oracle:
+    requiredRule: require-tenancy-ocid
+    required:
+      claim: tenancy_ocid
+      header: x-tenant-tenancy-ocid
+    optional:
+      claim: compartment_id
+      header: x-tenant-compartment
+
+# OIDC issuer for human-jwt AuthConfig (OIDC_ISSUER_URL).
+oidc:
+  issuerUrl: ""
 
 # -----------------------------------------------------------------------------
 # Monitoring — scrape Envoy's built-in /stats/prometheus endpoint

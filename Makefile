@@ -40,6 +40,17 @@ MAESTRO_CONSUMER ?= cluster1
 MAESTRO_NAMESPACE ?= maestro
 KUBECONFIG ?= $(HOME)/.kube/config
 
+# Authorino operator (Kuadrant). Cluster-singleton prerequisite for the gateway
+# ext_authz auth boundary; installs AuthConfig / Authorino CRDs when
+# EXT_AUTHZ_ENABLED=true. Pinned by commit (not the mutable version tag) and
+# checksum-verified before being applied. Bumping AUTHORINO_OPERATOR_VERSION
+# requires updating COMMIT and SHA256 together.
+AUTHORINO_OPERATOR_VERSION        ?= v0.26.0
+AUTHORINO_OPERATOR_COMMIT         ?= 852f24e703c4a21ade6400e8fec7248e2dd562f6
+AUTHORINO_OPERATOR_NAMESPACE      ?= authorino-operator
+AUTHORINO_OPERATOR_MANIFEST       ?= https://raw.githubusercontent.com/Kuadrant/authorino-operator/$(AUTHORINO_OPERATOR_COMMIT)/config/deploy/manifests.yaml
+AUTHORINO_OPERATOR_MANIFEST_SHA256 ?= ce2bef459d1456cbe462754cad571f87150fc1ad8bee4f1d010eb0db5b0aabdd
+
 LIFECYCLE_DIR        ?= functions/lifecycle-enforcer
 
 CLEANER_NAMESPACE    ?= $(NAMESPACE)
@@ -187,6 +198,48 @@ uninstall-maestro: check-helm uninstall-applied-manifest-crd ## Uninstall Maestr
 	helm uninstall $(MAESTRO_NAMESPACE)-maestro --namespace $(MAESTRO_NAMESPACE) || true
 
 
+# ==== Authorino Targets ====
+.PHONY: install-authorino-operator
+install-authorino-operator: check-kubectl ## Install the Authorino operator (pinned, cluster-wide) - prerequisite for gateway ext_authz
+	@echo "Installing Authorino operator $(AUTHORINO_OPERATOR_VERSION)..."
+	@tmp=$$(mktemp) && \
+	if ! curl -fsSL -o "$$tmp" "$(AUTHORINO_OPERATOR_MANIFEST)"; then \
+		echo "ERROR: failed to download Authorino operator manifest"; rm -f "$$tmp"; exit 1; \
+	fi; \
+	actual=$$( (command -v sha256sum >/dev/null 2>&1 && sha256sum "$$tmp" || shasum -a 256 "$$tmp") | cut -d' ' -f1 ); \
+	if [ "$$actual" != "$(AUTHORINO_OPERATOR_MANIFEST_SHA256)" ]; then \
+		echo "ERROR: Authorino operator manifest checksum mismatch (expected $(AUTHORINO_OPERATOR_MANIFEST_SHA256), got $$actual)"; rm -f "$$tmp"; exit 1; \
+	fi; \
+	kubectl apply -f "$$tmp"; \
+	rc=$$?; rm -f "$$tmp"; exit $$rc
+	@echo "Waiting for the Authorino operator to be Available..."
+	@kubectl wait --for=condition=Available deployment/authorino-operator --namespace $(AUTHORINO_OPERATOR_NAMESPACE) --timeout=180s
+	@echo "OK: Authorino operator installed"
+
+.PHONY: uninstall-authorino-operator
+uninstall-authorino-operator: check-kubectl ## Uninstall the Authorino operator
+	@echo "Uninstalling Authorino operator $(AUTHORINO_OPERATOR_VERSION)..."
+	@tmp=$$(mktemp) && \
+	if ! curl -fsSL -o "$$tmp" "$(AUTHORINO_OPERATOR_MANIFEST)"; then \
+		echo "ERROR: failed to download Authorino operator manifest"; rm -f "$$tmp"; exit 1; \
+	fi; \
+	actual=$$( (command -v sha256sum >/dev/null 2>&1 && sha256sum "$$tmp" || shasum -a 256 "$$tmp") | cut -d' ' -f1 ); \
+	if [ "$$actual" != "$(AUTHORINO_OPERATOR_MANIFEST_SHA256)" ]; then \
+		echo "ERROR: Authorino operator manifest checksum mismatch (expected $(AUTHORINO_OPERATOR_MANIFEST_SHA256), got $$actual)"; rm -f "$$tmp"; exit 1; \
+	fi; \
+	kubectl delete -f "$$tmp" --ignore-not-found; \
+	rc=$$?; rm -f "$$tmp"; exit $$rc
+	@echo "OK: Authorino operator uninstalled"
+
+.PHONY: maybe-install-authorino-operator
+maybe-install-authorino-operator: ## Install the Authorino operator only when EXT_AUTHZ_ENABLED=true
+ifneq ($(strip $(EXT_AUTHZ_ENABLED)),true)
+	@echo "[NOTE: Skipping Authorino operator install (EXT_AUTHZ_ENABLED != true)]"
+	@echo "To enable the gateway auth boundary set EXT_AUTHZ_ENABLED=true"
+else
+	$(MAKE) install-authorino-operator
+endif
+
 # ==== RabbitMQ Components ====
 .PHONY: generate-rabbitmq-values
 generate-rabbitmq-values: ## Generate Helm values for RabbitMQ deployments (HELMFILE_ENV=kind only)
@@ -214,8 +267,22 @@ install-repos: check-helmfile-env ## Add all hyperfleet helm repos
 	$(call add-helm-repo,adapter,$(ADAPTER_CHART_REF))
 
 .PHONY: install-hyperfleet
-install-hyperfleet: check-helmfile-env check-hyperfleet-namespace check-jwt-config ## Install all HyperFleet components
+install-hyperfleet: check-helmfile-env check-hyperfleet-namespace check-jwt-config check-ext-authz-config maybe-install-authorino-operator ## Install all HyperFleet components
 	helmfile -f helmfile/helmfile.yaml.gotmpl -e $(HELMFILE_ENV) apply
+
+.PHONY: switch-tenant-model
+switch-tenant-model: check-helmfile-env check-ext-authz-config ## Switch the active tenant model (TENANT_MODEL=onprem|oracle); re-applies the gateway AuthConfig and API dimensions together
+	@if [ "$(EXT_AUTHZ_ENABLED)" != "true" ]; then \
+		echo "ERROR: switch-tenant-model requires EXT_AUTHZ_ENABLED=true; with ext_authz off no AuthConfig is deployed and nothing would be switched"; exit 1; \
+	fi
+	@case "$(TENANT_MODEL)" in \
+		onprem|oracle) ;; \
+		*) echo "ERROR: TENANT_MODEL='$(TENANT_MODEL)' must be 'onprem' or 'oracle'"; exit 1 ;; \
+	esac
+	@echo "Switching tenant model to '$(TENANT_MODEL)'..."
+	helmfile -f helmfile/helmfile.yaml.gotmpl -e $(HELMFILE_ENV) -l component=gateway apply
+	helmfile -f helmfile/helmfile.yaml.gotmpl -e $(HELMFILE_ENV) -l component=api apply
+	@echo "OK: tenant model switched to '$(TENANT_MODEL)' (same AuthConfig name replaces the policy; old-model tokens are rejected at the gateway)"
 
 .PHONY: install-api
 install-api: check-helmfile-env check-jwt-config ## Install HyperFleet API
@@ -451,6 +518,19 @@ check-jwt-config: ## Validate OIDC variables when JWT_AUTH_ENABLED=true with GCP
 		echo "OK: JWT auth enabled with K8s in-cluster OIDC (no OIDC_ISSUER_URL needed)"; \
 	fi
 
+.PHONY: check-ext-authz-config
+check-ext-authz-config: ## Validate gateway auth config when EXT_AUTHZ_ENABLED=true; no-op otherwise
+	@if [ "$(EXT_AUTHZ_ENABLED)" = "true" ]; then \
+		test -n "$(OIDC_ISSUER_URL)" || { echo "ERROR: EXT_AUTHZ_ENABLED=true requires OIDC_ISSUER_URL. The gateway is fail-closed; without an issuer the AuthConfig never becomes Ready and every request 403s."; exit 1; }; \
+		echo "$(OIDC_ISSUER_URL)" | grep -qE "^https://[a-zA-Z0-9]" \
+			|| { echo "ERROR: OIDC_ISSUER_URL must be a valid https:// URL (got: $(OIDC_ISSUER_URL))"; exit 1; }; \
+		case "$(TENANT_MODEL)" in \
+			onprem|oracle) ;; \
+			*) echo "ERROR: TENANT_MODEL='$(TENANT_MODEL)' must be 'onprem' or 'oracle'"; exit 1 ;; \
+		esac; \
+		echo "OK: ext_authz config validated (TENANT_MODEL=$(TENANT_MODEL), OIDC_ISSUER_URL set)"; \
+	fi
+
 .PHONY: check-hyperfleet-namespace
 check-hyperfleet-namespace: ## Create Hyperfleet namespace if it doesn't exist and label it
 	$(call check-dns-label,NAMESPACE)
@@ -570,12 +650,45 @@ validate-maestro: check-helm ## Validate Maestro Helm chart rendering
 		--set agent.messageBroker.mqtt.host=maestro-mqtt.$(MAESTRO_NAMESPACE) > /dev/null
 	@echo "OK: all Helm charts rendered successfully"
 
+.PHONY: validate-authorino
+validate-authorino: check-helm ## Validate gateway auth templates
+	@echo "Validating Authorino gateway templates..."
+	@for model in onprem oracle; do \
+		out=$$(helm template gw $(HELM_DIR)/hyperfleet-gateway \
+			--set extAuthz.enabled=true --set tenantModel=$$model \
+			--set oidc.issuerUrl=https://issuer.invalid/oidc 2>&1) \
+			|| { echo "ERROR: render failed for tenantModel=$$model"; echo "$$out"; exit 1; }; \
+		echo "$$out" | grep -q "failure_mode_allow: false" \
+			|| { echo "ERROR ($$model): ext_authz is not fail-closed"; exit 1; }; \
+		echo "$$out" | grep -q "operator.authorino.kuadrant.io/v1beta1" \
+			|| { echo "ERROR ($$model): Authorino instance not rendered"; exit 1; }; \
+		echo "$$out" | awk '/name: envoy.filters.http.ext_authz/{e=NR} /name: envoy.filters.http.router/{r=NR} END{exit !(e>0 && r>0 && e<r)}' \
+			|| { echo "ERROR ($$model): ext_authz must be ordered before router"; exit 1; }; \
+	done
+	@helm template gw $(HELM_DIR)/hyperfleet-gateway --set extAuthz.enabled=true --set tenantModel=onprem --set oidc.issuerUrl=https://issuer.invalid/oidc \
+		| awk '/"x-tenant-project":/{f=1} f&&/when:/{g=1} f&&g&&/selector: auth.identity.project_id/{ok=1} END{exit !ok}' \
+		|| { echo "ERROR: onprem optional header x-tenant-project is not when-gated"; exit 1; }
+	@if helm template gw $(HELM_DIR)/hyperfleet-gateway --set extAuthz.enabled=true --set tenantModel=bogus >/dev/null 2>&1; then \
+		echo "ERROR: invalid tenantModel was accepted (expected fail-fast)"; exit 1; \
+	fi
+	@hosts_out=$$(helm template gw $(HELM_DIR)/hyperfleet-gateway --set extAuthz.enabled=true --set tenantModel=onprem \
+		--set oidc.issuerUrl=https://issuer.invalid/oidc --set authorino.hosts='{gateway.example.com}') \
+		|| { echo "ERROR: render failed with authorino.hosts set"; exit 1; }; \
+	echo "$$hosts_out" | grep -q '"gw-hyperfleet-gateway"' \
+		|| { echo "ERROR: default gateway Service DNS host dropped when authorino.hosts is set"; exit 1; }; \
+	echo "$$hosts_out" | grep -q '"localhost"' \
+		|| { echo "ERROR: default localhost host dropped when authorino.hosts is set"; exit 1; }; \
+	echo "$$hosts_out" | grep -q '"gateway.example.com"' \
+		|| { echo "ERROR: configured authorino.hosts entry not rendered"; exit 1; }
+	@echo "OK: Authorino gateway templates valid (ext_authz before router, fail-closed, when-gated optional header, model guard, additive AUTHORINO_HOSTS)"
+
 .PHONY: ci-validate
 ci-validate: validate-terraform lint-helm lint-shellcheck ## Ci validate: validate terraform + lint helm + lint shellcheck
 
 .PHONY: ci-dry-run
-ci-dry-run: ci-validate ## Ci dry-run: ci-validate + validate maestro
+ci-dry-run: ci-validate ## Ci dry-run: ci-validate + validate maestro + validate authorino
 	$(MAKE) validate-maestro
+	$(MAKE) validate-authorino
 
 .PHONY: health-check-maestro
 health-check-maestro: check-kubectl ## Verify Maestro Components

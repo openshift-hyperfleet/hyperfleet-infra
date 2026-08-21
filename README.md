@@ -92,6 +92,18 @@ Configuration precedence (highest to lowest):
 | `make uninstall-sentinels` | Uninstall Sentinels only |
 | `make uninstall-adapters` | Uninstall Adapters only |
 
+### Gateway Authentication (Authorino)
+
+| Target | Description |
+| -------- | ------------- |
+| `make install-authorino-operator` | Install the pinned Kuadrant Authorino operator (cluster-wide; prerequisite for gateway ext_authz) |
+| `make uninstall-authorino-operator` | Uninstall the Authorino operator |
+| `make switch-tenant-model` | Switch the active tenant model (`TENANT_MODEL=onprem\|oracle`); re-applies the gateway AuthConfig and API together |
+
+When `EXT_AUTHZ_ENABLED=true`, `make install-hyperfleet` installs the Authorino
+operator automatically before deploying, so `install-authorino-operator` only
+needs to be run explicitly for a standalone/one-off install.
+
 ### Terraform
 
 | Target | Description |
@@ -230,6 +242,56 @@ kubectl port-forward svc/hyperfleet-gateway 8000:8000 &
 TOKEN=$(gcloud auth print-identity-token)
 curl -H "Authorization: Bearer $TOKEN" http://localhost:8000/api/hyperfleet/v1/clusters
 ```
+
+### Gateway Authentication (Authorino ext_authz)
+
+When `EXT_AUTHZ_ENABLED=true`, the **gateway is the authentication boundary**.
+Envoy calls [Authorino](https://github.com/Kuadrant/authorino) as an external
+authorization service (gRPC `ext_authz`, fail-closed) for every request:
+Authorino validates the caller's OIDC JWT, denies tokens missing the required
+tenant claim (401/403 at the gateway), and injects trusted tenant identity
+headers (`x-tenant-*`, `x-hyperfleet-*`) for the API. Client-supplied copies of
+those headers are stripped by Envoy before ext_authz, so identity cannot be
+forged from outside.
+
+Identity configuration lives entirely in the AuthConfig, selected by `TENANT_MODEL`:
+
+| `TENANT_MODEL` | Required claim → header | Optional claim → header |
+| -------------- | ----------------------- | ----------------------- |
+| `onprem` | `org_id` → `x-tenant-org` | `project_id` → `x-tenant-project` |
+| `oracle` | `tenancy_ocid` → `x-tenant-tenancy-ocid` | `compartment_id` → `x-tenant-compartment` |
+
+The optional header is injected only when its claim is present, so an absent
+claim is never sent as the literal `<nil>`.
+
+This configuration covers human OIDC callers only. Adapters and sentinels reach
+the API in-cluster and are not authenticated through gateway ext_authz; use
+`JWT_AUTH_ENABLED` (above) for ServiceAccount-token auth on that path.
+
+| Variable | Default | Description |
+| ---------- | --------- | ------------- |
+| `EXT_AUTHZ_ENABLED` | `false` | Make the gateway the auth boundary (deploys Authorino + the active AuthConfig and wires Envoy `ext_authz`). Requires the Authorino operator and `OIDC_ISSUER_URL`. |
+| `TENANT_MODEL` | `onprem` | Active tenant model / AuthConfig (`onprem` or `oracle`) |
+| `AUTHORINO_HOSTS` | *(unset)* | Comma-separated extra hostnames the AuthConfig matches (e.g. the LoadBalancer host). Defaults to the in-cluster gateway Service DNS + `localhost`. |
+
+`OIDC_ISSUER_URL` (see above) doubles as the AuthConfig's `issuerUrl`.
+
+**Swapping the tenant model** is a single scripted, zero-code operation:
+
+```bash
+make switch-tenant-model TENANT_MODEL=oracle
+```
+
+This re-applies the same AuthConfig (stable name `hyperfleet-tenant-policy`) with
+the new model's claims and headers, so tokens issued for the previous model are
+rejected at the gateway.
+
+> **In-app JWT vs gateway auth.** `EXT_AUTHZ_ENABLED` (gateway) and
+> `JWT_AUTH_ENABLED` (in-app, above) are independent. With the gateway as the
+> auth boundary, in-app JWT stays off by default. Tenant headers injected at the
+> gateway are enforced by the API only when `config.server.tenant.dimensions` is
+> wired in helmfile to match the active `TENANT_MODEL` (see
+> `helmfile/values/base-api.yaml.gotmpl`).
 
 ### E2E specific variables
 

@@ -75,6 +75,19 @@ config:
     - kind: WifConfig
       plural: wifconfigs
       spec_schema_name: WifConfigSpec
+  {{/*
+    Auth boundary: when EXT_AUTHZ_ENABLED=true the gateway (Envoy + Authorino)
+    is the authentication boundary - it validates human OIDC callers and injects
+    trusted tenant headers, so in-app JWT stays OFF here (chart default).
+    TODO(HYPERFLEET-1484): re-enable in-app JWT as defense-in-depth (its
+    issuer/audience must match the gateway AuthConfig).
+
+    Tenant enforcement: the API enforces gateway-injected tenant headers via
+    config.server.tenant.dimensions, which must mirror the active tenantModel
+    headers in helm/hyperfleet-gateway/values.yaml. Wire that block here once
+    the API chart renders server.tenant (today it exposes only config.server.jwt).
+    A model swap then moves both sides in lockstep with zero code change.
+  */}}
   {{ if eq (env "JWT_AUTH_ENABLED" | default "false") "true" }}
   server:
     jwt:
