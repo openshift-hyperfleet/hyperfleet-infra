@@ -135,3 +135,125 @@ variable "sweep_schedule_recurrence" {
   type        = string
   default     = "0 * * * *"
 }
+
+# OCI Database with PostgreSQL — scaffolding for the Oracle deployment path's
+# managed instance (see architecture repo ADR 0022:
+# https://github.com/openshift-hyperfleet/architecture/blob/main/hyperfleet/adrs/0022-oci-managed-postgresql.md).
+# Disabled by default: not yet wired into any real deployment, and must never
+# be pointed at the hyperfleet-ci compartment (its sweep deletes DB systems).
+
+variable "postgresql_enabled" {
+  description = <<-EOT
+    Whether to create the managed OCI Database with PostgreSQL instance for
+    the Oracle deployment path. Disabled by default — this is scaffolding
+    (see architecture ADR 0022), not yet wired into a real deployment.
+  EOT
+  type        = bool
+  default     = false
+}
+
+variable "postgresql_compartment_id" {
+  description = <<-EOT
+    OCID of the compartment for the managed db system. Must not be
+    hyperfleet-ci (its sweep function deletes DB systems older than its run
+    window) — enforced by a lifecycle precondition in the postgresql module,
+    not just this description. No default: required once postgresql_enabled
+    is true.
+  EOT
+  type        = string
+  default     = null
+
+  validation {
+    condition     = !var.postgresql_enabled || var.postgresql_compartment_id != null
+    error_message = "postgresql_compartment_id is required when postgresql_enabled is true."
+  }
+}
+
+variable "postgresql_subnet_id" {
+  description = <<-EOT
+    OCID of the subnet for the db system's private endpoint (OCI Database
+    with PostgreSQL has no public-endpoint option). No default: required
+    once postgresql_enabled is true.
+  EOT
+  type        = string
+  default     = null
+
+  validation {
+    condition     = !var.postgresql_enabled || var.postgresql_subnet_id != null
+    error_message = "postgresql_subnet_id is required when postgresql_enabled is true."
+  }
+}
+
+variable "postgresql_display_name" {
+  description = "Display name for the managed db system."
+  type        = string
+  default     = "hyperfleet-managed-postgresql"
+}
+
+variable "postgresql_db_version" {
+  description = "PostgreSQL major version. See architecture ADR 0022 for why 17 was chosen."
+  type        = string
+  default     = "17"
+}
+
+variable "postgresql_shape" {
+  description = "Compute shape for the db system's instance node. See architecture ADR 0022 for why VM.Standard.E5.Flex was chosen."
+  type        = string
+  default     = "VM.Standard.E5.Flex"
+}
+
+variable "postgresql_instance_ocpu_count" {
+  description = "OCPU count per db system instance node."
+  type        = number
+  default     = 2
+}
+
+variable "postgresql_instance_memory_size_in_gbs" {
+  description = "Memory, in GB, per db system instance node."
+  type        = number
+  default     = 32
+}
+
+variable "postgresql_availability_domain" {
+  description = <<-EOT
+    Availability domain the db system's storage is pinned to, when
+    postgresql_storage_is_regionally_durable is false. Null (the default)
+    derives it from the region var is set to — us-sanjose-1 has only one AD,
+    so regional (multi-AD) storage durability isn't available there, see
+    architecture ADR 0022. Set explicitly only to pin a specific AD in a
+    multi-AD region.
+  EOT
+  type        = string
+  default     = null
+}
+
+variable "postgresql_storage_is_regionally_durable" {
+  description = <<-EOT
+    Whether db system storage is durable across multiple availability
+    domains. Must stay false in us-sanjose-1 (single AD) — see decision
+    record 0001.
+  EOT
+  type        = bool
+  default     = false
+}
+
+variable "postgresql_admin_username" {
+  description = "Admin username for the managed db system. Gets oci_admin_role, not PostgreSQL SUPERUSER — see architecture ADR 0022."
+  type        = string
+  default     = "hyperfleet_admin"
+}
+
+variable "postgresql_admin_password_secret_id" {
+  description = <<-EOT
+    OCID of the Vault secret holding the admin password. No default:
+    required once postgresql_enabled is true — plaintext passwords are
+    deliberately not supported.
+  EOT
+  type        = string
+  default     = null
+
+  validation {
+    condition     = !var.postgresql_enabled || var.postgresql_admin_password_secret_id != null
+    error_message = "postgresql_admin_password_secret_id is required when postgresql_enabled is true."
+  }
+}

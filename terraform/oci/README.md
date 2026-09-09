@@ -115,6 +115,37 @@ reference them). A purely compartment-scoped identity can create the
 compartment, VCN, budget, and function, but will fail on the dynamic
 groups.
 
+## Managed PostgreSQL (Oracle deployment path)
+
+`postgresql_enabled` (default `false`) scaffolds an **OCI Database with
+PostgreSQL** db system — the managed instance decided on for the Oracle
+deployment path in the architecture repo's
+[ADR 0022](https://github.com/openshift-hyperfleet/architecture/blob/main/hyperfleet/adrs/0022-oci-managed-postgresql.md).
+Self-managed PostgreSQL (the existing embedded Helm sub-charts) remains the
+answer for local and dev work; this is not wired into any real deployment
+yet.
+
+When enabling it, set `postgresql_compartment_id` to a compartment **other
+than** `hyperfleet-ci`. The `oci-ci-sweep` function (see [Sweep
+policy](#sweep-policy)) deletes DB systems in `hyperfleet-ci` older than its
+run window, which would destroy the managed instance if it were created
+there. This is enforced, not just documented: the `postgresql` module takes
+the CI compartment's OCID as `ci_compartment_id` and fails a
+`lifecycle.precondition` if `compartment_id` matches it.
+`postgresql_subnet_id` and `postgresql_admin_password_secret_id` (a Vault
+secret OCID — plaintext admin passwords aren't supported) are also required
+once enabled; variable `validation` blocks enforce those two.
+
+The defaults for shape (`VM.Standard.E5.Flex`) and PostgreSQL version (`17`)
+come from the settings validated live against the tenancy in ADR 0022 —
+re-verify them there if the target shape family ever changes.
+`postgresql_availability_domain` defaults to `null`, which derives the AD
+from whatever `region` is set to (an `oci_identity_availability_domains`
+lookup in the module) rather than hardcoding one; with
+`postgresql_storage_is_regionally_durable = false` (the default), that only
+resolves to a single AD in `us-sanjose-1` today because it's the tenancy's
+only one there.
+
 ## Notifications
 
 **Owner:** `#hcm-hyperfleet-team`.
@@ -198,7 +229,7 @@ for backend setup and team access.
 | `terraform/oci/ci.tfvars.example` | Compartment, quota, budget, and sweep configuration |
 | `terraform/oci/ci.tfbackend.example` | Remote state configuration |
 | `terraform/oci/main.tf` | Root module wiring the compartment, quota, budget, and sweep modules |
-| `terraform/modules/{compartment,quota,budget,lifecycle}/oci/` | Individual resource modules |
+| `terraform/modules/{compartment,quota,budget,lifecycle,postgresql}/oci/` | Individual resource modules |
 | `functions/oci-ci-sweep/` | The sweep function's Go source |
 
 ## Troubleshooting

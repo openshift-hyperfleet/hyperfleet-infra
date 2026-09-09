@@ -38,6 +38,31 @@ module "ci_sweep" {
   freeform_tags = local.tags
 }
 
+module "managed_postgresql" {
+  count = var.postgresql_enabled ? 1 : 0
+
+  source            = "../modules/postgresql/oci"
+  compartment_id    = var.postgresql_compartment_id
+  ci_compartment_id = module.ci_compartment.id
+  tenancy_ocid      = var.tenancy_ocid
+  subnet_id         = var.postgresql_subnet_id
+
+  display_name                  = var.postgresql_display_name
+  db_version                    = var.postgresql_db_version
+  shape                         = var.postgresql_shape
+  instance_ocpu_count           = var.postgresql_instance_ocpu_count
+  instance_memory_size_in_gbs   = var.postgresql_instance_memory_size_in_gbs
+  availability_domain           = var.postgresql_availability_domain
+  storage_is_regionally_durable = var.postgresql_storage_is_regionally_durable
+  admin_username                = var.postgresql_admin_username
+  admin_password_secret_id      = var.postgresql_admin_password_secret_id
+
+  freeform_tags = {
+    "hyperfleet-managed-by" = "terraform"
+    "hyperfleet-purpose"    = "oci-deployment-path-postgresql"
+  }
+}
+
 locals {
   tags = {
     "hyperfleet-managed-by" = "terraform"

@@ -12,3 +12,8 @@ output "sweep_function_id" {
   description = "OCID of the deployed sweep function."
   value       = module.ci_sweep.function_id
 }
+
+output "postgresql_id" {
+  description = "OCID of the managed PostgreSQL db system, if postgresql_enabled is true."
+  value       = try(module.managed_postgresql[0].id, null)
+}
