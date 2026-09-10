@@ -65,3 +65,14 @@ sweep_function_image_digest = "sha256:REPLACE_ME_IMAGE_DIGEST"
 sweep_run_window_hours    = 8
 sweep_dry_run             = true # flip to false once verified end to end
 sweep_schedule_recurrence = "0 * * * *"
+
+# OCI Database with PostgreSQL — scaffolding for the Oracle deployment path's
+# managed instance, disabled by default (see architecture repo ADR 0022:
+# https://github.com/openshift-hyperfleet/architecture/blob/main/hyperfleet/adrs/0022-oci-managed-postgresql.md).
+# Uncomment and fill in the required fields to enable it. Never point
+# postgresql_compartment_id at hyperfleet-ci: its sweep function deletes DB
+# systems older than its run window.
+# postgresql_enabled                  = true
+# postgresql_compartment_id           = "ocid1.compartment.oc1..REPLACE_ME"
+# postgresql_subnet_id                = "ocid1.subnet.oc1..REPLACE_ME"
+# postgresql_admin_password_secret_id = "ocid1.vaultsecret.oc1..REPLACE_ME"
