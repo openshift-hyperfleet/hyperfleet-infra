@@ -132,8 +132,11 @@ auth:
     logging:
       level: info
 
-  # OIDC issuer for human-jwt AuthConfig (OIDC_ISSUER_URL).
+  # OIDC issuer mode for human-jwt AuthConfig. External mode is HTTPS-only;
+  # mock mode accepts only the deterministic in-cluster Service URL derived by
+  # Helmfile and is test-only.
   oidc:
+    mode: external
     issuerUrl: ""
 
   # Machine identity (adapters/sentinels) via kubernetesTokenReview - see authconfig.yaml.

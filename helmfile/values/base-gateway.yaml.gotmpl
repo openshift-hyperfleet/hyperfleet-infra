@@ -25,10 +25,12 @@ auth:
   extAuthz:
     enabled: {{ env "EXT_AUTHZ_ENABLED" | default "false" }}
 
-  # OIDC issuer the human-jwt AuthConfig validates tokens against. On GCP this is
-  # populated by Terraform (generated-values-from-terraform/oidc.env).
+  # OIDC issuer the human-jwt AuthConfig validates tokens against. Mock mode
+  # derives an in-cluster URL and intentionally ignores stale generated GCP
+  # values; external mode preserves the Terraform or CLI-supplied issuer.
   oidc:
-    issuerUrl: {{ env "OIDC_ISSUER_URL" | default "" | quote }}
+    mode: {{ env "OIDC_ISSUER_MODE" | default "external" | quote }}
+    issuerUrl: {{ if eq (env "OIDC_ISSUER_MODE" | default "external") "mock" }}{{ printf "http://hyperfleet-mock-oidc.%s.svc.cluster.local:8080/default" .Values.namespace | quote }}{{ else }}{{ env "OIDC_ISSUER_URL" | default "" | quote }}{{ end }}
 
   machineIdentity:
     audience: {{ .Values.machineIdentityAudience | quote }}

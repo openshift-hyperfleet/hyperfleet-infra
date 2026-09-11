@@ -4,11 +4,22 @@
 {{- if not $cfg }}
 {{- fail (printf "tenant.model %q not found in .Values.tenant.models (expected e.g. onprem|oracle)" $model) }}
 {{- end }}
+{{- $issuerMode := .Values.auth.oidc.mode | default "external" }}
+{{- if and (ne $issuerMode "mock") (ne $issuerMode "external") }}
+{{- fail (printf "auth.oidc.mode %q must be mock or external" $issuerMode) }}
+{{- end }}
 {{- if not .Values.auth.oidc.issuerUrl }}
 {{- fail "auth.oidc.issuerUrl (OIDC_ISSUER_URL) is required when auth.extAuthz.enabled=true: the gateway is fail-closed and an empty issuer means every request is denied" }}
 {{- end }}
-{{- if not (regexMatch "^https://" .Values.auth.oidc.issuerUrl) }}
-{{- fail (printf "auth.oidc.issuerUrl must be an https:// URL (got: %q)" .Values.auth.oidc.issuerUrl) }}
+{{- if eq $issuerMode "external" }}
+{{- if not (regexMatch "^https://[a-zA-Z0-9]" .Values.auth.oidc.issuerUrl) }}
+{{- fail (printf "auth.oidc.issuerUrl must be an https:// URL in external mode (got: %q)" .Values.auth.oidc.issuerUrl) }}
+{{- end }}
+{{- else }}
+{{- $expectedMockIssuer := printf "http://hyperfleet-mock-oidc.%s.svc.cluster.local:8080/default" .Release.Namespace }}
+{{- if ne .Values.auth.oidc.issuerUrl $expectedMockIssuer }}
+{{- fail (printf "auth.oidc.issuerUrl must be the derived mock Service URL %q in mock mode (got: %q)" $expectedMockIssuer .Values.auth.oidc.issuerUrl) }}
+{{- end }}
 {{- end }}
 {{- if not .Values.auth.machineIdentity.allowedServiceAccounts }}
 {{- fail "auth.machineIdentity.allowedServiceAccounts must not be empty" }}
@@ -54,7 +65,6 @@ spec:
       when:
         - predicate: request.headers['authorization'].startsWith('Bearer ')
       jwt:
-        # TODO(HYPERFLEET-1485): kind needs mock IdP for oidc.issuerUrl in e2e.
         issuerUrl: {{ .Values.auth.oidc.issuerUrl | quote }}
       credentials:
         authorizationHeader:
