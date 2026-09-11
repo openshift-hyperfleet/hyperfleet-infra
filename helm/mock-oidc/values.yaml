@@ -1,0 +1,107 @@
+# Test-only mock OIDC server. Do not use this chart in production.
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  repository: ghcr.io/navikt/mock-oauth2-server
+  tag: 6.0.2
+  digest: sha256:b538810afd589d42fbfb856c588c2065eaeed1dc528d6c532972048e67fc2aff
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+service:
+  type: ClusterIP
+  port: 8080
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    cpu: 250m
+    memory: 256Mi
+
+probes:
+  readiness:
+    initialDelaySeconds: 2
+    periodSeconds: 5
+    timeoutSeconds: 2
+  liveness:
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 2
+    failureThreshold: 3
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 1000
+  seccompProfile:
+    type: RuntimeDefault
+
+podSecurityContext:
+  fsGroup: 1000
+
+# Request mappings intentionally cover both supported tenant models and the
+# missing-required-claim cases used by the gateway smoke test.
+config:
+  interactiveLogin: true
+  tokenCallbacks:
+    - issuerId: default
+      tokenExpiry: 600
+      requestMappings:
+        - requestParam: scope
+          match: hyperfleet-onprem-full
+          claims:
+            sub: "${subject}"
+            email: "${subject}"
+            aud:
+              - hyperfleet-api
+            org_id: "${org_id}"
+            project_id: "${project_id}"
+        - requestParam: scope
+          match: hyperfleet-onprem-required
+          claims:
+            sub: "${subject}"
+            email: "${subject}"
+            aud:
+              - hyperfleet-api
+            org_id: "${org_id}"
+        - requestParam: scope
+          match: hyperfleet-onprem-missing
+          claims:
+            sub: "${subject}"
+            email: "${subject}"
+            aud:
+              - hyperfleet-api
+            project_id: "${project_id}"
+        - requestParam: scope
+          match: hyperfleet-oracle-full
+          claims:
+            sub: "${subject}"
+            email: "${subject}"
+            aud:
+              - hyperfleet-api
+            tenancy_ocid: "${tenancy_ocid}"
+            compartment_id: "${compartment_id}"
+        - requestParam: scope
+          match: hyperfleet-oracle-required
+          claims:
+            sub: "${subject}"
+            email: "${subject}"
+            aud:
+              - hyperfleet-api
+            tenancy_ocid: "${tenancy_ocid}"
+        - requestParam: scope
+          match: hyperfleet-oracle-missing
+          claims:
+            sub: "${subject}"
+            email: "${subject}"
+            aud:
+              - hyperfleet-api
+            compartment_id: "${compartment_id}"
