@@ -1,0 +1,24 @@
+# Sandbox image for the pull request review agent.
+# The base image contains claude, gh, git, and node. The review-pr skill also
+# needs jq, openssl, and jira-cli.
+ARG BASE_IMAGE=ghcr.io/nvidia/openshell-community/sandboxes/base@sha256:aeef1c63f00e2913ea002ccb3aaf925f338b5c5d70e63576f0d95c16a138044e
+FROM ${BASE_IMAGE}
+
+ARG JIRA_CLI_VERSION=1.5.2
+ARG JIRA_CLI_SHA256_X86_64=a0b3dbfd1eb64e217a2a74a3f79179328b5debf61d6be8a3ed0d0014bd51512a
+
+USER root
+RUN set -eu; \
+    apt-get update; \
+    apt-get install --yes --no-install-recommends ca-certificates curl jq openssl; \
+    rm -rf /var/lib/apt/lists/*; \
+    archive="jira_${JIRA_CLI_VERSION}_linux_x86_64"; \
+    curl --fail --silent --show-error --location \
+      "https://github.com/ankitpokhrel/jira-cli/releases/download/v${JIRA_CLI_VERSION}/${archive}.tar.gz" \
+      --output /tmp/jira.tar.gz; \
+    echo "${JIRA_CLI_SHA256_X86_64}  /tmp/jira.tar.gz" | sha256sum --check -; \
+    tar --extract --gzip --file /tmp/jira.tar.gz --directory /usr/local/bin \
+      --strip-components=2 "${archive}/bin/jira"; \
+    chmod 0755 /usr/local/bin/jira; \
+    rm /tmp/jira.tar.gz
+USER sandbox

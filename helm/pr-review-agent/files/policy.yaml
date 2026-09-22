@@ -1,0 +1,138 @@
+version: 1
+filesystem_policy:
+  include_workdir: true
+  read_only:
+    - /usr
+    - /lib
+    - /proc
+    - /dev/urandom
+    - /app
+    - /etc
+    - /var/log
+  read_write:
+    - /sandbox
+    - /tmp
+    - /dev/null
+landlock:
+  compatibility: best_effort
+process:
+  run_as_user: sandbox
+  run_as_group: sandbox
+network_policies:
+  claude_code:
+    name: claude-code
+    endpoints:
+      - host: api.anthropic.com
+        port: 443
+        protocol: rest
+        tls: terminate
+        enforcement: enforce
+        access: full
+      # Direct Vertex AI access. The provider profile allows the same hosts.
+      - host: aiplatform.googleapis.com
+        port: 443
+        protocol: rest
+        tls: terminate
+        enforcement: enforce
+        access: full
+      - host: "*-aiplatform.googleapis.com"
+        port: 443
+        protocol: rest
+        tls: terminate
+        enforcement: enforce
+        access: full
+      - host: statsig.anthropic.com
+        port: 443
+      - host: sentry.io
+        port: 443
+    binaries:
+      - path: /usr/local/bin/claude
+      - path: /usr/bin/node
+  github_rest_api:
+    name: github-rest-api
+    endpoints:
+      - host: api.github.com
+        port: 443
+        protocol: rest
+        tls: terminate
+        enforcement: enforce
+        access: read-only
+      # The hyperfleet-architecture skill reads documents from this host.
+      - host: raw.githubusercontent.com
+        port: 443
+        protocol: rest
+        tls: terminate
+        enforcement: enforce
+        access: read-only
+    binaries:
+      - path: /usr/local/bin/claude
+      - path: /usr/bin/gh
+      - path: /usr/local/bin/gh
+      - path: /usr/bin/curl
+  github_pr_feedback:
+    name: github-pr-feedback
+    endpoints:
+      - host: api.github.com
+        port: 443
+        path: /repos/{{ .Values.repository }}/**
+        protocol: rest
+        tls: terminate
+        enforcement: enforce
+        rules:
+          - allow: {method: POST, path: /repos/{{ .Values.repository }}/issues/*/comments}
+          - allow: {method: PATCH, path: /repos/{{ .Values.repository }}/issues/comments/*}
+          - allow: {method: POST, path: /repos/{{ .Values.repository }}/issues/*/labels}
+          - allow: {method: DELETE, path: /repos/{{ .Values.repository }}/issues/*/labels/hf-review/approved}
+          - allow: {method: DELETE, path: /repos/{{ .Values.repository }}/issues/*/labels/hf-review/changes-requested}
+          - allow: {method: POST, path: /repos/{{ .Values.repository }}/pulls/*/reviews}
+          - allow: {method: POST, path: /repos/{{ .Values.repository }}/pulls/*/reviews/*/events}
+          - allow: {method: POST, path: /repos/{{ .Values.repository }}/pulls/*/comments}
+          - allow: {method: POST, path: /repos/{{ .Values.repository }}/pulls/*/comments/*/replies}
+      # The fetch scripts of the review skill read the architecture repository
+      # through GraphQL queries.
+      - host: api.github.com
+        port: 443
+        path: /graphql
+        protocol: graphql
+        tls: terminate
+        enforcement: enforce
+        rules:
+          - allow:
+              operation_type: query
+          - allow:
+              operation_type: mutation
+              operation_name: HfReviewHideReview
+              fields: [minimizeComment]
+    binaries:
+      - path: /usr/local/bin/claude
+      - path: /usr/bin/gh
+      - path: /usr/local/bin/gh
+  github_git:
+    name: github-git
+    endpoints:
+      - host: github.com
+        port: 443
+        protocol: rest
+        tls: terminate
+        enforcement: enforce
+        rules:
+          - allow: {method: GET, path: /**/info/refs*}
+          - allow: {method: POST, path: /**/git-upload-pack}
+    binaries:
+      - path: /usr/bin/git
+      - path: /usr/local/bin/git
+{{- if .Values.providers.jira }}
+  jira_rest_api:
+    name: jira-rest-api
+    endpoints:
+      - host: {{ .Values.jira.host }}
+        port: 443
+        protocol: rest
+        tls: terminate
+        enforcement: enforce
+        rules:
+          - allow: {method: GET, path: {{ .Values.jira.pathPrefix }}/rest/api/*/issue/*}
+          - allow: {method: GET, path: {{ .Values.jira.pathPrefix }}/rest/api/*/issue/*/comment}
+    binaries:
+      - path: /usr/local/bin/jira
+{{- end }}

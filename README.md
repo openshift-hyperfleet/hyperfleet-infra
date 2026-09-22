@@ -168,6 +168,14 @@ configurable in the chart values.
 | `make install-cleaner` | Install namespace cleaner CronJob (configurable via `CLEANER_*` variables) |
 | `make uninstall-cleaner` | Uninstall namespace cleaner CronJob |
 
+### PR Review Agent
+
+| Target | Description |
+|--------|-------------|
+| `make install-pr-review-agent` | Install the pull request review CronJob for one repository, `PR_REVIEW_REPO=api\|sentinel\|adapter\|applier` (see [helm/pr-review-agent](helm/pr-review-agent/README.md)) |
+| `make install-pr-review-agents` | Install the pull request review CronJobs for all repositories in `PR_REVIEW_REPOS` |
+| `make uninstall-pr-review-agent` | Uninstall the pull request review CronJob for one repository |
+
 ### Lifecycle Enforcer
 
 | Target | Description |

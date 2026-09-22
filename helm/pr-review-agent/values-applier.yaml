@@ -1,0 +1,9 @@
+# Release values for hyperfleet-applier. Install with:
+#   make install-pr-review-agent PR_REVIEW_REPO=applier
+repository: openshift-hyperfleet/hyperfleet-applier
+sandbox:
+  # Sandbox names are limited to 19 characters, including a 4 character
+  # suffix. The prefix and the discovery name must differ between releases.
+  namePrefix: hp
+  discoveryName: hfd-app
+fullnameOverride: pr-review-applier

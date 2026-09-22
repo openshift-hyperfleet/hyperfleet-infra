@@ -1,0 +1,119 @@
+# One write block per reviewed repository. Keep the repository list aligned
+# with the values-<repo>.yaml files, and the label names with files/policy.yaml
+# and files/review.sh. After a change run `openshell provider profile update`.
+id: hfreview-github
+display_name: HyperFleet review GitHub
+description: GitHub read access and HyperFleet pull request review access
+category: source_control
+credentials:
+  - name: api_token
+    description: GitHub token
+    env_vars: [GITHUB_TOKEN, GH_TOKEN]
+    required: true
+    auth_style: bearer
+    header_name: authorization
+discovery:
+  credentials: [api_token]
+endpoints:
+  - host: api.github.com
+    port: 443
+    protocol: rest
+    enforcement: enforce
+    rules:
+      - allow: {method: GET, path: "**"}
+      - allow: {method: HEAD, path: "**"}
+      - allow: {method: OPTIONS, path: "**"}
+  - host: api.github.com
+    port: 443
+    path: /repos/openshift-hyperfleet/hyperfleet-api/**
+    protocol: rest
+    enforcement: enforce
+    rules:
+      - allow: {method: POST, path: /repos/openshift-hyperfleet/hyperfleet-api/issues/*/comments}
+      - allow: {method: PATCH, path: /repos/openshift-hyperfleet/hyperfleet-api/issues/comments/*}
+      - allow: {method: POST, path: /repos/openshift-hyperfleet/hyperfleet-api/issues/*/labels}
+      - allow: {method: DELETE, path: /repos/openshift-hyperfleet/hyperfleet-api/issues/*/labels/hf-review/approved}
+      - allow: {method: DELETE, path: /repos/openshift-hyperfleet/hyperfleet-api/issues/*/labels/hf-review/changes-requested}
+      - allow: {method: POST, path: /repos/openshift-hyperfleet/hyperfleet-api/pulls/*/reviews}
+      - allow: {method: POST, path: /repos/openshift-hyperfleet/hyperfleet-api/pulls/*/reviews/*/events}
+      - allow: {method: POST, path: /repos/openshift-hyperfleet/hyperfleet-api/pulls/*/comments}
+      - allow: {method: POST, path: /repos/openshift-hyperfleet/hyperfleet-api/pulls/*/comments/*/replies}
+  - host: api.github.com
+    port: 443
+    path: /repos/openshift-hyperfleet/hyperfleet-sentinel/**
+    protocol: rest
+    enforcement: enforce
+    rules:
+      - allow: {method: POST, path: /repos/openshift-hyperfleet/hyperfleet-sentinel/issues/*/comments}
+      - allow: {method: PATCH, path: /repos/openshift-hyperfleet/hyperfleet-sentinel/issues/comments/*}
+      - allow: {method: POST, path: /repos/openshift-hyperfleet/hyperfleet-sentinel/issues/*/labels}
+      - allow: {method: DELETE, path: /repos/openshift-hyperfleet/hyperfleet-sentinel/issues/*/labels/hf-review/approved}
+      - allow: {method: DELETE, path: /repos/openshift-hyperfleet/hyperfleet-sentinel/issues/*/labels/hf-review/changes-requested}
+      - allow: {method: POST, path: /repos/openshift-hyperfleet/hyperfleet-sentinel/pulls/*/reviews}
+      - allow: {method: POST, path: /repos/openshift-hyperfleet/hyperfleet-sentinel/pulls/*/reviews/*/events}
+      - allow: {method: POST, path: /repos/openshift-hyperfleet/hyperfleet-sentinel/pulls/*/comments}
+      - allow: {method: POST, path: /repos/openshift-hyperfleet/hyperfleet-sentinel/pulls/*/comments/*/replies}
+  - host: api.github.com
+    port: 443
+    path: /repos/openshift-hyperfleet/hyperfleet-adapter/**
+    protocol: rest
+    enforcement: enforce
+    rules:
+      - allow: {method: POST, path: /repos/openshift-hyperfleet/hyperfleet-adapter/issues/*/comments}
+      - allow: {method: PATCH, path: /repos/openshift-hyperfleet/hyperfleet-adapter/issues/comments/*}
+      - allow: {method: POST, path: /repos/openshift-hyperfleet/hyperfleet-adapter/issues/*/labels}
+      - allow: {method: DELETE, path: /repos/openshift-hyperfleet/hyperfleet-adapter/issues/*/labels/hf-review/approved}
+      - allow: {method: DELETE, path: /repos/openshift-hyperfleet/hyperfleet-adapter/issues/*/labels/hf-review/changes-requested}
+      - allow: {method: POST, path: /repos/openshift-hyperfleet/hyperfleet-adapter/pulls/*/reviews}
+      - allow: {method: POST, path: /repos/openshift-hyperfleet/hyperfleet-adapter/pulls/*/reviews/*/events}
+      - allow: {method: POST, path: /repos/openshift-hyperfleet/hyperfleet-adapter/pulls/*/comments}
+      - allow: {method: POST, path: /repos/openshift-hyperfleet/hyperfleet-adapter/pulls/*/comments/*/replies}
+  - host: api.github.com
+    port: 443
+    path: /repos/openshift-hyperfleet/hyperfleet-applier/**
+    protocol: rest
+    enforcement: enforce
+    rules:
+      - allow: {method: POST, path: /repos/openshift-hyperfleet/hyperfleet-applier/issues/*/comments}
+      - allow: {method: PATCH, path: /repos/openshift-hyperfleet/hyperfleet-applier/issues/comments/*}
+      - allow: {method: POST, path: /repos/openshift-hyperfleet/hyperfleet-applier/issues/*/labels}
+      - allow: {method: DELETE, path: /repos/openshift-hyperfleet/hyperfleet-applier/issues/*/labels/hf-review/approved}
+      - allow: {method: DELETE, path: /repos/openshift-hyperfleet/hyperfleet-applier/issues/*/labels/hf-review/changes-requested}
+      - allow: {method: POST, path: /repos/openshift-hyperfleet/hyperfleet-applier/pulls/*/reviews}
+      - allow: {method: POST, path: /repos/openshift-hyperfleet/hyperfleet-applier/pulls/*/reviews/*/events}
+      - allow: {method: POST, path: /repos/openshift-hyperfleet/hyperfleet-applier/pulls/*/comments}
+      - allow: {method: POST, path: /repos/openshift-hyperfleet/hyperfleet-applier/pulls/*/comments/*/replies}
+  - host: api.github.com
+    port: 443
+    path: /graphql
+    protocol: graphql
+    enforcement: enforce
+    rules:
+      - allow:
+          operation_type: query
+      - allow:
+          operation_type: mutation
+          operation_name: HfReviewHideReview
+          fields: [minimizeComment]
+  - host: github.com
+    port: 443
+    protocol: rest
+    enforcement: enforce
+    rules:
+      - allow: {method: GET, path: "**"}
+      - allow: {method: HEAD, path: "**"}
+      - allow: {method: OPTIONS, path: "**"}
+      - allow: {method: POST, path: "/**/git-upload-pack"}
+  # The hyperfleet-architecture skill reads documents from this host.
+  - host: raw.githubusercontent.com
+    port: 443
+    protocol: rest
+    enforcement: enforce
+    rules:
+      - allow: {method: GET, path: "**"}
+      - allow: {method: HEAD, path: "**"}
+binaries:
+  - /usr/bin/gh
+  - /usr/local/bin/gh
+  - /usr/bin/git
+  - /usr/local/bin/git

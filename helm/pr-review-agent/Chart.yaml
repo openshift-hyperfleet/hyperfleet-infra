@@ -1,0 +1,6 @@
+apiVersion: v2
+name: pr-review-agent
+description: CronJob that reviews pull requests with the hyperfleet-code-review review-pr skill in OpenShell sandboxes
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

@@ -1,0 +1,15 @@
+# The runner accepts no connections. Egress stays open because the gateway,
+# the OIDC issuer, and the gateway transport endpoints can change.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "pr-review-agent.fullname" . }}-deny-ingress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "pr-review-agent.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "pr-review-agent.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress

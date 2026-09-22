@@ -1,0 +1,98 @@
+# Pull requests of this repository get a review. The organization of this
+# repository is also the source of the allowed comment authors.
+repository: openshift-hyperfleet/hyperfleet-api
+# Branch of the reviewed repository that the runner trusts for context.
+trustedBranch: main
+
+# Source of the review-pr skill. Use a tag or a branch. A tag prevents silent
+# changes of the review instructions.
+plugins:
+  repository: openshift-hyperfleet/hyperfleet-claude-plugins
+  ref: main
+
+schedule: "*/5 * * * *"
+skipDraftPRs: true
+maxReviewsPerRun: 5
+# Accounts whose comments the review can read, in addition to organization members.
+commentOrgMembers: true
+commentAllowedAuthors: ""
+
+claude:
+  model: claude-opus-4-8
+  # Google Cloud project of the Vertex AI provider. Claude Code calls Vertex
+  # AI directly with the token that the provider injects. Leave the project
+  # empty to use the workspace inference route (inference.local) instead.
+  vertex:
+    projectId: hypershell-976970
+    region: global
+  maxAttempts: 3
+  retryDelaySeconds: 15
+
+gateway:
+  # Name of the manually created Secret. See secret.example.yaml.
+  secretName: pr-review-gateway
+  name: hyperfleet-review
+  workspace: default
+  # Set to true only when the gateway certificate issuer is not trusted.
+  insecure: false
+  loginRefreshSeconds: 180
+
+providers:
+  claude: hyperfleet-vertex
+  github: hfreview-github
+  # Empty disables JIRA validation. The review then adds a Setup notes line.
+  jira: hfreview-jira
+
+jira:
+  # Scoped Jira Cloud tokens use the Atlassian API gateway.
+  # 2b9e35e3-6bd3-4cec-b838-f4249ee02432 is the cloud ID of redhat.atlassian.net.
+  host: api.atlassian.com
+  pathPrefix: /ex/jira/2b9e35e3-6bd3-4cec-b838-f4249ee02432
+  project: HYPERFLEET
+
+sandbox:
+  # Image with claude, gh, git, jq, openssl, and jira. Build it from sandbox/Containerfile.
+  source: quay.io/amarin/hyperfleet-review@sha256:f478cf69222796020aeb2889f4b5a084abc2925f1eb3b16d1da01caa4ceaa164
+  # The runner appends a 3 character suffix. Keep the name short.
+  discoveryName: hfr-discovery
+  # The gateway limits sandbox names to 19 characters: prefix-PR-8 hex digits.
+  namePrefix: hr
+  readyTimeoutSeconds: 600
+
+timeouts:
+  reviewPollSeconds: 15
+  discoverySeconds: 300
+  # review-pr starts about ten parallel agents for each pull request.
+  reviewSeconds: 3600
+  activeDeadlineSeconds: 5400
+
+# The openshell CLI must match the gateway build. Gateways with a downstream
+# version suffix (for example v0.0.116-rhaiv.6) accept only the CLI from the
+# image that the same pipeline publishes under the same tag. The init
+# container copies /usr/local/bin/openshell from this image.
+openshell:
+  image: quay.io/opendatahub/odh-openshell-cli@sha256:3a7b405dd53e2eb3050ade2d921cafa2c04bd02779085b0ef247e158bebb6373
+
+images:
+  runner: registry.access.redhat.com/hi/git@sha256:ec726bb5db20e24d5c642eb866bba5c89d504b435a6d0a85cc85535cfb365ff5
+  # Path of bash in the runner image.
+  bash: /usr/sbin/bash
+
+# GKE does not assign a user ID, so the pod sets it. The runner uses the SSH
+# client for sandbox uploads, and OpenSSH needs a passwd entry for the user.
+# nobody (65534) is the only regular user in the runner image.
+podSecurityContext:
+  runAsUser: 65534
+  runAsGroup: 65534
+  fsGroup: 65534
+
+resources:
+  install:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {cpu: 200m, memory: 256Mi}
+  runner:
+    requests: {cpu: 500m, memory: 512Mi}
+    limits: {cpu: "2", memory: 2Gi}
+
+nameOverride: ""
+fullnameOverride: ""

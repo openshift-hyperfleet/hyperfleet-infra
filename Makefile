@@ -87,6 +87,16 @@ CLEANER_LABEL_SELECTOR ?= hyperfleet.io/cluster-id hyperfleet.io/test-run e2e/hy
 CLEANER_AGE_MINUTES  ?= 120
 CLEANER_MAESTRO_URL  ?= http://maestro.$(MAESTRO_NAMESPACE).svc.cluster.local:8000
 
+# ---- PR Review Agent ----
+# One Helm release per reviewed repository. PR_REVIEW_REPO selects the
+# helm/pr-review-agent/values-<repo>.yaml file and names the release.
+PR_REVIEW_NAMESPACE      ?= pr-review-agent
+PR_REVIEW_REPO           ?= api
+PR_REVIEW_REPOS          ?= api sentinel adapter applier
+PR_REVIEW_PLUGINS_REF    ?= main
+PR_REVIEW_SANDBOX_SOURCE ?=
+PR_REVIEW_GATEWAY_SECRET ?= pr-review-gateway
+
 # ==== Terraform Targets ====
 .PHONY: install-terraform
 install-terraform: check-terraform check-tf-files ## Run Terraform init and apply
@@ -479,6 +489,32 @@ install-cleaner: check-helm check-kubectl install-priority-classes ## Install na
 uninstall-cleaner: check-helm check-kubectl ## Uninstall namespace cleaner CronJob
 	helm uninstall namespace-cleaner --namespace $(CLEANER_NAMESPACE) || true
 	@echo "OK: namespace cleaner uninstalled"
+
+# ==== PR Review Agent Targets ====
+.PHONY: install-pr-review-agent
+install-pr-review-agent: check-helm check-kubectl ## Install the PR review CronJob for one repository (PR_REVIEW_REPO=api|sentinel|adapter|applier)
+	@test -f "$(HELM_DIR)/pr-review-agent/values-$(PR_REVIEW_REPO).yaml" \
+		|| { echo "ERROR: unknown PR_REVIEW_REPO '$(PR_REVIEW_REPO)' (no $(HELM_DIR)/pr-review-agent/values-$(PR_REVIEW_REPO).yaml)"; exit 1; }
+	$(call check-namespace,PR_REVIEW_NAMESPACE)
+	@kubectl get secret "$(PR_REVIEW_GATEWAY_SECRET)" --namespace $(PR_REVIEW_NAMESPACE) >/dev/null 2>&1 \
+		|| { echo "ERROR: secret $(PR_REVIEW_GATEWAY_SECRET) not found in namespace $(PR_REVIEW_NAMESPACE) (see helm/pr-review-agent/README.md)"; exit 1; }
+	helm upgrade --install pr-review-$(PR_REVIEW_REPO) $(HELM_DIR)/pr-review-agent \
+		--namespace $(PR_REVIEW_NAMESPACE) \
+		--values $(HELM_DIR)/pr-review-agent/values-$(PR_REVIEW_REPO).yaml \
+		--set-string "plugins.ref=$(PR_REVIEW_PLUGINS_REF)" \
+		$(if $(PR_REVIEW_SANDBOX_SOURCE),--set-string "sandbox.source=$(PR_REVIEW_SANDBOX_SOURCE)") \
+		--set-string "gateway.secretName=$(PR_REVIEW_GATEWAY_SECRET)" \
+		--wait
+	@echo "OK: PR review agent for $(PR_REVIEW_REPO) installed in namespace $(PR_REVIEW_NAMESPACE)"
+
+.PHONY: install-pr-review-agents
+install-pr-review-agents: ## Install the PR review CronJobs for all repositories in PR_REVIEW_REPOS
+	@for repo in $(PR_REVIEW_REPOS); do $(MAKE) install-pr-review-agent PR_REVIEW_REPO=$$repo || exit 1; done
+
+.PHONY: uninstall-pr-review-agent
+uninstall-pr-review-agent: check-helm check-kubectl ## Uninstall the PR review CronJob for one repository (PR_REVIEW_REPO)
+	helm uninstall pr-review-$(PR_REVIEW_REPO) --namespace $(PR_REVIEW_NAMESPACE) || true
+	@echo "OK: PR review agent for $(PR_REVIEW_REPO) uninstalled"
 
 # ==== Observability Targets ====
 OBSERVABILITY_HELMFILE := helmfile/observability.yaml.gotmpl

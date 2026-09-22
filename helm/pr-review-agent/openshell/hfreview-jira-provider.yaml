@@ -1,0 +1,26 @@
+# Jira Cloud scoped-token provider through the Atlassian API gateway.
+# 2b9e35e3-6bd3-4cec-b838-f4249ee02432 is the cloud ID of redhat.atlassian.net.
+# Create the credential as EMAIL:API_TOKEN and store it in OpenShell.
+# Keep the paths aligned with files/policy.yaml and the chart values `jira.*`.
+id: hfreview-jira
+display_name: HyperFleet review Jira
+description: Read access to Jira issues and comments for pull request validation
+category: other
+credentials:
+  - name: api_token
+    description: Jira Cloud email address followed by a colon and API token
+    env_vars: [JIRA_BASIC_AUTH]
+    required: true
+    auth_style: basic
+discovery:
+  credentials: [api_token]
+endpoints:
+  - host: api.atlassian.com
+    port: 443
+    protocol: rest
+    enforcement: enforce
+    rules:
+      - allow: {method: GET, path: /ex/jira/2b9e35e3-6bd3-4cec-b838-f4249ee02432/rest/api/*/issue/*}
+      - allow: {method: GET, path: /ex/jira/2b9e35e3-6bd3-4cec-b838-f4249ee02432/rest/api/*/issue/*/comment}
+binaries:
+  - /usr/local/bin/jira

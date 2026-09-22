@@ -1,0 +1,191 @@
+{{- $fullname := include "pr-review-agent.fullname" . }}
+{{- $secret := .Values.gateway.secretName }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ $fullname }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "pr-review-agent.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.schedule | quote }}
+  concurrencyPolicy: Forbid
+  failedJobsHistoryLimit: 3
+  successfulJobsHistoryLimit: 3
+  startingDeadlineSeconds: 300
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: {{ .Values.timeouts.activeDeadlineSeconds }}
+      # The next scheduled Job retries unfinished work.
+      backoffLimit: 0
+      ttlSecondsAfterFinished: 86400
+      template:
+        metadata:
+          labels:
+            {{- include "pr-review-agent.selectorLabels" . | nindent 12 }}
+            app.kubernetes.io/component: runner
+          annotations:
+            checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        spec:
+          automountServiceAccountToken: false
+          restartPolicy: Never
+          serviceAccountName: {{ $fullname }}
+          terminationGracePeriodSeconds: 120
+          securityContext:
+            runAsNonRoot: true
+            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+            seccompProfile:
+              type: RuntimeDefault
+          initContainers:
+            - name: install-openshell
+              image: {{ .Values.openshell.image }}
+              imagePullPolicy: IfNotPresent
+              command:
+                - /usr/bin/bash
+                - -c
+                - cp /usr/local/bin/openshell /tools/openshell.tmp && chmod 0555 /tools/openshell.tmp && mv /tools/openshell.tmp /tools/openshell
+              resources:
+                {{- toYaml .Values.resources.install | nindent 16 }}
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop:
+                    - ALL
+                readOnlyRootFilesystem: true
+              volumeMounts:
+                - name: tools
+                  mountPath: /tools
+          containers:
+            - name: runner
+              image: {{ .Values.images.runner }}
+              imagePullPolicy: IfNotPresent
+              command:
+                - {{ .Values.images.bash }}
+                - /opt/hfreview/run.sh
+              env:
+                - name: GATEWAY_NAME
+                  value: {{ .Values.gateway.name | quote }}
+                {{- range $variable, $key := dict "GATEWAY_ENDPOINT" "gateway-endpoint" "OIDC_ISSUER" "oidc-issuer" "OIDC_CLIENT_ID" "oidc-client-id" "OIDC_AUDIENCE" "oidc-audience" "OPENSHELL_OIDC_CLIENT_SECRET" "oidc-client-secret" }}
+                - name: {{ $variable }}
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ $secret }}
+                      key: {{ $key }}
+                {{- end }}
+                {{- if .Values.gateway.insecure }}
+                - name: OPENSHELL_GATEWAY_INSECURE
+                  value: "true"
+                - name: RUST_LOG
+                  value: "warn,openshell_cli::tls=error"
+                {{- end }}
+                - name: OPENSHELL_WORKSPACE
+                  value: {{ .Values.gateway.workspace | quote }}
+                - name: DISCOVERY_SANDBOX_NAME
+                  value: {{ .Values.sandbox.discoveryName | quote }}
+                - name: SANDBOX_NAME_PREFIX
+                  value: {{ .Values.sandbox.namePrefix | quote }}
+                # Label value of the sandboxes of this release. Stale sandbox
+                # cleanup deletes only sandboxes with this value.
+                - name: SANDBOX_OWNER
+                  value: {{ $fullname | quote }}
+                - name: SANDBOX_SOURCE
+                  value: {{ .Values.sandbox.source | quote }}
+                - name: CLAUDE_PROVIDER
+                  value: {{ .Values.providers.claude | quote }}
+                - name: GITHUB_PROVIDER
+                  value: {{ .Values.providers.github | quote }}
+                {{- if .Values.providers.jira }}
+                - name: JIRA_PROVIDER
+                  value: {{ .Values.providers.jira | quote }}
+                - name: JIRA_SERVER
+                  value: {{ printf "https://%s%s" .Values.jira.host .Values.jira.pathPrefix | quote }}
+                - name: JIRA_PROJECT
+                  value: {{ .Values.jira.project | quote }}
+                {{- end }}
+                - name: REPOSITORY
+                  value: {{ .Values.repository | quote }}
+                - name: TRUSTED_BRANCH
+                  value: {{ .Values.trustedBranch | quote }}
+                - name: PLUGINS_REPOSITORY
+                  value: {{ .Values.plugins.repository | quote }}
+                - name: PLUGINS_REF
+                  value: {{ .Values.plugins.ref | quote }}
+                - name: SKIP_DRAFT_PRS
+                  value: {{ .Values.skipDraftPRs | quote }}
+                - name: COMMENT_ORG_MEMBERS
+                  value: {{ .Values.commentOrgMembers | quote }}
+                - name: COMMENT_ALLOWED_AUTHORS
+                  value: {{ .Values.commentAllowedAuthors | quote }}
+                - name: MAX_REVIEWS_PER_RUN
+                  value: {{ .Values.maxReviewsPerRun | quote }}
+                {{- if .Values.claude.vertex.projectId }}
+                - name: VERTEX_PROJECT_ID
+                  value: {{ .Values.claude.vertex.projectId | quote }}
+                - name: VERTEX_REGION
+                  value: {{ .Values.claude.vertex.region | quote }}
+                {{- end }}
+                - name: CLAUDE_MODEL
+                  value: {{ .Values.claude.model | quote }}
+                - name: CLAUDE_MAX_ATTEMPTS
+                  value: {{ .Values.claude.maxAttempts | quote }}
+                - name: CLAUDE_RETRY_DELAY_SECONDS
+                  value: {{ .Values.claude.retryDelaySeconds | quote }}
+                - name: GATEWAY_LOGIN_REFRESH_SECONDS
+                  value: {{ .Values.gateway.loginRefreshSeconds | quote }}
+                - name: REVIEW_POLL_SECONDS
+                  value: {{ .Values.timeouts.reviewPollSeconds | quote }}
+                - name: SANDBOX_READY_TIMEOUT_SECONDS
+                  value: {{ .Values.sandbox.readyTimeoutSeconds | quote }}
+                - name: DISCOVERY_TIMEOUT_SECONDS
+                  value: {{ .Values.timeouts.discoverySeconds | quote }}
+                - name: REVIEW_TIMEOUT_SECONDS
+                  value: {{ .Values.timeouts.reviewSeconds | quote }}
+                - name: PATH
+                  value: /tools:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+              resources:
+                {{- toYaml .Values.resources.runner | nindent 16 }}
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop:
+                    - ALL
+                readOnlyRootFilesystem: true
+              volumeMounts:
+                - name: runner
+                  mountPath: /opt/hfreview
+                  readOnly: true
+                - name: agent-runtime
+                  mountPath: /opt/agent-runtime
+                  readOnly: true
+                - name: policy
+                  mountPath: /etc/hfreview
+                  readOnly: true
+                - name: work
+                  mountPath: /work
+                - name: tools
+                  mountPath: /tools
+                  readOnly: true
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: runner
+              configMap:
+                name: {{ $fullname }}-runner
+                defaultMode: 0555
+            - name: agent-runtime
+              configMap:
+                name: {{ $fullname }}-runner
+                defaultMode: 0555
+                items:
+                  - key: agent-runtime.sh
+                    path: agent-runtime.sh
+            - name: policy
+              configMap:
+                name: {{ $fullname }}-policy
+                defaultMode: 0444
+            - name: work
+              emptyDir: {}
+            - name: tools
+              emptyDir: {}
+            - name: tmp
+              emptyDir: {}
