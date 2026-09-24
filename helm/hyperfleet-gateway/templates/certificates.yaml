@@ -51,7 +51,7 @@ metadata:
 spec:
   ca:
     secretName: {{ $rootCASecretName }}
-{{- if .Values.auth.extAuthz.enabled }}
+{{- if include "hyperfleet-gateway.edgeAuthEnabled" . }}
 ---
 apiVersion: cert-manager.io/v1
 kind: Certificate

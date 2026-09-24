@@ -1,4 +1,6 @@
 # Base values for HyperFleet Gateway
+{{- $edgeAuth := has .Values.authMode (list "EDGE" "EDGE+API") -}}
+{{- $mockIssuer := eq (env "OIDC_ISSUER_MODE" | default "external") "mock" -}}
 
 {{ if eq (env "OBSERVABILITY_ENABLED" | default "false") "true" }}
 monitoring:
@@ -31,16 +33,25 @@ auth:
   # External authorization (Authorino). When enabled, Envoy authenticates every
   # request through Authorino and injects trusted tenant headers; the Authorino
   # instance and the active AuthConfig are deployed by the gateway chart too.
-  extAuthz:
-    enabled: {{ env "EXT_AUTHZ_ENABLED" | default "false" }}
-
-  # Helmfile resolves the environment-specific issuer. The gateway chart only
-  # receives the resulting URL and remains independent of the mock test setup.
-  oidc:
-    issuerUrl: {{ .Values.oidcIssuerUrl | quote }}
+  mode: {{ .Values.authMode | quote }}
+  identityProviders:
+  {{- if and $edgeAuth $mockIssuer }}
+    - name: human-jwt
+      issuerUrl: {{ printf "http://hyperfleet-mock-oidc.%s.svc.cluster.local:8080/default" .Values.namespace | quote }}
+      allowInsecureIssuer: true
+      audience: hyperfleet-api
+      identityClaim: sub
+  {{- else if and $edgeAuth (env "OIDC_ISSUER_URL") }}
+    - name: human-jwt
+      issuerUrl: {{ env "OIDC_ISSUER_URL" | quote }}
+      audience: hyperfleet-api
+      identityClaim: sub
+  {{- else }}
+    []
+  {{- end }}
 
   machineIdentity:
-    audience: {{ .Values.apiAudience | quote }}
+    audience: {{ .Values.machineIdentityAudience | quote }}
     # Exact SA allow-list, derived from the sentinels/adapters actually declared for
     # this environment (environments/<env>/{sentinel,adapter}-configs.yaml.gotmpl) so
     # it can't drift from the releases deployed. See helm/hyperfleet-gateway/values.yaml.
@@ -51,9 +62,6 @@ auth:
       {{- range .Values.adapters }}
       - {{ printf "%s-hyperfleet-adapter" .name | quote }}
       {{- end }}
-
-  humanIdentity:
-    audience: {{ .Values.apiAudience | quote }}
 
   authorino:
     {{/*

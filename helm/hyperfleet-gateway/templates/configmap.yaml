@@ -1,3 +1,4 @@
+{{- include "hyperfleet-gateway.validateSecurity" . }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -38,7 +39,7 @@ data:
                             text_format_source:
                               inline_string: "[%START_TIME%] \"%REQ(:METHOD)% %PATH(NQ)% %PROTOCOL%\" %RESPONSE_CODE% %RESPONSE_FLAGS% %RESPONSE_CODE_DETAILS% %CONNECTION_TERMINATION_DETAILS% \"%UPSTREAM_TRANSPORT_FAILURE_REASON%\" %BYTES_RECEIVED% %BYTES_SENT% %DURATION% %RESP(X-ENVOY-UPSTREAM-SERVICE-TIME)% \"%REQ(X-FORWARDED-FOR)%\" \"%REQ(USER-AGENT)%\" \"%REQ(X-REQUEST-ID)%\" \"%REQ(:AUTHORITY)%\" \"%UPSTREAM_HOST%\"\n"
                     http_filters:
-                      {{- if .Values.auth.extAuthz.enabled }}
+                      {{- if include "hyperfleet-gateway.edgeAuthEnabled" . }}
                       # ext_authz runs before the router: Authorino authenticates
                       # the request and injects trusted tenant headers, which the
                       # router then forwards upstream. Fail-closed and not
@@ -48,10 +49,30 @@ data:
                           "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz
                           transport_api_version: V3
                           failure_mode_allow: false
+                          enable_dynamic_metadata_ingestion: true
                           grpc_service:
                             envoy_grpc:
                               cluster_name: authorino
                             timeout: {{ .Values.auth.extAuthz.timeout }}
+                      {{- if eq .Values.auth.mode "EDGE+API" }}
+                      # The wristband comes only from ext_authz dynamic metadata,
+                      # never from a client-supplied HTTP header. Fail closed if
+                      # Authorino returns OK without producing a wristband.
+                      - name: envoy.filters.http.lua
+                        typed_config:
+                          "@type": type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua
+                          default_source_code:
+                            inline_string: |
+                              function envoy_on_request(handle)
+                                local metadata = handle:streamInfo():dynamicMetadata():get("envoy.filters.http.ext_authz")
+                                local token = metadata and metadata["wristband"]
+                                if type(token) ~= "string" or token == "" then
+                                  handle:respond({[":status"] = "403"}, "missing gateway wristband")
+                                  return
+                                end
+                                handle:headers():replace("authorization", "Bearer " .. token)
+                              end
+                      {{- end }}
                       {{- end }}
                       - name: envoy.filters.http.router
                         typed_config:
@@ -89,7 +110,7 @@ data:
                               route:
                                 cluster: upstream
       clusters:
-        {{- if .Values.auth.extAuthz.enabled }}
+        {{- if include "hyperfleet-gateway.edgeAuthEnabled" . }}
         - name: authorino
           connect_timeout: 3s
           type: STRICT_DNS

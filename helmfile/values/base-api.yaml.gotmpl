@@ -4,9 +4,20 @@ replicaCount: 2
 
 {{ $obs := eq (env "OBSERVABILITY_ENABLED" | default "false") "true" }}
 {{ $tracing := eq (env "TRACING_ENABLED" | default "false") "true" }}
-{{ $jwtEnabled := eq (env "JWT_AUTH_ENABLED" | default "false") "true" }}
+{{ $authMode := .Values.authMode }}
+{{ $apiAuthEnabled := has $authMode (list "API" "EDGE+API") }}
+{{ $wristbandMode := eq $authMode "EDGE+API" }}
 {{ $tenantIsolationEnabled := eq (env "TENANT_ISOLATION_ENABLED" | default "false") "true" }}
 {{ $tenantModel := env "TENANT_MODEL" | default "onprem" }}
+{{ $defaultKubernetesIssuer := "https://kubernetes.default.svc.cluster.local" }}
+{{ $kubernetesIssuer := env "KUBERNETES_OIDC_ISSUER_URL" | default $defaultKubernetesIssuer }}
+{{ $kubernetesJWKS := env "KUBERNETES_OIDC_JWKS_URL" | default "https://kubernetes.default.svc.cluster.local/openid/v1/jwks" }}
+{{ $kubernetesCAFile := env "KUBERNETES_OIDC_CA_FILE" | default "" }}
+{{ if and (eq $kubernetesIssuer $defaultKubernetesIssuer) (not $kubernetesCAFile) }}
+{{ $kubernetesCAFile = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt" }}
+{{ end }}
+{{ $wristbandIssuer := printf "https://authorino-authorino-oidc.%s.svc:8083/%s/hyperfleet-tenant-policy/wristband" .Release.Namespace .Release.Namespace }}
+{{ $wristbandJWKS := printf "%s/.well-known/openid-connect/certs" $wristbandIssuer }}
 {{ if or $obs $tracing }}
 monitoring:
   {{ if $obs }}
@@ -45,10 +56,23 @@ extraVolumes:
           path: tls.crt
         - key: tls.key
           path: tls.key
+{{ if $wristbandMode }}
+  - name: gateway-ca
+    secret:
+      secretName: hyperfleet-gateway-ca-cert
+      items:
+        - key: ca.crt
+          path: ca.crt
+{{ end }}
 extraVolumeMounts:
   - name: api-tls
     mountPath: /etc/hyperfleet/tls
     readOnly: true
+{{ if $wristbandMode }}
+  - name: gateway-ca
+    mountPath: /etc/hyperfleet/gateway-ca
+    readOnly: true
+{{ end }}
 
 config:
   entities:
@@ -95,16 +119,9 @@ config:
       plural: wifconfigs
       spec_schema_name: WifConfigSpec
   {{/*
-    Auth boundary: when EXT_AUTHZ_ENABLED=true the gateway (Envoy + Authorino)
-    authenticates humans (OIDC) and machines (adapters/sentinels) and injects
-    trusted headers, so in-app JWT stays OFF here (chart default).
-    TODO(HYPERFLEET-1484): re-enable in-app JWT as defense-in-depth (its
-    issuer/audience must match the gateway AuthConfig).
-
-    Tenant enforcement: when TENANT_ISOLATION_ENABLED=true, the API enforces
-    gateway-injected tenant headers via config.server.tenant. Its dimensions
-    mirror the active TENANT_MODEL headers in the gateway chart, so a model
-    swap moves both sides in lockstep.
+    EDGE authenticates exclusively at the gateway. API validates direct caller
+    credentials in API mode, and validates only gateway-issued wristbands in
+    EDGE+API mode. Tenant enforcement always consumes trusted gateway headers.
   */}}
   server:
     tls:
@@ -134,27 +151,36 @@ config:
         {{ fail (printf "TENANT_MODEL %q is not supported (expected onprem or oracle)" $tenantModel) }}
       {{ end }}
     {{ end }}
-    {{ if $jwtEnabled }}
     jwt:
-      enabled: true
+      enabled: {{ $apiAuthEnabled }}
+    {{ if $apiAuthEnabled }}
       configs:
-      {{/* GCP OIDC when OIDC_ISSUER_URL is explicitly provided; K8s in-cluster OIDC otherwise */}}
-      {{ if env "OIDC_ISSUER_URL" }}
-        - issuer_url: "{{ env "OIDC_ISSUER_URL" }}"
-          jwk_cert_url: "{{ env "OIDC_JWKS_URL" | default (printf "%s/jwks" (env "OIDC_ISSUER_URL")) }}"
+      {{ if $wristbandMode }}
+        # The gateway replaces the original credential with an Authorino
+        # wristband, so raw human and ServiceAccount JWTs are not accepted here.
+        - issuer_url: {{ $wristbandIssuer | quote }}
+          jwk_cert_url: {{ $wristbandJWKS | quote }}
+          jwk_cert_ca_file: /etc/hyperfleet/gateway-ca/ca.crt
           audience: hyperfleet-api
           identity_claim: sub
-          identity_claim_pattern: "^system:serviceaccount:{{ env "NAMESPACE" | default "hyperfleet" }}:.*$"
-        - issuer_url: https://accounts.google.com
-          jwk_cert_url: https://www.googleapis.com/oauth2/v3/certs
-          identity_claim: email
+          identity_header: X-HyperFleet-Identity
       {{ else }}
-        - issuer_url: "https://kubernetes.default.svc.cluster.local"
-          jwk_cert_url: "https://kubernetes.default.svc.cluster.local/openid/v1/jwks"
-          jwk_cert_ca_file: "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+        # API mode validates projected ServiceAccount JWTs directly.
+        - issuer_url: {{ $kubernetesIssuer | quote }}
+          jwk_cert_url: {{ $kubernetesJWKS | quote }}
+          {{ if $kubernetesCAFile }}
+          jwk_cert_ca_file: {{ $kubernetesCAFile | quote }}
+          {{ end }}
           header: "Authorization"
           audience: hyperfleet-api
           identity_claim: sub
-          identity_claim_pattern: "^system:serviceaccount:{{ env "NAMESPACE" | default "hyperfleet-local" }}:.*$"
+          identity_claim_pattern: "^system:serviceaccount:{{ .Release.Namespace }}:.*$"
+        {{ if env "OIDC_ISSUER_URL" }}
+        # Optional human OIDC provider for direct API authentication.
+        - issuer_url: {{ env "OIDC_ISSUER_URL" | quote }}
+          jwk_cert_url: {{ env "OIDC_JWKS_URL" | quote }}
+          audience: hyperfleet-api
+          identity_claim: sub
+        {{ end }}
       {{ end }}
     {{ end }}

@@ -58,8 +58,35 @@ via the operator's naming convention ("<name>-authorino" ServiceAccount,
 authorino
 {{- end }}
 
+{{/* This is also the OIDC realm used by the API's Helmfile values. */}}
+{{- define "hyperfleet-gateway.wristbandIssuer" -}}
+{{- printf "https://%s-authorino-oidc.%s.svc:8083/%s/hyperfleet-tenant-policy/wristband" (include "hyperfleet-gateway.authorinoName" .) .Release.Namespace .Release.Namespace -}}
+{{- end }}
+
+{{- define "hyperfleet-gateway.edgeAuthEnabled" -}}
+{{- if has .Values.auth.mode (list "EDGE" "EDGE+API") -}}true{{- end -}}
+{{- end }}
+
 {{- define "hyperfleet-gateway.rootCASecretName" -}}
 hyperfleet-gateway-ca-cert
+{{- end }}
+
+{{- define "hyperfleet-gateway.validateSecurity" -}}
+{{- if not (has .Values.auth.mode (list "NONE" "EDGE" "API" "EDGE+API")) -}}
+{{- fail "auth.mode must be NONE, EDGE, API, or EDGE+API" -}}
+{{- end -}}
+{{- if or (not .Values.tls.hyperfleetApiTLSSecretName) (not .Values.tls.authorinoAuthorizationTLSSecretName) (not .Values.tls.authorinoOIDCTLSSecretName) -}}
+{{- fail "all internal TLS serving Secret names are required" -}}
+{{- end -}}
+{{- if and (eq .Values.auth.mode "EDGE+API") (not .Values.auth.wristband.signingKeySecretName) -}}
+{{- fail "auth.wristband.signingKeySecretName is required in EDGE+API mode" -}}
+{{- end -}}
+{{- if and (eq .Values.auth.mode "EDGE+API") (not .Values.auth.wristband.audience) -}}
+{{- fail "auth.wristband.audience is required in EDGE+API mode" -}}
+{{- end -}}
+{{- if and (eq .Values.auth.mode "EDGE+API") (le (int .Values.auth.wristband.tokenDuration) 0) -}}
+{{- fail "auth.wristband.tokenDuration must be greater than zero in EDGE+API mode" -}}
+{{- end -}}
 {{- end }}
 
 {{/*

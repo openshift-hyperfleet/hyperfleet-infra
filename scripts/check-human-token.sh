@@ -8,7 +8,7 @@ set -euo pipefail
 
 NAMESPACE="${NAMESPACE:-}"
 OIDC_ISSUER_MODE="${OIDC_ISSUER_MODE:-}"
-EXT_AUTHZ_ENABLED="${EXT_AUTHZ_ENABLED:-false}"
+AUTH_MODE="${AUTH_MODE:-NONE}"
 TENANT_ISOLATION_ENABLED="${TENANT_ISOLATION_ENABLED:-false}"
 TENANT_MODEL="${TENANT_MODEL:-onprem}"
 TOKEN_SUBJECT="${TOKEN_SUBJECT:-human@example.com}"
@@ -35,8 +35,8 @@ if [[ "$OIDC_ISSUER_MODE" != "mock" ]]; then
     echo "ERROR: check-human-token requires OIDC_ISSUER_MODE=mock" >&2
     exit 1
 fi
-if [[ "$EXT_AUTHZ_ENABLED" != "true" ]]; then
-    echo "ERROR: check-human-token requires EXT_AUTHZ_ENABLED=true" >&2
+if [[ "$AUTH_MODE" != "EDGE" && "$AUTH_MODE" != "EDGE+API" ]]; then
+    echo "ERROR: check-human-token requires AUTH_MODE=EDGE or EDGE+API" >&2
     exit 1
 fi
 if [[ "$TENANT_ISOLATION_ENABLED" != "true" ]]; then

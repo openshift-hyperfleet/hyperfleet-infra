@@ -1,4 +1,4 @@
-{{- if .Values.auth.extAuthz.enabled }}
+{{- if include "hyperfleet-gateway.edgeAuthEnabled" . }}
 # Authorino instance for Envoy ext_authz. Watches AuthConfigs in this namespace.
 apiVersion: operator.authorino.kuadrant.io/v1beta1
 kind: Authorino

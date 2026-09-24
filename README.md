@@ -104,9 +104,10 @@ Configuration precedence (highest to lowest):
 | `make uninstall-authorino-operator` | Uninstall the Authorino operator |
 | `make switch-tenant-model` | Switch the active tenant model (`TENANT_MODEL=onprem\|oracle`); re-applies the gateway AuthConfig and API together |
 | `make mint-human-token` | Mint a test-only JWT from the mock issuer |
+| `make mint-machine-token` | Mint a short-lived ServiceAccount JWT for the gateway TokenReview flow |
 | `make check-human-token` | Verify human JWT tenant propagation, audience enforcement, and missing-claim denial |
 
-When `EXT_AUTHZ_ENABLED=true`, `make install-hyperfleet` installs the Authorino
+When `AUTH_MODE=EDGE` or `AUTH_MODE=EDGE+API`, `make install-hyperfleet` installs the Authorino
 operator automatically before deploying, so `install-authorino-operator` only
 needs to be run explicitly for a standalone/one-off install.
 
@@ -216,55 +217,32 @@ configurable in the chart values.
 | `OBSERVABILITY_ENABLED` | `false` | `false` | Set to `true` to deploy kube-prometheus-stack (Prometheus + Grafana) and enable ServiceMonitors |
 | `TRACING_ENABLED` | `false` | `false` | Set to `true` to deploy Tempo + OpenTelemetry Collector and enable OTLP tracing (requires `OBSERVABILITY_ENABLED=true`) |
 | `MONITORING_NAMESPACE` | `monitoring` | `monitoring` | Namespace for the observability helmfile releases |
-| `TENANT_ISOLATION_ENABLED` | `false` | `false` | Enforce API data isolation from trusted gateway tenant headers; requires `EXT_AUTHZ_ENABLED=true` |
+| `TENANT_ISOLATION_ENABLED` | `false` | `false` | Enforce API data isolation from trusted gateway tenant headers; requires `AUTH_MODE=EDGE` or `EDGE+API` |
 
-### JWT Authentication (optional)
+### Authentication modes
 
-| Variable | Default | Description |
-| ---------- | --------- | ------------- |
-| `JWT_AUTH_ENABLED` | `false` | Set to `true` to enable JWT validation on the API and SA-token auth on sentinel/adapter |
-| `OIDC_ISSUER_URL` | *(unset; from Terraform for GCP)* | GCP OIDC issuer. When set, uses GCP OIDC. When absent, uses K8s in-cluster OIDC. |
-| `OIDC_JWKS_URL` | *(empty: Helm chart derives `OIDC_ISSUER_URL/jwks` itself if not set)* | Public JWKS endpoint for the above issuer (ignored when using in-cluster OIDC) |
+`AUTH_MODE` is the only authentication-placement control:
 
-When `JWT_AUTH_ENABLED=true`, the template auto-detects the backend based on `OIDC_ISSUER_URL`:
+| Mode | Gateway | API | Machine credential | Human credential |
+| ---- | ------- | --- | ------------------ | ---------------- |
+| `NONE` | No authentication | No JWT validation | None | None |
+| `EDGE` | Authorino validates callers | Trusts gateway headers | `ServiceAccount <projected JWT>` | `Bearer <OIDC JWT>` |
+| `API` | No authentication | Directly validates JWTs | `Bearer <projected JWT>` | `Bearer <OIDC JWT>` |
+| `EDGE+API` | Authorino validates callers and mints a wristband | Validates only the gateway wristband | `ServiceAccount <projected JWT>` to the gateway | `Bearer <OIDC JWT>` to the gateway |
 
-- **Kind** (no `OIDC_ISSUER_URL`): the API validates tokens from the in-cluster K8s OIDC provider. No extra config needed.
-- **GKE** (with `OIDC_ISSUER_URL`): the API validates JWTs from two issuers: the GKE cluster (for sentinel/adapter SA tokens with audience `hyperfleet-api`) and Google accounts (for human callers).
+`API` mode configures the Kubernetes issuer for projected ServiceAccount tokens
+and supports one optional direct human OIDC provider. Set `OIDC_ISSUER_URL` and
+`OIDC_JWKS_URL` to enable that human provider. All supported JWTs use the
+`hyperfleet-api` audience and `sub` identity claim.
 
-In both cases, **Sentinels** and **Adapters** mount a projected ServiceAccount token with audience `hyperfleet-api`. Direct in-app JWT authentication expects the `Bearer` authorization scheme. Gateway authentication uses the distinct `ServiceAccount` scheme described below.
-
-`OIDC_ISSUER_URL` is cluster-specific. For GCP environments it is populated automatically from `generated-values-from-terraform/oidc.env` after `make install-terraform`. For e2e-gcp (no Terraform), pass it on the CLI.
-
-```bash
-# Kind
-JWT_AUTH_ENABLED=true HELMFILE_ENV=kind make install-hyperfleet
-
-# GKE (OIDC_ISSUER_URL set automatically by make install-terraform)
-JWT_AUTH_ENABLED=true make install-hyperfleet
-
-# e2e-gcp (no Terraform, pass OIDC_ISSUER_URL manually)
-HELMFILE_ENV=e2e-gcp NAMESPACE=<your-namespace> \
-  JWT_AUTH_ENABLED=true \
-  OIDC_ISSUER_URL=https://container.googleapis.com/v1/projects/hcm-hyperfleet/locations/europe-southwest1-a/clusters/hyperfleet-dev-<username>-eu1 \
-  make install-hyperfleet
-```
-
-To call the API as a human, use a GCP identity token via `kubectl port-forward` (traffic is tunnelled through the encrypted k8s API server connection — avoids sending the token over cleartext HTTP):
-
-```bash
-kubectl port-forward svc/hyperfleet-gateway 8000:8000 &
-TOKEN=$(gcloud auth print-identity-token)
-curl -H "Authorization: Bearer $TOKEN" http://localhost:8000/api/hyperfleet/v1/clusters
-```
-
-### Gateway Authentication (Authorino ext_authz)
+### Gateway Authentication (Authorino)
 
 Enable gateway authentication when you want every API request to have a valid
 identity before it reaches HyperFleet. Once an OIDC issuer is configured, turn
 it on with:
 
 ```bash
-EXT_AUTHZ_ENABLED=true make install-hyperfleet
+AUTH_MODE=EDGE make install-hyperfleet
 ```
 
 With this setting enabled:
@@ -312,11 +290,10 @@ keeps the issuer behind a ClusterIP Service, allows ingress only from Authorino
 and the labeled token helper, and uses in-memory signing keys. A mock issuer
 restart invalidates previously minted tokens, so mint a fresh token after every
 rollout. Set `OIDC_ISSUER_MODE=external` to use a real issuer in any environment.
-External mode requires a reachable `https://` `OIDC_ISSUER_URL` only when
-`EXT_AUTHZ_ENABLED=true`; when disabled, the gateway skips issuer validation. In
-mock mode, `OIDC_ISSUER_URL` must be unset when `EXT_AUTHZ_ENABLED=true` (Helmfile
-derives the mock Service URL itself); when `EXT_AUTHZ_ENABLED=false`, the
-gateway ignores it. Terraform-generated issuer values are loaded only for the
+External mode requires a reachable `https://` `OIDC_ISSUER_URL` in `EDGE` or
+`EDGE+API` mode when human authentication is enabled. In mock mode,
+`OIDC_ISSUER_URL` must be unset because Helmfile derives the mock Service URL.
+Terraform-generated issuer values are loaded only for the
 regular `gcp` environment. Mock mode is allowed only in `kind`, `e2e-kind`, and
 `e2e-gcp`; use `e2e-gcp` for a GCP-backed test with the mock issuer.
 
@@ -333,9 +310,7 @@ include the ServiceAccounts created by the e2e test suite.
 
 The distinct authorization schemes select mutually exclusive Authorino
 authentication methods: `ServiceAccount` invokes Kubernetes TokenReview, while
-`Bearer` invokes human OIDC JWT validation. Unknown schemes are denied. Keep
-`JWT_AUTH_ENABLED=false` when clients use `ServiceAccount`; the API's in-app JWT
-middleware currently accepts only the `Bearer` scheme.
+`Bearer` invokes human OIDC JWT validation. Unknown schemes are denied.
 
 #### Choose a tenant model
 
@@ -353,7 +328,7 @@ may be omitted.
 > [!IMPORTANT]
 > Gateway authentication alone verifies identity and extracts tenant
 > information, but does not enable API data isolation. Set both
-> `EXT_AUTHZ_ENABLED=true` and `TENANT_ISOLATION_ENABLED=true` when tenant
+> `AUTH_MODE=EDGE` (or `EDGE+API`) and `TENANT_ISOLATION_ENABLED=true` when tenant
 > separation must be enforced.
 
 #### Deploy
@@ -363,18 +338,18 @@ gateway authentication:
 
 ```bash
 make install-terraform
-EXT_AUTHZ_ENABLED=true TENANT_ISOLATION_ENABLED=true make install-hyperfleet
+AUTH_MODE=EDGE TENANT_ISOLATION_ENABLED=true make install-hyperfleet
 ```
 
 For kind and CI-shaped environments, the mock issuer is enabled without an
 issuer URL:
 
 ```bash
-HELMFILE_ENV=kind EXT_AUTHZ_ENABLED=true TENANT_ISOLATION_ENABLED=true \
+HELMFILE_ENV=kind AUTH_MODE=EDGE TENANT_ISOLATION_ENABLED=true \
   make install-hyperfleet
 
 HELMFILE_ENV=e2e-gcp NAMESPACE=<your-namespace> \
-  EXT_AUTHZ_ENABLED=true TENANT_ISOLATION_ENABLED=true \
+  AUTH_MODE=EDGE TENANT_ISOLATION_ENABLED=true \
   make install-hyperfleet
 ```
 
@@ -383,7 +358,7 @@ To use a real issuer in an e2e environment, override the mode explicitly:
 ```bash
 HELMFILE_ENV=e2e-gcp NAMESPACE=<your-namespace> \
   OIDC_ISSUER_MODE=external \
-  EXT_AUTHZ_ENABLED=true TENANT_ISOLATION_ENABLED=true \
+  AUTH_MODE=EDGE TENANT_ISOLATION_ENABLED=true \
   OIDC_ISSUER_URL=https://issuer.example.com \
   TENANT_MODEL=oracle \
   make install-hyperfleet
@@ -397,10 +372,11 @@ it while another HyperFleet namespace is using gateway authentication.
 
 | Variable | Default | When to set it |
 | -------- | ------- | -------------- |
-| `EXT_AUTHZ_ENABLED` | `false` | Set to `true` to require authentication at the gateway |
-| `TENANT_ISOLATION_ENABLED` | `false` | Set to `true` to scope API resource access using trusted gateway headers; requires `EXT_AUTHZ_ENABLED=true` |
-| `OIDC_ISSUER_MODE` | `mock` except regular `gcp` (`external`) | Select `mock` or `external`; explicit CLI values override environment defaults |
-| `OIDC_ISSUER_URL` | unset | HTTPS issuer for `external` mode; must be unset in `mock` mode when `EXT_AUTHZ_ENABLED=true` (ignored otherwise) |
+| `AUTH_MODE` | `NONE` | One of `NONE`, `EDGE`, `API`, or `EDGE+API` |
+| `TENANT_ISOLATION_ENABLED` | `false` | Scope API data using trusted gateway headers; requires `AUTH_MODE=EDGE` or `EDGE+API` |
+| `OIDC_ISSUER_MODE` | `mock` except regular `gcp` (`external`) | Select `mock` or `external` for edge modes |
+| `OIDC_ISSUER_URL` | unset | HTTPS human issuer; API mode also requires `OIDC_JWKS_URL` |
+| `OIDC_JWKS_URL` | unset | Explicit human-provider JWKS URL for API mode |
 | `TENANT_MODEL` | `onprem` | Set to `oracle` when tokens use OCI tenancy claims |
 | `AUTHORINO_HOSTS` | unset | Add comma-separated external gateway hostnames if users access the gateway through them |
 | `AUTHORINO_LOG_LEVEL` | `info` | Increase only when diagnosing authentication problems |
@@ -412,7 +388,7 @@ requests work, add the external hostname, for example:
 
 ```bash
 AUTHORINO_HOSTS=api.example.com,api-alt.example.com \
-  EXT_AUTHZ_ENABLED=true \
+  AUTH_MODE=EDGE \
   OIDC_ISSUER_URL=https://issuer.example.com \
   make install-hyperfleet
 ```
@@ -422,7 +398,7 @@ AUTHORINO_HOSTS=api.example.com,api-alt.example.com \
 Reapply the deployment with the new model:
 
 ```bash
-EXT_AUTHZ_ENABLED=true TENANT_ISOLATION_ENABLED=true \
+AUTH_MODE=EDGE TENANT_ISOLATION_ENABLED=true \
   OIDC_ISSUER_URL=https://issuer.example.com \
   make switch-tenant-model TENANT_MODEL=oracle
 ```
@@ -481,7 +457,7 @@ they mutate the cluster:
 
 ```bash
 HELMFILE_ENV=kind OIDC_ISSUER_MODE=mock \
-  EXT_AUTHZ_ENABLED=true TENANT_ISOLATION_ENABLED=true \
+  AUTH_MODE=EDGE TENANT_ISOLATION_ENABLED=true \
   TENANT_MODEL=onprem TOKEN_TENANT=org-acme TOKEN_SUBTENANT=project-blue \
   make check-human-token
 ```
@@ -491,11 +467,33 @@ The helper checks the fixed explicit headers (`x-tenant-org` /
 not create a JSON tenancy-context header or support arbitrary future tenant
 dimensions. Those require a coordinated gateway AuthConfig and API change.
 
-`EXT_AUTHZ_ENABLED` and `JWT_AUTH_ENABLED` are separate switches. External
-authorization protects requests at the gateway. `JWT_AUTH_ENABLED` enables an
-additional check inside the API. They cannot currently be combined for machine
-callers because the gateway uses the `ServiceAccount` scheme while the API's
-JWT middleware requires `Bearer`.
+`EDGE+API` is the defense-in-depth mode: Envoy replaces the validated original
+credential with a short-lived Authorino wristband, and the API validates that
+wristband against Authorino's OIDC endpoint using the namespace-local gateway
+CA. The API never accepts the original human or ServiceAccount credentials in
+this mode.
+
+#### Machine tokens and TokenReview smoke checks
+
+`make mint-machine-token` requests a short-lived TokenRequest API JWT for a
+ServiceAccount. It defaults to `adapter1-hyperfleet-adapter` for `kind` and
+`gcp`, and `cl-maestro-hyperfleet-adapter` for `e2e-kind` and `e2e-gcp`. It
+uses the `hyperfleet-api` audience and a 10-minute duration—the Kubernetes API
+server minimum—and prints only the JWT to stdout. Override
+`MACHINE_SERVICE_ACCOUNT`, `MACHINE_TOKEN_AUDIENCE`, or
+`MACHINE_TOKEN_DURATION` as needed.
+
+```bash
+token=$(HELMFILE_ENV=kind AUTH_MODE=EDGE \
+  make mint-machine-token)
+
+curl -i -H "Authorization: ServiceAccount $token" \
+  http://localhost:8000/api/hyperfleet/v1/clusters
+```
+
+The `ServiceAccount` authorization scheme is intentional: it selects
+Authorino's Kubernetes TokenReview path. To verify a rejection case, request a
+token for a ServiceAccount not included in the Helmfile-derived allow-list.
 
 ### E2E specific variables
 

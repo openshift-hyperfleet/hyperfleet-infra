@@ -120,13 +120,15 @@ envoy:
 # Authentication — Authorino ext_authz gateway and OIDC settings
 # -----------------------------------------------------------------------------
 auth:
+  # NONE: no authentication; EDGE: Authorino; API: in-app external JWTs;
+  # EDGE+API: Authorino exchanges external credentials for API-only wristbands.
+  mode: NONE
   # Authorino ext_authz (requires make install-authorino-operator).
   extAuthz:
-    enabled: false
     port: 50051
     timeout: 1s
 
-  # Rendered when extAuthz.enabled.
+  # Rendered in EDGE and EDGE+API.
   authorino:
     # Pin published image; align with AUTHORINO_OPERATOR_VERSION in Makefile.
     image: quay.io/kuadrant/authorino:v0.26.2
@@ -135,14 +137,23 @@ auth:
     logging:
       level: info
 
-  # OIDC issuer for the human-jwt AuthConfig. Deployment tooling selects the
-  # appropriate issuer; the chart does not distinguish test and production use.
-  oidc:
-    issuerUrl: ""
+  # Shared with API mode by Helmfile. Empty permits only allowed SA callers.
+  identityProviders: []
+  # - name: human-jwt
+  #   issuerUrl: https://idp.example.com/realms/hyperfleet
+  #   allowInsecureIssuer: false # test-only mock issuer exception
+  #   jwksUrl: https://idp.example.com/realms/hyperfleet/protocol/openid-connect/certs
+  #   audience: hyperfleet-api
+  #   identityClaim: sub
+  #   identityClaimPattern: ""
 
-  humanIdentity:
-    # Human JWTs must include this value in their aud claim.
+  # Fixed Festival Wristband settings. The signing Secret contains key.pem
+  # (PKCS#1 RSA private key) and is provisioned once by
+  # make ensure-wristband-signing-key. It is separate from every TLS private key.
+  wristband:
+    signingKeySecretName: hyperfleet-wristband-signing-key
     audience: hyperfleet-api
+    tokenDuration: 300
 
   # Machine identity (adapters/sentinels) via kubernetesTokenReview - see authconfig.yaml.
   machineIdentity:

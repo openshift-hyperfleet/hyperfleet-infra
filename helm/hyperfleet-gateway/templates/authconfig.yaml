@@ -1,25 +1,42 @@
-{{- if .Values.auth.extAuthz.enabled }}
+{{- if include "hyperfleet-gateway.edgeAuthEnabled" . }}
 {{- $model := .Values.tenant.model | default "onprem" }}
 {{- $cfg := index .Values.tenant.models $model }}
 {{- if not $cfg }}
 {{- fail (printf "tenant.model %q not found in .Values.tenant.models (expected e.g. onprem|oracle)" $model) }}
 {{- end }}
-{{- $issuerUrl := .Values.auth.oidc.issuerUrl }}
-{{- if not $issuerUrl }}
-{{- fail "auth.oidc.issuerUrl is required when auth.extAuthz.enabled=true: the gateway is fail-closed and an empty issuer means every request is denied" }}
-{{- end }}
-{{- if not (regexMatch "^https?://[a-zA-Z0-9]" $issuerUrl) }}
-{{- fail (printf "auth.oidc.issuerUrl must be a valid http:// or https:// URL (got: %q)" $issuerUrl) }}
-{{- end }}
-{{- if not .Values.auth.humanIdentity.audience }}
-{{- fail "auth.humanIdentity.audience must not be empty" }}
-{{- end }}
 {{- if not .Values.auth.machineIdentity.allowedServiceAccounts }}
 {{- fail "auth.machineIdentity.allowedServiceAccounts must not be empty" }}
+{{- end }}
+{{- if not .Values.auth.machineIdentity.audience }}
+{{- fail "auth.machineIdentity.audience must not be empty" }}
+{{- end }}
+{{- if not .Values.auth.identityProviders }}
+{{- fail "auth.identityProviders must contain at least one human identity provider in edge modes" }}
 {{- end }}
 {{- $allowedServiceAccountsPattern := list }}
 {{- range .Values.auth.machineIdentity.allowedServiceAccounts }}
 {{- $allowedServiceAccountsPattern = append $allowedServiceAccountsPattern (regexQuoteMeta .) }}
+{{- end }}
+{{- $providerNames := dict }}
+{{- $providerIssuers := dict }}
+{{- range .Values.auth.identityProviders }}
+{{- if or (not .name) (eq .name "hyperfleet-components") }}
+{{- fail "Identity providers need a unique name other than hyperfleet-components" }}
+{{- end }}
+{{- if hasKey $providerNames .name }}
+{{- fail (printf "Duplicate identity provider name %q" .name) }}
+{{- end }}
+{{- $_ := set $providerNames .name true }}
+{{- if and (not (regexMatch "^https://[^/]+" .issuerUrl)) (not (and .allowInsecureIssuer (regexMatch "^http://[^/]+" .issuerUrl))) }}
+{{- fail (printf "Identity provider %q requires an HTTPS issuerUrl (or an explicit test-only HTTP issuer)" .name) }}
+{{- end }}
+{{- if hasKey $providerIssuers .issuerUrl }}
+{{- fail (printf "Duplicate identity provider issuerUrl %q" .issuerUrl) }}
+{{- end }}
+{{- $_ = set $providerIssuers .issuerUrl true }}
+{{- if not .audience }}
+{{- fail (printf "Identity provider %q requires an audience" .name) }}
+{{- end }}
 {{- end }}
 # Gateway auth policy (stable name; tenant model swap replaces in place).
 apiVersion: authorino.kuadrant.io/v1beta3
@@ -33,6 +50,7 @@ spec:
   # plus any extra hostnames configured via authorino.hosts (AUTHORINO_HOSTS).
   hosts:
     - {{ include "hyperfleet-gateway.fullname" . | quote }}
+    - {{ printf "%s.%s.svc" (include "hyperfleet-gateway.fullname" .) .Release.Namespace | quote }}
     - {{ printf "%s.%s.svc.cluster.local" (include "hyperfleet-gateway.fullname" .) .Release.Namespace | quote }}
     - "localhost"
     {{- range .Values.auth.authorino.hosts }}
@@ -54,32 +72,56 @@ spec:
       overrides:
         hf_system:
           value: "true"
-    "human-jwt":
+    {{- range .Values.auth.identityProviders }}
+    {{ .name | quote }}:
       when:
         - predicate: request.headers['authorization'].startsWith('Bearer ')
       jwt:
-        issuerUrl: {{ $issuerUrl | quote }}
+        issuerUrl: {{ .issuerUrl | quote }}
       credentials:
         authorizationHeader:
           prefix: Bearer
       overrides:
         hf_system:
           value: "false"
+        hf_identity:
+          expression: {{ printf "auth.identity[%s]" (default "sub" .identityClaim | toJson) | quote }}
+    {{- end }}
   authorization:
-    # Human JWTs must be intended for this API. OIDC discovery verifies the
-    # issuer and signature, but does not enforce the aud claim.
-    "require-human-audience":
+    # Human requests must produce a usable audit identity. Machine callers are
+    # identified and restricted by their Kubernetes ServiceAccount instead.
+    require-identity:
       when:
         - selector: auth.identity.hf_system
           operator: neq
           value: "true"
       patternMatching:
         patterns:
-          # RFC 7519 permits aud to be either one string or an array.
-          - predicate: >-
-              type(auth.identity.aud) == string
-                ? auth.identity.aud == {{ .Values.auth.humanIdentity.audience | quote }}
-                : auth.identity.aud.exists(audience, audience == {{ .Values.auth.humanIdentity.audience | quote }})
+          - selector: auth.identity.hf_identity
+            operator: neq
+            value: ""
+    {{- range .Values.auth.identityProviders }}
+    {{ printf "%s-audience" .name | quote }}:
+      when:
+        - selector: auth.identity.iss
+          operator: eq
+          value: {{ .issuerUrl | quote }}
+      patternMatching:
+        patterns:
+          - predicate: {{ printf "has(auth.identity.aud) && (type(auth.identity.aud) == string ? auth.identity.aud == %s : %s in auth.identity.aud)" (.audience | toJson) (.audience | toJson) | quote }}
+    {{- if .identityClaimPattern }}
+    {{ printf "%s-identity" .name | quote }}:
+      when:
+        - selector: auth.identity.iss
+          operator: eq
+          value: {{ .issuerUrl | quote }}
+      patternMatching:
+        patterns:
+          - selector: auth.identity.hf_identity
+            operator: matches
+            value: {{ .identityClaimPattern | quote }}
+    {{- end }}
+    {{- end }}
     # Machine callers only: allow only the exact SAs listed in
     # auth.machineIdentity.allowedServiceAccounts, in this namespace.
     # Audience alone is not the credential.
@@ -106,7 +148,39 @@ spec:
             value: ""
   response:
     success:
+      {{- if eq .Values.auth.mode "EDGE+API" }}
+      dynamicMetadata:
+        wristband:
+          wristband:
+            issuer: {{ include "hyperfleet-gateway.wristbandIssuer" . | quote }}
+            tokenDuration: {{ .Values.auth.wristband.tokenDuration }}
+            signingKeyRefs:
+              - name: {{ .Values.auth.wristband.signingKeySecretName }}
+                algorithm: RS256
+            customClaims:
+              aud:
+                value: {{ .Values.auth.wristband.audience | quote }}
+              sub:
+                expression: "auth.identity.hf_system == 'true' ? auth.identity.user.username : auth.identity.hf_identity"
+              hf_identity:
+                selector: auth.identity.hf_identity
+              hf_system:
+                selector: auth.identity.hf_system
+              {{ $cfg.required.claim | quote }}:
+                expression: {{ printf "%s in auth.identity ? auth.identity[%s] : ''" ($cfg.required.claim | toJson) ($cfg.required.claim | toJson) | quote }}
+              {{ $cfg.optional.claim | quote }}:
+                expression: {{ printf "%s in auth.identity ? auth.identity[%s] : ''" ($cfg.optional.claim | toJson) ($cfg.optional.claim | toJson) | quote }}
+      {{- end }}
       headers:
+        {{- if eq .Values.auth.mode "EDGE" }}
+        # Rewrite the machine credential only after successful authentication.
+        # EDGE+API replaces all credentials with a wristband in Envoy.
+        Authorization:
+          when:
+            - predicate: request.headers['authorization'].startsWith('ServiceAccount ')
+          plain:
+            expression: "request.headers['authorization'].replace('ServiceAccount ', 'Bearer ')"
+        {{- end }}
         # "true" for machine callers (hyperfleet-components), "false" for humans.
         x-hyperfleet-system:
           plain:
