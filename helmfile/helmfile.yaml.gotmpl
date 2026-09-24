@@ -136,6 +136,7 @@ releases:
     namespace: {{ .Values.namespace }}
     chart: ../helm/hyperfleet-gateway
 {{ if and (eq (env "EXT_AUTHZ_ENABLED" | default "false") "true") (eq .Values.oidcIssuerMode "mock") }}
+    needs:
       - hyperfleet-mock-oidc
 {{ end }}
     labels:
