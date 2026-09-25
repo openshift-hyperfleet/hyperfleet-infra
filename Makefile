@@ -262,7 +262,7 @@ install-maestro-all: install-maestro create-maestro-consumer ## Install Maestro 
 .PHONY: uninstall-applied-manifest-crd
 uninstall-applied-manifest-crd: check-kubectl ## Uninstall AppliedManifestWorks CRD (for Maestro)
 	@echo "Uninstalling AppliedManifestWorks CRD..."
-	@kubectl delete -f https://raw.githubusercontent.com/open-cluster-management-io/api/main/work/v1/0000_01_work.open-cluster-management.io_appliedmanifestworks.crd.yaml
+	@kubectl delete -f https://raw.githubusercontent.com/open-cluster-management-io/api/main/work/v1/0000_01_work.open-cluster-management.io_appliedmanifestworks.crd.yaml --request-timeout=30s --timeout 5m
 	@echo "OK: AppliedManifestWorks CRD uninstalled"
 
 .PHONY: uninstall-maestro
