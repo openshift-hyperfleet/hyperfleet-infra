@@ -33,6 +33,7 @@ config:
       auth:
         enabled: true
         audience: {{ .Values.apiAudience | quote }}
+        scheme: {{ if eq (env "EXT_AUTHZ_ENABLED" | default "false") "true" }}ServiceAccount{{ else }}Bearer{{ end }}
       {{ end }}
 
 broker:

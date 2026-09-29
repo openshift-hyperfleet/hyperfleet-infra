@@ -61,6 +61,8 @@ TOKEN_TENANT ?=
 TOKEN_SUBTENANT ?=
 TOKEN_MISSING_REQUIRED ?= false
 CURL_IMAGE ?= curlimages/curl:8.22.0@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777
+GATEWAY_E2E_TIMEOUT ?= 300
+GATEWAY_E2E_POLL_INTERVAL ?= 5
 
 # Authorino operator (Kuadrant). Cluster-singleton prerequisite for the gateway
 # ext_authz auth boundary; installs AuthConfig / Authorino CRDs when
@@ -361,7 +363,21 @@ mint-human-token: check-kubectl-context check-jq check-ext-authz-config ## Mint 
 
 .PHONY: check-human-token
 check-human-token: check-kubectl-context check-jq check-ext-authz-config check-tenant-isolation-config ## Check human JWT tenant propagation, audience, and missing-claim denial
-	@./scripts/check-human-token.sh
+	@./scripts/check-gateway-e2e.sh human
+
+.PHONY: check-gateway-e2e
+check-gateway-e2e: check-kubectl-context check-jq check-ext-authz-config check-tenant-isolation-config ## Run the full kind gateway identity, lifecycle, tenant-isolation, and NetworkPolicy suite
+	@if [ "$(HELMFILE_ENV)" != "kind" ]; then \
+		echo "ERROR: check-gateway-e2e requires HELMFILE_ENV=kind"; exit 1; \
+	fi
+	@if [ "$(OIDC_ISSUER_MODE)" != "mock" ]; then \
+		echo "ERROR: check-gateway-e2e requires OIDC_ISSUER_MODE=mock"; exit 1; \
+	fi
+	@kubectl rollout status daemonset/cilium --namespace $(CILIUM_NAMESPACE) --timeout=180s >/dev/null \
+		|| { echo "ERROR: check-gateway-e2e requires a ready Cilium daemonset"; exit 1; }
+	@kubectl get networkpolicy hyperfleet-api-ingress --namespace $(NAMESPACE) >/dev/null \
+		|| { echo "ERROR: check-gateway-e2e requires the hyperfleet-api-ingress NetworkPolicy"; exit 1; }
+	@CILIUM_NAMESPACE="$(CILIUM_NAMESPACE)" ./scripts/check-gateway-e2e.sh full
 
 
 # ==== Hyperfleet Targets ====
@@ -817,6 +833,10 @@ validate-mock-oidc: check-helm ## Validate the test-only mock OIDC chart and iss
 	fi; \
 	grep -Fq -- '--labels=app.kubernetes.io/component=token-helper' scripts/mint-human-token.sh \
 		|| { echo "ERROR: mock token helper pod label is missing"; exit 1; }
+	@for values in helmfile/values/base-sentinel.yaml.gotmpl helmfile/values/base-adapter.yaml.gotmpl; do \
+		grep -Fq 'scheme: {{ if eq (env "EXT_AUTHZ_ENABLED" | default "false") "true" }}ServiceAccount{{ else }}Bearer{{ end }}' "$$values" \
+			|| { echo "ERROR: $$values must use ServiceAccount auth with ext_authz"; exit 1; }; \
+	done
 	@set -eu; \
 	created_files=""; \
 	cleanup_generated() { \
@@ -837,6 +857,11 @@ validate-mock-oidc: check-helm ## Validate the test-only mock OIDC chart and iss
 			|| { echo "ERROR: Helmfile mock-mode build failed for $$env"; exit 1; }; \
 		echo "$$build" | grep -q 'name: hyperfleet-mock-oidc' \
 			|| { echo "ERROR: mock issuer release missing for $$env"; exit 1; }; \
+		gateway=$$(printf '%s\n' "$$build" | grep -A3 -F '  - chart: ../helm/hyperfleet-gateway'); \
+		printf '%s\n' "$$gateway" | grep -q '^    needs:' \
+			|| { echo "ERROR: gateway mock issuer dependency is missing for $$env"; exit 1; }; \
+		printf '%s\n' "$$gateway" | grep -Fq -- "- hf-validate-$$env/hyperfleet-mock-oidc" \
+			|| { echo "ERROR: gateway does not depend on the mock issuer for $$env"; exit 1; }; \
 		echo "$$build" | grep -Fq "oidcIssuerUrl: http://hyperfleet-mock-oidc.hf-validate-$$env.svc.cluster.local:8080/default" \
 			|| { echo "ERROR: Helmfile did not pass the mock issuer URL to the gateway for $$env"; exit 1; }; \
 	done; \
