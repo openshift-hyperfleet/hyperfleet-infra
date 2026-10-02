@@ -15,6 +15,9 @@ spec:
     metadata:
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- if .Values.tls.enabled }}
+        checksum/tls: {{ .Values.tls.secretName | sha256sum }}
+        {{- end }}
       labels:
         {{- include "mock-oidc.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: mock-oidc
@@ -29,7 +32,7 @@ spec:
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}
           ports:
-            - name: http
+            - name: {{ ternary "https" "http" .Values.tls.enabled }}
               containerPort: {{ .Values.service.port }}
               protocol: TCP
           env:
@@ -38,17 +41,21 @@ spec:
                 configMapKeyRef:
                   name: {{ include "mock-oidc.fullname" . }}
                   key: JSON_CONFIG
+            - name: SERVER_PORT
+              value: {{ .Values.service.port | quote }}
           readinessProbe:
             httpGet:
               path: /isalive
-              port: http
+              port: {{ ternary "https" "http" .Values.tls.enabled }}
+              scheme: {{ ternary "HTTPS" "HTTP" .Values.tls.enabled }}
             initialDelaySeconds: {{ .Values.probes.readiness.initialDelaySeconds }}
             periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
             timeoutSeconds: {{ .Values.probes.readiness.timeoutSeconds }}
           livenessProbe:
             httpGet:
               path: /isalive
-              port: http
+              port: {{ ternary "https" "http" .Values.tls.enabled }}
+              scheme: {{ ternary "HTTPS" "HTTP" .Values.tls.enabled }}
             initialDelaySeconds: {{ .Values.probes.liveness.initialDelaySeconds }}
             periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
             timeoutSeconds: {{ .Values.probes.liveness.timeoutSeconds }}
@@ -58,6 +65,19 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+            {{- if .Values.tls.enabled }}
+            - name: tls
+              mountPath: /etc/mock-oidc/tls
+              readOnly: true
+            {{- end }}
       volumes:
         - name: tmp
           emptyDir: {}
+        {{- if .Values.tls.enabled }}
+        - name: tls
+          secret:
+            secretName: {{ .Values.tls.secretName }}
+            items:
+              - key: keystore.p12
+                path: keystore.p12
+        {{- end }}

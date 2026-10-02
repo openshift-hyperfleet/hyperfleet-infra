@@ -85,6 +85,22 @@ tls:
   hyperfleetApiTLSSecretName: hyperfleet-api-server-cert
   authorinoAuthorizationTLSSecretName: authorino-server-cert
   authorinoOIDCTLSSecretName: authorino-oidc-server-cert
+  # Helm cannot natively wait for cert-manager Certificate custom resources.
+  # A post-install/upgrade Job blocks dependent Helmfile releases until the
+  # Secrets consumed by Envoy, Authorino, and hyperfleet-api are issued.
+  certificateWaiter:
+    enabled: true
+    image:
+      repository: alpine/k8s@sha256:15cfdf84d6de3559bc54d7479eb4e8aadbf71f6d7f08782cb1e91f3446f4b2d8
+      pullPolicy: IfNotPresent
+    timeoutSeconds: 300
+    resources:
+      requests:
+        cpu: 10m
+        memory: 32Mi
+      limits:
+        cpu: 100m
+        memory: 64Mi
 
 # -----------------------------------------------------------------------------
 # Envoy — gateway/proxy behavior knobs that are customized
@@ -120,29 +136,44 @@ envoy:
 # Authentication — Authorino ext_authz gateway and OIDC settings
 # -----------------------------------------------------------------------------
 auth:
+  # NONE: no authentication; EDGE: Authorino; API: in-app external JWTs;
+  # EDGE+API: Authorino exchanges external credentials for API-only wristbands.
+  mode: NONE
   # Authorino ext_authz (requires make install-authorino-operator).
   extAuthz:
-    enabled: false
     port: 50051
     timeout: 1s
 
-  # Rendered when extAuthz.enabled.
+  # Rendered in EDGE and EDGE+API.
   authorino:
     # Pin published image; align with AUTHORINO_OPERATOR_VERSION in Makefile.
     image: quay.io/kuadrant/authorino:v0.26.2
     # Empty: gateway Service DNS + localhost (see authconfig.yaml).
     hosts: []
+    # Test-only CA mounted into Authorino's Go system trust directory when
+    # Helmfile selects the self-signed mock issuer over HTTPS.
+    mockIssuerCASecretName: ""
     logging:
       level: info
 
-  # OIDC issuer for the human-jwt AuthConfig. Deployment tooling selects the
-  # appropriate issuer; the chart does not distinguish test and production use.
-  oidc:
-    issuerUrl: ""
+  # Required in EDGE and EDGE+API modes. Helmfile supplies the human provider.
+  identityProviders: []
+  # - name: human-jwt
+  #   issuerUrl: https://idp.example.com/realms/hyperfleet
+  #   allowInsecureIssuer: false # test-only mock issuer exception
+  #   audience: hyperfleet-api
+  #   identityClaim: sub
+  #   identityClaimPattern: ""
 
-  humanIdentity:
-    # Human JWTs must include this value in their aud claim.
+  # Fixed Festival Wristband settings. The signing Secret contains key.pem
+  # (traditional PKCS#1 RSA private key, required by the pinned Authorino
+  # version) and is provisioned once by
+  # make ensure-wristband-signing-key. It is separate from every TLS private key.
+  # HYPERFLEET-1523 owns any signing-key rotation design; this PR preserves it.
+  wristband:
+    signingKeySecretName: hyperfleet-wristband-signing-key
     audience: hyperfleet-api
+    tokenDuration: 300
 
   # Machine identity (adapters/sentinels) via kubernetesTokenReview - see authconfig.yaml.
   machineIdentity:

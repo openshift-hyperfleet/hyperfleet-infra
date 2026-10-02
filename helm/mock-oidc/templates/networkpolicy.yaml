@@ -15,6 +15,13 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/component: token-helper
+        # API mode validates direct human JWTs, so hyperfleet-api must fetch
+        # the mock issuer's JWKS over TLS. Keep this scoped to the API release
+        # rather than allowing every pod in the namespace.
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: api
+              app.kubernetes.io/instance: hyperfleet-api
         - podSelector:
             matchLabels:
               control-plane: controller-manager

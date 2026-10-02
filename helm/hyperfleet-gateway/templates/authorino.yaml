@@ -1,4 +1,4 @@
-{{- if .Values.auth.extAuthz.enabled }}
+{{- if include "hyperfleet-gateway.edgeAuthEnabled" . }}
 # Authorino instance for Envoy ext_authz. Watches AuthConfigs in this namespace.
 apiVersion: operator.authorino.kuadrant.io/v1beta1
 kind: Authorino
@@ -21,5 +21,20 @@ spec:
       enabled: true
       certSecretRef:
         name: {{ .Values.tls.authorinoOIDCTLSSecretName }}
+  {{- if .Values.auth.authorino.mockIssuerCASecretName }}
+  # The test-only mock issuer is self-signed. Authorino uses Go's system trust
+  # pool for OIDC discovery/JWKS retrieval. The Authorino image is RHEL-based,
+  # so replace its CA bundle only in this test-mode path rather than disabling
+  # TLS verification. /etc/ssl/certs is reserved by operator listener mounts.
+  volumes:
+    items:
+      - name: mock-oidc-ca
+        mountPath: /etc/pki/ca-trust/extracted/pem
+        secrets:
+          - {{ .Values.auth.authorino.mockIssuerCASecretName }}
+        items:
+          - key: tls.crt
+            path: tls-ca-bundle.pem
+  {{- end }}
   logLevel: {{ .Values.auth.authorino.logging.level }}
 {{- end }}

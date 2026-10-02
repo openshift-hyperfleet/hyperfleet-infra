@@ -9,7 +9,7 @@ spec:
   selector:
     {{- include "mock-oidc.selectorLabels" . | nindent 4 }}
   ports:
-    - name: http
+    - name: {{ ternary "https" "http" .Values.tls.enabled }}
       port: {{ .Values.service.port }}
-      targetPort: http
+      targetPort: {{ ternary "https" "http" .Values.tls.enabled }}
       protocol: TCP

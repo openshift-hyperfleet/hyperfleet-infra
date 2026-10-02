@@ -8,6 +8,7 @@ set -euo pipefail
 
 NAMESPACE="${NAMESPACE:-}"
 OIDC_ISSUER_MODE="${OIDC_ISSUER_MODE:-}"
+AUTH_MODE="${AUTH_MODE:-NONE}"
 CURL_IMAGE="${CURL_IMAGE:-curlimages/curl:8.22.0@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777}"
 TENANT_MODEL="${TENANT_MODEL:-onprem}"
 TOKEN_SUBJECT="${TOKEN_SUBJECT:-human@example.com}"
@@ -41,6 +42,10 @@ if [[ -z "$NAMESPACE" ]]; then
 fi
 if [[ "$OIDC_ISSUER_MODE" != "mock" ]]; then
     echo "ERROR: mint-human-token requires OIDC_ISSUER_MODE=mock (got '${OIDC_ISSUER_MODE:-unset}')" >&2
+    exit 1
+fi
+if [[ "$AUTH_MODE" != "API" && "$AUTH_MODE" != "EDGE" && "$AUTH_MODE" != "EDGE+API" ]]; then
+    echo "ERROR: mint-human-token requires AUTH_MODE=API, EDGE, or EDGE+API" >&2
     exit 1
 fi
 case "$TENANT_MODEL" in
@@ -85,7 +90,10 @@ else
     mapping="hyperfleet-${TENANT_MODEL}-required"
 fi
 
-issuer_url="http://hyperfleet-mock-oidc.${NAMESPACE}.svc.cluster.local:8080/default"
+# The mock issuer is HTTPS in every authenticated mock mode. curl runs in a
+# disposable helper pod, so it accepts the test-only self-signed certificate;
+# Authorino and hyperfleet-api mount that certificate as a trusted CA instead.
+issuer_url="https://hyperfleet-mock-oidc.${NAMESPACE}.svc.cluster.local:8443/default"
 pod_name="hf-human-token-$(date +%s)-${RANDOM}"
 cleanup() {
     kubectl delete pod "$pod_name" --namespace "$NAMESPACE" --ignore-not-found --wait=false >/dev/null 2>&1 || true
@@ -123,7 +131,7 @@ read -r mapping
 read -r audience
 issuer_url="$1"
 
-curl -fsS --connect-timeout 5 --max-time 15 \
+    curl -kfsS --connect-timeout 5 --max-time 15 \
     -X POST "${issuer_url%/}/token" \
     -u "hyperfleet-human-helper:" \
     -H "Content-Type: application/x-www-form-urlencoded" \

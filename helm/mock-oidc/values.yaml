@@ -12,7 +12,15 @@ replicaCount: 1
 
 service:
   type: ClusterIP
-  port: 8080
+  port: 8443
+
+tls:
+  # Mock OIDC is always HTTPS. API and Authorino both validate its self-signed
+  # certificate through explicitly mounted trust anchors.
+  enabled: true
+  secretName: hyperfleet-mock-oidc-tls
+  keystorePasswordSecretName: hyperfleet-mock-oidc-keystore-password
+  keystorePassword: changeit
 
 resources:
   requests:

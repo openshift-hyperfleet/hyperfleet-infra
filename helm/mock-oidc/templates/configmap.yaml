@@ -5,4 +5,4 @@ metadata:
   labels:
     {{- include "mock-oidc.labels" . | nindent 4 }}
 data:
-  JSON_CONFIG: {{ toJson .Values.config | quote }}
+  JSON_CONFIG: {{ if .Values.tls.enabled }}{{ toJson (merge (deepCopy .Values.config) (dict "httpServer" (dict "type" "NettyWrapper" "ssl" (dict "keyPassword" .Values.tls.keystorePassword "keystoreFile" "/etc/mock-oidc/tls/keystore.p12" "keystoreType" "PKCS12" "keystorePassword" .Values.tls.keystorePassword)))) | quote }}{{ else }}{{ toJson .Values.config | quote }}{{ end }}

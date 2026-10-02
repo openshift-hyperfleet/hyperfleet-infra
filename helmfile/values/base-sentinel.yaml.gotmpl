@@ -29,11 +29,10 @@ config:
   clients:
     hyperfleetApi:
       baseUrl: {{ env "API_BASE_URL" | default "http://hyperfleet-gateway:8000" }}
-      {{ if or (eq (env "JWT_AUTH_ENABLED" | default "false") "true") (eq (env "EXT_AUTHZ_ENABLED" | default "false") "true") }}
       auth:
-        enabled: true
-        audience: {{ .Values.apiAudience | quote }}
-      {{ end }}
+        enabled: {{ ne .Values.authMode "NONE" }}
+        audience: {{ .Values.machineIdentityAudience | quote }}
+        scheme: {{ if has .Values.authMode (list "EDGE" "EDGE+API") }}ServiceAccount{{ else }}Bearer{{ end }}
 
 broker:
   type: {{ .Values.brokerType }}

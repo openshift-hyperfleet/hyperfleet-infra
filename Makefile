@@ -9,9 +9,6 @@ HELMFILE_ENV ?= gcp
 ifeq ($(findstring gcp,$(HELMFILE_ENV)),)
 	-include env.kind
 else
-	ifeq ($(HELMFILE_ENV),gcp)
-	-include generated-values-from-terraform/oidc.env
-	endif
 	-include env.gcp
 endif
 
@@ -39,13 +36,16 @@ DRY_RUN_FLAG      := $(if $(filter $(TRUTHY_VALUES),$(strip $(DRY_RUN))),--dry-r
 AUTO_APPROVE_FLAG := $(if $(filter $(TRUTHY_VALUES),$(strip $(AUTO_APPROVE))),-auto-approve)
 BUILD_IMAGES_ENABLED := $(if $(filter $(TRUTHY_VALUES),$(strip $(BUILD_IMAGES))),1,)
 
+# Authentication has one public control.
+AUTH_MODE ?= NONE
+EDGE_AUTH_ENABLED := $(if $(filter EDGE EDGE+API,$(strip $(AUTH_MODE))),1,)
+
 
 # Default Dirs
 MANIFESTS_DIR    ?= manifests
 HELM_DIR         ?= helm
 TF_DIR           ?= terraform
 OCI_TF_DIR       ?= terraform/oci
-
 GENERATED_RABBITMQ_DIR ?= generated-values-rabbitmq
 GENERATED_DIR ?= generated-values-from-terraform
 RABBITMQ_URL ?=  "amqp://guest:guest@rabbitmq:5672"
@@ -62,9 +62,21 @@ TOKEN_SUBTENANT ?=
 TOKEN_MISSING_REQUIRED ?= false
 CURL_IMAGE ?= curlimages/curl:8.22.0@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777
 
+# Machine-token helper defaults. E2E environments deploy cl-maestro instead of
+# adapter1; override MACHINE_SERVICE_ACCOUNT to exercise a different allowed
+# (or denied) ServiceAccount through TokenReview.
+ifneq ($(filter $(HELMFILE_ENV),e2e-kind e2e-gcp),)
+MACHINE_SERVICE_ACCOUNT ?= cl-maestro-hyperfleet-adapter
+else
+MACHINE_SERVICE_ACCOUNT ?= adapter1-hyperfleet-adapter
+endif
+MACHINE_TOKEN_AUDIENCE ?= hyperfleet-api
+# The Kubernetes API server requires TokenRequest durations of at least 10m.
+MACHINE_TOKEN_DURATION ?= 10m
+
 # Authorino operator (Kuadrant). Cluster-singleton prerequisite for the gateway
-# ext_authz auth boundary; installs AuthConfig / Authorino CRDs when
-# EXT_AUTHZ_ENABLED=true. Pinned by commit (not the mutable version tag) and
+# ext_authz auth boundary; installs AuthConfig / Authorino CRDs when AUTH_MODE
+# is EDGE or EDGE+API. Pinned by commit (not the mutable version tag) and
 # checksum-verified before being applied. Bumping AUTHORINO_OPERATOR_VERSION
 # requires updating COMMIT and SHA256 together.
 AUTHORINO_OPERATOR_VERSION        ?= v0.26.0
@@ -195,6 +207,10 @@ build-helmfile: check-helmfile ## Build the helmfile for the current environment
 .PHONY: lint-helmfile
 lint-helmfile: check-helmfile ## Lint the helmfile for the current environment
 	helmfile -f helmfile/helmfile.yaml.gotmpl -e $(HELMFILE_ENV) lint
+
+.PHONY: validate-helmfile-config
+validate-helmfile-config: check-helmfile-env ## Validate Helmfile inputs before applying imperative prerequisites
+	helmfile -f helmfile/helmfile.yaml.gotmpl -e $(HELMFILE_ENV) build
 
 # ==== Maestro Targets ====
 # NOTE: This is a workaround to install the AppliedManifestWorks CRD manually if there are issues installing via Helm - https://github.com/openshift-online/maestro/blob/main/charts/maestro-agent/templates/crd.yaml is not working as expected
@@ -335,13 +351,34 @@ uninstall-authorino-operator: check-kubectl ## Uninstall the Authorino operator
 	@echo "OK: Authorino operator uninstalled"
 
 .PHONY: maybe-install-authorino-operator
-maybe-install-authorino-operator: ## Install the Authorino operator only when EXT_AUTHZ_ENABLED=true
-ifneq ($(strip $(EXT_AUTHZ_ENABLED)),true)
-	@echo "[NOTE: Skipping Authorino operator install (EXT_AUTHZ_ENABLED != true)]"
-	@echo "To enable the gateway auth boundary set EXT_AUTHZ_ENABLED=true"
-else
+maybe-install-authorino-operator: ## Install the Authorino operator only for AUTH_MODE=EDGE or EDGE+API
+ifneq ($(EDGE_AUTH_ENABLED),)
 	$(MAKE) install-authorino-operator
+else
+	@echo "[NOTE: Skipping Authorino operator install (AUTH_MODE=$(AUTH_MODE))]"
 endif
+
+.PHONY: ensure-wristband-signing-key
+ensure-wristband-signing-key: check-kubectl check-hyperfleet-namespace ## Create the Authorino wristband signing Secret once for AUTH_MODE=EDGE+API
+	@./scripts/ensure-wristband-signing-key.sh
+
+.PHONY: ensure-kubernetes-oidc-discovery
+ensure-kubernetes-oidc-discovery: check-kubectl check-kubectl-context ## Allow API-mode JWKS discovery on Kind before deployment
+	@./scripts/ensure-kubernetes-oidc-discovery.sh
+
+.PHONY: mint-human-token
+mint-human-token: ## Mint a test-only mock human JWT
+	@$(MAKE) --no-print-directory check-kubectl-context check-jq >&2
+	@./scripts/mint-human-token.sh
+
+.PHONY: mint-machine-token
+mint-machine-token: ## Mint a projected ServiceAccount JWT for API or gateway authentication
+	@$(MAKE) --no-print-directory check-kubectl-context >&2
+	@./scripts/mint-machine-token.sh
+
+.PHONY: check-human-token
+check-human-token: check-kubectl-context check-jq ## Check mock human JWT tenant propagation and denial cases
+	@./scripts/check-human-token.sh
 
 # ==== RabbitMQ Components ====
 .PHONY: generate-rabbitmq-values
@@ -353,15 +390,6 @@ ifeq ($(HELMFILE_ENV),kind)
 else
 	@echo "OK: generate-rabbitmq-values is not supported for HELMFILE_ENV=$(HELMFILE_ENV)"
 endif
-
-# ==== Gateway Authentication Targets ====
-.PHONY: mint-human-token
-mint-human-token: check-kubectl-context check-jq check-ext-authz-config ## Mint a test-only human JWT (TENANT_MODEL, TOKEN_TENANT, and optional TOKEN_SUBTENANT)
-	@./scripts/mint-human-token.sh
-
-.PHONY: check-human-token
-check-human-token: check-kubectl-context check-jq check-ext-authz-config check-tenant-isolation-config ## Check human JWT tenant propagation, audience, and missing-claim denial
-	@./scripts/check-human-token.sh
 
 
 # ==== Hyperfleet Targets ====
@@ -379,13 +407,13 @@ install-repos: check-helmfile-env ## Add all hyperfleet helm repos
 	$(call add-helm-repo,adapter,$(ADAPTER_CHART_REF))
 
 .PHONY: install-hyperfleet
-install-hyperfleet: check-helmfile-env check-hyperfleet-namespace check-jwt-config check-ext-authz-config check-tenant-isolation-config install-cert-manager maybe-install-authorino-operator ## Install all HyperFleet components with internal TLS
+install-hyperfleet: validate-helmfile-config check-hyperfleet-namespace maybe-install-authorino-operator install-cert-manager ensure-kubernetes-oidc-discovery ensure-wristband-signing-key ## Install all HyperFleet components with mandatory request-path TLS
 	helmfile -f helmfile/helmfile.yaml.gotmpl -e $(HELMFILE_ENV) apply
 
 .PHONY: switch-tenant-model
-switch-tenant-model: check-helmfile-env check-ext-authz-config check-tenant-isolation-config ## Switch the active tenant model (TENANT_MODEL=onprem|oracle); re-applies the gateway AuthConfig and API dimensions together
-	@if [ "$(EXT_AUTHZ_ENABLED)" != "true" ]; then \
-		echo "ERROR: switch-tenant-model requires EXT_AUTHZ_ENABLED=true; with ext_authz off no AuthConfig is deployed and nothing would be switched"; exit 1; \
+switch-tenant-model: validate-helmfile-config maybe-install-authorino-operator ensure-wristband-signing-key ## Switch the active tenant model; requires AUTH_MODE=EDGE or EDGE+API
+	@if [ -z "$(EDGE_AUTH_ENABLED)" ]; then \
+		echo "ERROR: switch-tenant-model requires AUTH_MODE=EDGE or EDGE+API"; exit 1; \
 	fi
 	@case "$(TENANT_MODEL)" in \
 		onprem|oracle) ;; \
@@ -397,16 +425,16 @@ switch-tenant-model: check-helmfile-env check-ext-authz-config check-tenant-isol
 	@echo "OK: tenant model switched to '$(TENANT_MODEL)' (same AuthConfig name replaces the policy; old-model tokens are rejected at the gateway)"
 
 .PHONY: install-api
-install-api: check-helmfile-env check-hyperfleet-namespace check-jwt-config check-tenant-isolation-config install-cert-manager maybe-install-authorino-operator ## Install gateway TLS prerequisite and HyperFleet API
+install-api: validate-helmfile-config check-hyperfleet-namespace install-cert-manager maybe-install-authorino-operator ensure-kubernetes-oidc-discovery ensure-wristband-signing-key ## Install gateway PKI prerequisite and HyperFleet API
 	helmfile apply -f helmfile/helmfile.yaml.gotmpl -e $(HELMFILE_ENV) -l component=gateway
 	helmfile apply -f helmfile/helmfile.yaml.gotmpl -e $(HELMFILE_ENV) -l component=api
 
 .PHONY: install-sentinels
-install-sentinels: check-helmfile-env ## Install Hyperfleet Sentinels
+install-sentinels: validate-helmfile-config ## Install Hyperfleet Sentinels
 	helmfile apply -f helmfile/helmfile.yaml.gotmpl -e $(HELMFILE_ENV) -l component=sentinel
 
 .PHONY: install-adapters
-install-adapters: check-helmfile-env ## Install Hyperfleet Adapters
+install-adapters: validate-helmfile-config ## Install Hyperfleet Adapters
 	helmfile apply -f helmfile/helmfile.yaml.gotmpl -e $(HELMFILE_ENV) -l component=adapter
 
 .PHONY: uninstall-hyperfleet
@@ -631,55 +659,6 @@ define check-namespace
 	@echo "OK: namespace $${$(1)} ready"
 endef
 
-.PHONY: check-jwt-config
-check-jwt-config: ## Validate OIDC variables when JWT_AUTH_ENABLED=true with GCP OIDC; no-op otherwise
-	@if [ "$(JWT_AUTH_ENABLED)" = "true" ] && [ -n "$(OIDC_ISSUER_URL)" ]; then \
-		echo "$(OIDC_ISSUER_URL)" | grep -qE "^https://[a-zA-Z0-9]" \
-			|| { echo "ERROR: OIDC_ISSUER_URL must be a valid https:// URL (got: $(OIDC_ISSUER_URL))"; exit 1; }; \
-		if [ -n "$(OIDC_JWKS_URL)" ]; then \
-			echo "$(OIDC_JWKS_URL)" | grep -qE "^https://[a-zA-Z0-9]" \
-				|| { echo "ERROR: OIDC_JWKS_URL must be a valid https:// URL (got: $(OIDC_JWKS_URL))"; exit 1; }; \
-		fi; \
-		echo "OK: JWT auth config validated (OIDC_ISSUER_URL=$(OIDC_ISSUER_URL))"; \
-	elif [ "$(JWT_AUTH_ENABLED)" = "true" ] && [ -n "$(OIDC_JWKS_URL)" ]; then \
-		echo "ERROR: OIDC_JWKS_URL is set without OIDC_ISSUER_URL. Set both or neither."; exit 1; \
-	elif [ "$(JWT_AUTH_ENABLED)" = "true" ]; then \
-		echo "OK: JWT auth enabled with K8s in-cluster OIDC (no OIDC_ISSUER_URL needed)"; \
-	fi
-
-.PHONY: check-ext-authz-config
-check-ext-authz-config: ## Validate gateway auth config when EXT_AUTHZ_ENABLED=true; no-op otherwise
-	@if [ "$(EXT_AUTHZ_ENABLED)" = "true" ]; then \
-		case "$(OIDC_ISSUER_MODE)" in \
-			mock) \
-				echo "OK: ext_authz config validated (TENANT_MODEL=$(TENANT_MODEL), OIDC_ISSUER_MODE=mock)" >&2; \
-				;; \
-			external) \
-				test -n "$(OIDC_ISSUER_URL)" || { echo "ERROR: external OIDC_ISSUER_MODE requires OIDC_ISSUER_URL. The gateway is fail-closed; without an issuer the AuthConfig never becomes Ready and every request 403s."; exit 1; }; \
-				echo "$(OIDC_ISSUER_URL)" | grep -qE "^https://[a-zA-Z0-9]" \
-					|| { echo "ERROR: OIDC_ISSUER_URL must be a valid https:// URL in external mode (got: $(OIDC_ISSUER_URL))"; exit 1; }; \
-				echo "OK: ext_authz config validated (TENANT_MODEL=$(TENANT_MODEL), OIDC_ISSUER_MODE=external, issuer=$(OIDC_ISSUER_URL))" >&2; \
-				;; \
-			*) echo "ERROR: OIDC_ISSUER_MODE='$(OIDC_ISSUER_MODE)' must be 'mock' or 'external'"; exit 1 ;; \
-		esac; \
-		case "$(TENANT_MODEL)" in \
-			onprem|oracle) ;; \
-			*) echo "ERROR: TENANT_MODEL='$(TENANT_MODEL)' must be 'onprem' or 'oracle'"; exit 1 ;; \
-		esac; \
-	fi
-
-.PHONY: check-tenant-isolation-config
-check-tenant-isolation-config: ## Validate tenant isolation has a trusted gateway and supported model
-	@if [ "$(TENANT_ISOLATION_ENABLED)" = "true" ]; then \
-		[ "$(EXT_AUTHZ_ENABLED)" = "true" ] \
-			|| { echo "ERROR: TENANT_ISOLATION_ENABLED=true requires EXT_AUTHZ_ENABLED=true so tenant headers come from the trusted Authorino gateway"; exit 1; }; \
-		case "$(TENANT_MODEL)" in \
-			onprem|oracle) ;; \
-			*) echo "ERROR: TENANT_MODEL='$(TENANT_MODEL)' must be 'onprem' or 'oracle'"; exit 1 ;; \
-		esac; \
-		echo "OK: tenant isolation config validated (TENANT_MODEL=$(TENANT_MODEL))"; \
-	fi
-
 .PHONY: check-hyperfleet-namespace
 check-hyperfleet-namespace: ## Create Hyperfleet namespace if it doesn't exist and label it
 	$(call check-dns-label,NAMESPACE)
@@ -800,144 +779,9 @@ validate-maestro: check-helm ## Validate Maestro Helm chart rendering
 		--set agent.messageBroker.mqtt.host=maestro-mqtt.$(MAESTRO_NAMESPACE) > /dev/null
 	@echo "OK: all Helm charts rendered successfully"
 
-.PHONY: validate-mock-oidc
-validate-mock-oidc: check-helm ## Validate the test-only mock OIDC chart and issuer-mode guards
-	@echo "Validating mock OIDC chart..."
-	@helm lint $(HELM_DIR)/mock-oidc
-	@out=$$(helm template hyperfleet-mock-oidc $(HELM_DIR)/mock-oidc --namespace test) \
-		|| { echo "ERROR: mock OIDC chart failed to render"; exit 1; }; \
-	echo "$$out" | grep -q 'kind: NetworkPolicy' \
-		|| { echo "ERROR: mock OIDC ingress NetworkPolicy is missing"; exit 1; }; \
-	echo "$$out" | grep -q 'app.kubernetes.io/component: token-helper' \
-		|| { echo "ERROR: mock OIDC ingress does not allow the token helper pod"; exit 1; }; \
-	echo "$$out" | grep -q 'authorino-resource: authorino' \
-		|| { echo "ERROR: mock OIDC ingress does not allow the Authorino pod"; exit 1; }; \
-	if echo "$$out" | grep -q 'kubernetes.io/metadata.name'; then \
-		echo "ERROR: mock OIDC ingress must not allow the entire namespace"; exit 1; \
-	fi; \
-	grep -Fq -- '--labels=app.kubernetes.io/component=token-helper' scripts/mint-human-token.sh \
-		|| { echo "ERROR: mock token helper pod label is missing"; exit 1; }
-	@set -eu; \
-	created_files=""; \
-	cleanup_generated() { \
-		for file in $$created_files; do rm -f "$$file"; done; \
-		rmdir generated-values-rabbitmq generated-values-from-terraform 2>/dev/null || true; \
-	}; \
-	trap cleanup_generated EXIT; \
-	for file in generated-values-rabbitmq/adapter1.yaml generated-values-rabbitmq/adapter2.yaml generated-values-rabbitmq/adapter3.yaml generated-values-rabbitmq/sentinel-clusters.yaml generated-values-rabbitmq/sentinel-nodepools.yaml generated-values-from-terraform/adapter1.yaml generated-values-from-terraform/adapter2.yaml generated-values-from-terraform/adapter3.yaml generated-values-from-terraform/sentinel-clusters.yaml generated-values-from-terraform/sentinel-nodepools.yaml; do \
-		if [ ! -f "$$file" ]; then \
-			mkdir -p "$$(dirname "$$file")"; \
-			printf '%s\n' 'broker: {}' > "$$file"; \
-			created_files="$$created_files $$file"; \
-		fi; \
-	done; \
-	for env in kind e2e-gcp; do \
-		build=$$(HELMFILE_ENV=$$env NAMESPACE=hf-validate-$$env EXT_AUTHZ_ENABLED=true TENANT_ISOLATION_ENABLED=true OIDC_ISSUER_MODE=mock OIDC_ISSUER_URL= \
-			helmfile -f helmfile/helmfile.yaml.gotmpl -e $$env build) \
-			|| { echo "ERROR: Helmfile mock-mode build failed for $$env"; exit 1; }; \
-		echo "$$build" | grep -q 'name: hyperfleet-mock-oidc' \
-			|| { echo "ERROR: mock issuer release missing for $$env"; exit 1; }; \
-		echo "$$build" | grep -Fq "oidcIssuerUrl: http://hyperfleet-mock-oidc.hf-validate-$$env.svc.cluster.local:8080/default" \
-			|| { echo "ERROR: Helmfile did not pass the mock issuer URL to the gateway for $$env"; exit 1; }; \
-	done; \
-	if HELMFILE_ENV=kind NAMESPACE=hf-validate-kind EXT_AUTHZ_ENABLED=true OIDC_ISSUER_MODE=mock OIDC_ISSUER_URL= JWT_AUTH_ENABLED=true \
-		helmfile -f helmfile/helmfile.yaml.gotmpl -e kind build >/dev/null 2>&1; then \
-		echo "ERROR: Helmfile accepted JWT_AUTH_ENABLED=true with ext_authz mock mode"; exit 1; \
-	fi; \
-	if HELMFILE_ENV=kind NAMESPACE=hf-validate-kind EXT_AUTHZ_ENABLED=true OIDC_ISSUER_MODE=mock OIDC_ISSUER_URL=https://issuer.invalid \
-		helmfile -f helmfile/helmfile.yaml.gotmpl -e kind build >/dev/null 2>&1; then \
-		echo "ERROR: Helmfile accepted OIDC_ISSUER_URL with mock mode"; exit 1; \
-	fi; \
-	HELMFILE_ENV=kind NAMESPACE=hf-validate-kind EXT_AUTHZ_ENABLED=false OIDC_ISSUER_MODE=mock OIDC_ISSUER_URL=https://issuer.invalid JWT_AUTH_ENABLED=true \
-		helmfile -f helmfile/helmfile.yaml.gotmpl -e kind build >/dev/null \
-		|| { echo "ERROR: Helmfile rejected OIDC_ISSUER_URL with mock mode and EXT_AUTHZ_ENABLED=false"; exit 1; }; \
-	HELMFILE_ENV=e2e-gcp NAMESPACE=hf-validate-e2e-gcp EXT_AUTHZ_ENABLED=false OIDC_ISSUER_MODE=mock OIDC_ISSUER_URL=https://issuer.invalid JWT_AUTH_ENABLED=true \
-		helmfile -f helmfile/helmfile.yaml.gotmpl -e e2e-gcp build >/dev/null \
-		|| { echo "ERROR: Helmfile rejected OIDC_ISSUER_URL with mock mode and EXT_AUTHZ_ENABLED=false for e2e-gcp"; exit 1; }; \
-	if HELMFILE_ENV=gcp NAMESPACE=hf-validate-gcp EXT_AUTHZ_ENABLED=true OIDC_ISSUER_MODE=mock OIDC_ISSUER_URL= \
-		helmfile -f helmfile/helmfile.yaml.gotmpl -e gcp build >/dev/null 2>&1; then \
-		echo "ERROR: Helmfile accepted the test-only mock issuer in regular gcp"; exit 1; \
-	fi; \
-	build=$$(HELMFILE_ENV=gcp NAMESPACE=hf-validate-gcp EXT_AUTHZ_ENABLED=true TENANT_ISOLATION_ENABLED=true OIDC_ISSUER_MODE=external OIDC_ISSUER_URL=https://issuer.invalid \
-		helmfile -f helmfile/helmfile.yaml.gotmpl -e gcp build) \
-		|| { echo "ERROR: Helmfile external-mode build failed for gcp"; exit 1; }; \
-	echo "$$build" | grep -Fq 'oidcIssuerUrl: https://issuer.invalid' \
-		|| { echo "ERROR: Helmfile did not pass the external issuer URL to the gateway"; exit 1; }; \
-	echo "$$build" | grep -q 'name: hyperfleet-mock-oidc' \
-		|| { echo "ERROR: mock issuer release is missing from state for regular gcp external mode cleanup"; exit 1; }; \
-	if HELMFILE_ENV=gcp NAMESPACE=hf-validate-gcp EXT_AUTHZ_ENABLED=true OIDC_ISSUER_MODE=external OIDC_ISSUER_URL=http://issuer.invalid \
-		helmfile -f helmfile/helmfile.yaml.gotmpl -e gcp build >/dev/null 2>&1; then \
-		echo "ERROR: Helmfile accepted an HTTP issuer in external mode"; exit 1; \
-	fi
-	@if ! helm template gw $(HELM_DIR)/hyperfleet-gateway --namespace default \
-		--set auth.extAuthz.enabled=true --set tenant.model=onprem \
-		--set-string auth.oidc.issuerUrl=http://issuer.invalid/default >/dev/null; then \
-		echo "ERROR: gateway chart rejected a directly configured HTTP issuer"; exit 1; \
-	fi
-	@if helm template gw $(HELM_DIR)/hyperfleet-gateway --namespace default \
-		--set auth.extAuthz.enabled=true >/dev/null 2>&1; then \
-		echo "ERROR: empty issuer URL was accepted"; exit 1; \
-	fi
-	@if helm template gw $(HELM_DIR)/hyperfleet-gateway --namespace default \
-		--set auth.extAuthz.enabled=true \
-		--set-string auth.oidc.issuerUrl=issuer.invalid/default >/dev/null 2>&1; then \
-		echo "ERROR: malformed issuer URL was accepted"; exit 1; \
-	fi
-	@echo "OK: mock OIDC chart and Helmfile issuer-mode guards are valid"
-
 .PHONY: validate-authorino
-validate-authorino: check-helm ## Validate gateway auth templates
-	@echo "Validating Authorino gateway templates..."
-	@for model in onprem oracle; do \
-		out=$$(helm template gw $(HELM_DIR)/hyperfleet-gateway --namespace default \
-			--set auth.extAuthz.enabled=true --set tenant.model=$$model \
-			--set auth.oidc.issuerUrl=https://issuer.invalid/oidc 2>&1) \
-			|| { echo "ERROR: render failed for tenantModel=$$model"; echo "$$out"; exit 1; }; \
-		echo "$$out" | grep -q "failure_mode_allow: false" \
-			|| { echo "ERROR ($$model): ext_authz is not fail-closed"; exit 1; }; \
-		echo "$$out" | grep -q "operator.authorino.kuadrant.io/v1beta1" \
-			|| { echo "ERROR ($$model): Authorino instance not rendered"; exit 1; }; \
-		echo "$$out" | awk '/name: envoy.filters.http.ext_authz/{e=NR} /name: envoy.filters.http.router/{r=NR} END{exit !(e>0 && r>0 && e<r)}' \
-			|| { echo "ERROR ($$model): ext_authz must be ordered before router"; exit 1; }; \
-		echo "$$out" | grep -q "kubernetesTokenReview" \
-			|| { echo "ERROR ($$model): hyperfleet-components machine identity (kubernetesTokenReview) not rendered"; exit 1; }; \
-		echo "$$out" | grep -A3 "kubernetesTokenReview:" | grep -q '"hyperfleet-api"' \
-			|| { echo "ERROR ($$model): kubernetesTokenReview audiences does not include hyperfleet-api"; exit 1; }; \
-		echo "$$out" | grep -A12 '"require-human-audience":' | grep -q 'type(auth.identity.aud) == string' \
-			|| { echo "ERROR ($$model): human JWT audience rule is missing"; exit 1; }; \
-		echo "$$out" | grep -A12 '"require-human-audience":' | grep -q 'auth.identity.aud.exists' \
-			|| { echo "ERROR ($$model): human JWT audience rule does not support array claims"; exit 1; }; \
-		echo "$$out" | grep -A12 '"require-human-audience":' | grep -q 'hyperfleet-api' \
-			|| { echo "ERROR ($$model): human JWT audience is not hyperfleet-api"; exit 1; }; \
-		subj_pattern=$$(echo "$$out" | sed -n 's/.*value: "\(\^system:serviceaccount:[^"]*\)".*/\1/p') ; \
-		[ -n "$$subj_pattern" ] \
-			|| { echo "ERROR ($$model): restrict-system-subjects pattern not rendered"; exit 1; }; \
-		for sa in nodepools-hyperfleet-sentinel clusters-hyperfleet-sentinel adapter1-hyperfleet-adapter; do \
-			echo "system:serviceaccount:default:$$sa" | grep -Eq "$$subj_pattern" \
-				|| { echo "ERROR ($$model): restrict-system-subjects pattern rejects known-good SA $$sa"; exit 1; }; \
-		done; \
-		for sa in default some-other-sa hyperfleet-api hyperfleet-adapter-lookalike; do \
-			echo "system:serviceaccount:default:$$sa" | grep -Eq "$$subj_pattern" \
-				&& { echo "ERROR ($$model): restrict-system-subjects pattern wrongly accepts unlisted SA $$sa (audience alone must not be the credential)"; exit 1; }; \
-			true; \
-		done; \
-	done
-	@helm template gw $(HELM_DIR)/hyperfleet-gateway --set auth.extAuthz.enabled=true --set tenant.model=onprem --set auth.oidc.issuerUrl=https://issuer.invalid/oidc \
-		| awk '/"x-tenant-project":/{f=1} f&&/when:/{g=1} f&&g&&/selector: auth.identity.project_id/{ok=1} END{exit !ok}' \
-		|| { echo "ERROR: onprem optional header x-tenant-project is not when-gated"; exit 1; }
-	@if helm template gw $(HELM_DIR)/hyperfleet-gateway --set auth.extAuthz.enabled=true --set tenant.model=bogus >/dev/null 2>&1; then \
-		echo "ERROR: invalid tenantModel was accepted (expected fail-fast)"; exit 1; \
-	fi
-	@hosts_out=$$(helm template gw $(HELM_DIR)/hyperfleet-gateway --set auth.extAuthz.enabled=true --set tenant.model=onprem \
-		--set auth.oidc.issuerUrl=https://issuer.invalid/oidc --set auth.authorino.hosts='{gateway.example.com}') \
-		|| { echo "ERROR: render failed with authorino.hosts set"; exit 1; }; \
-	echo "$$hosts_out" | grep -q '"gw-hyperfleet-gateway"' \
-		|| { echo "ERROR: default gateway Service DNS host dropped when authorino.hosts is set"; exit 1; }; \
-	echo "$$hosts_out" | grep -q '"localhost"' \
-		|| { echo "ERROR: default localhost host dropped when authorino.hosts is set"; exit 1; }; \
-	echo "$$hosts_out" | grep -q '"gateway.example.com"' \
-		|| { echo "ERROR: configured authorino.hosts entry not rendered"; exit 1; }
-	@echo "OK: Authorino gateway templates valid (audience enforcement, ext_authz before router, fail-closed, tenant guards, additive AUTHORINO_HOSTS, machine subject allowlist)"
+validate-authorino: check-helm ## Validate internal TLS and all gateway AUTH_MODE templates
+	@./scripts/validate-authorino.sh
 
 .PHONY: validate-network-policies
 validate-network-policies: check-helm ## Validate network-policies Helm chart rendering
@@ -969,9 +813,8 @@ validate-namespace-cleaner: check-helm ## Validate namespace-cleaner Helm chart 
 ci-validate: validate-terraform lint-helm lint-shellcheck validate-authorino ## Ci validate: validate terraform (all stacks) + lint helm + lint shellcheck + validate authorino
 
 .PHONY: ci-dry-run
-ci-dry-run: ci-validate ## Ci dry-run: ci-validate + validate maestro + validate network policies + validate namespace cleaner + validate mock OIDC
+ci-dry-run: ci-validate ## Ci dry-run: ci-validate + validate maestro + validate network policies + validate namespace cleaner
 	$(MAKE) validate-maestro
-	$(MAKE) validate-mock-oidc
 	$(MAKE) validate-network-policies
 	$(MAKE) validate-namespace-cleaner
 

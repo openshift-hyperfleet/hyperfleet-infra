@@ -58,6 +58,15 @@ via the operator's naming convention ("<name>-authorino" ServiceAccount,
 authorino
 {{- end }}
 
+{{/* This is also the OIDC realm used by the API's Helmfile values. */}}
+{{- define "hyperfleet-gateway.wristbandIssuer" -}}
+{{- printf "https://%s-authorino-oidc.%s.svc:8083/%s/hyperfleet-tenant-policy/wristband" (include "hyperfleet-gateway.authorinoName" .) .Release.Namespace .Release.Namespace -}}
+{{- end }}
+
+{{- define "hyperfleet-gateway.edgeAuthEnabled" -}}
+{{- if has .Values.auth.mode (list "EDGE" "EDGE+API") -}}true{{- end -}}
+{{- end }}
+
 {{- define "hyperfleet-gateway.rootCASecretName" -}}
 hyperfleet-gateway-ca-cert
 {{- end }}

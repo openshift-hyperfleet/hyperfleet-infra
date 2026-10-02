@@ -27,6 +27,8 @@ spec:
   isCA: true
   duration: 87600h
   secretName: {{ $rootCASecretName }}
+  # HYPERFLEET-1523: CA renewal and rollover are explicitly deferred to the
+  # certificate-rotation spike. Keep this existing non-rotating root stable.
   renewal:
     policy: Disabled
   privateKey:
@@ -51,7 +53,7 @@ metadata:
 spec:
   ca:
     secretName: {{ $rootCASecretName }}
-{{- if .Values.auth.extAuthz.enabled }}
+{{- if include "hyperfleet-gateway.edgeAuthEnabled" . }}
 ---
 apiVersion: cert-manager.io/v1
 kind: Certificate
@@ -62,6 +64,8 @@ metadata:
 spec:
   secretName: {{ .Values.tls.authorinoAuthorizationTLSSecretName }}
   privateKey:
+    # HYPERFLEET-1523: this pre-existing leaf-key rotation policy is outside
+    # this PR. Do not change rotation behaviour until the spike decides it.
     rotationPolicy: Always
   issuerRef:
     name: {{ $rootCAIssuerName }}
@@ -81,6 +85,8 @@ metadata:
 spec:
   secretName: {{ .Values.tls.authorinoOIDCTLSSecretName }}
   privateKey:
+    # HYPERFLEET-1523: this pre-existing leaf-key rotation policy is outside
+    # this PR. Do not change rotation behaviour until the spike decides it.
     rotationPolicy: Always
   issuerRef:
     name: {{ $rootCAIssuerName }}
@@ -101,6 +107,8 @@ metadata:
 spec:
   secretName: {{ .Values.tls.hyperfleetApiTLSSecretName }}
   privateKey:
+    # HYPERFLEET-1523: this pre-existing leaf-key rotation policy is outside
+    # this PR. Do not change rotation behaviour until the spike decides it.
     rotationPolicy: Always
   issuerRef:
     name: {{ $rootCAIssuerName }}

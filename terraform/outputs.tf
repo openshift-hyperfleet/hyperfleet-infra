@@ -51,18 +51,6 @@ output "gcp_project_id" {
 }
 
 # =============================================================================
-# OIDC / JWT
-# =============================================================================
-
-output "oidc_issuer_url" {
-  description = "OIDC issuer URL for the GKE cluster; used to validate projected ServiceAccount tokens in JWT_AUTH_ENABLED deployments"
-  value = (
-    var.cloud_provider == "gke" ? module.gke_cluster[0].oidc_issuer_url :
-    "unknown"
-  )
-}
-
-# =============================================================================
 # Connection Instructions
 # =============================================================================
 

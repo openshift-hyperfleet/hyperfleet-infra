@@ -1,0 +1,103 @@
+{{- if .Values.tls.certificateWaiter.enabled }}
+{{- $certificateNames := list "hyperfleet-api" (printf "%s-ca" (include "hyperfleet-gateway.fullname" .)) }}
+{{- if include "hyperfleet-gateway.edgeAuthEnabled" . }}
+{{- $certificateNames = append $certificateNames (printf "%s-authorino-authorization" (include "hyperfleet-gateway.authorinoName" .)) }}
+{{- $certificateNames = append $certificateNames (printf "%s-authorino-oidc" (include "hyperfleet-gateway.authorinoName" .)) }}
+{{- end }}
+{{- $waiterName := printf "%s-certificate-waiter" (include "hyperfleet-gateway.fullname" .) }}
+# Helm --wait does not wait for cert-manager Certificate custom resources.
+# This hook runs after native gateway resources are ready and prevents Helmfile
+# dependents from starting until every mounted TLS Secret is issued.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $waiterName }}
+  labels:
+    {{- include "hyperfleet-gateway.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $waiterName }}
+  labels:
+    {{- include "hyperfleet-gateway.labels" . | nindent 4 }}
+rules:
+  - apiGroups:
+      - cert-manager.io
+    resources:
+      - certificates
+    verbs:
+      - get
+      - list
+      - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $waiterName }}
+  labels:
+    {{- include "hyperfleet-gateway.labels" . | nindent 4 }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $waiterName }}
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $waiterName }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $waiterName }}
+  labels:
+    {{- include "hyperfleet-gateway.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: {{ int .Values.tls.certificateWaiter.timeoutSeconds }}
+  template:
+    metadata:
+      labels:
+        {{- include "hyperfleet-gateway.labels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ $waiterName }}
+      restartPolicy: Never
+      automountServiceAccountToken: true
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        fsGroup: 65532
+      containers:
+        - name: wait-for-certificates
+          image: {{ .Values.tls.certificateWaiter.image.repository | quote }}
+          imagePullPolicy: {{ .Values.tls.certificateWaiter.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+          env:
+            - name: HOME
+              value: /tmp
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              {{- range $certificateNames }}
+              kubectl wait --for=condition=Ready certificate/{{ . }} --timeout={{ printf "%ds" (int $.Values.tls.certificateWaiter.timeoutSeconds) }}
+              {{- end }}
+          resources:
+            {{- toYaml .Values.tls.certificateWaiter.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+{{- end }}

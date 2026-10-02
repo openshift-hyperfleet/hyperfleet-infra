@@ -1,0 +1,53 @@
+{{- if .Values.tls.enabled }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ .Values.tls.keystorePasswordSecretName }}
+  labels:
+    {{- include "mock-oidc.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  password: {{ .Values.tls.keystorePassword | quote }}
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ include "mock-oidc.fullname" . }}-selfsigned
+  labels:
+    {{- include "mock-oidc.labels" . | nindent 4 }}
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ .Values.tls.secretName }}
+  labels:
+    {{- include "mock-oidc.labels" . | nindent 4 }}
+spec:
+  secretName: {{ .Values.tls.secretName }}
+  # Dev-only issuer: keep its certificate stable for local and E2E API-mode
+  # testing. HYPERFLEET-1523 owns any future certificate-rotation decision.
+  duration: 876000h # 100 years; X.509 certificates cannot literally never expire.
+  renewal:
+    policy: Disabled
+  privateKey:
+    rotationPolicy: Never
+  commonName: {{ printf "%s.%s.svc" (include "mock-oidc.fullname" .) .Release.Namespace | quote }}
+  subject:
+    organizations:
+      - HyperFleet
+  issuerRef:
+    name: {{ include "mock-oidc.fullname" . }}-selfsigned
+    kind: Issuer
+  dnsNames:
+    - {{ include "mock-oidc.fullname" . }}
+    - {{ printf "%s.%s.svc" (include "mock-oidc.fullname" .) .Release.Namespace }}
+    - {{ printf "%s.%s.svc.cluster.local" (include "mock-oidc.fullname" .) .Release.Namespace }}
+  keystores:
+    pkcs12:
+      create: true
+      passwordSecretRef:
+        name: {{ .Values.tls.keystorePasswordSecretName }}
+        key: password
+{{- end }}
