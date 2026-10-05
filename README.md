@@ -105,6 +105,7 @@ Configuration precedence (highest to lowest):
 | `make switch-tenant-model` | Switch the active tenant model (`TENANT_MODEL=onprem\|oracle`); re-applies the gateway AuthConfig and API together |
 | `make mint-human-token` | Mint a test-only JWT from the mock issuer |
 | `make check-human-token` | Verify human JWT tenant propagation, audience enforcement, and missing-claim denial |
+| `make check-gateway-e2e` | Run the full kind gateway identity, lifecycle, tenant-isolation, and NetworkPolicy suite |
 
 When `EXT_AUTHZ_ENABLED=true`, `make install-hyperfleet` installs the Authorino
 operator automatically before deploying, so `install-authorino-operator` only
@@ -430,7 +431,7 @@ EXT_AUTHZ_ENABLED=true TENANT_ISOLATION_ENABLED=true \
 After the switch, human tokens must contain the new model's required claim.
 All human tokens must also include `hyperfleet-api` in the JWT `aud` claim.
 
-#### Mock human tokens and smoke check
+#### Mock human tokens and gateway checks
 
 The mock issuer exposes a documented Make interface for later gateway suites
 and for manual checks. The helper prints only the raw JWT to stdout and sends
@@ -496,6 +497,43 @@ authorization protects requests at the gateway. `JWT_AUTH_ENABLED` enables an
 additional check inside the API. They cannot currently be combined for machine
 callers because the gateway uses the `ServiceAccount` scheme while the API's
 JWT middleware requires `Bearer`.
+
+#### Gateway end-to-end suite
+
+`make check-gateway-e2e` is the canonical local regression suite for the
+gateway boundary. It requires an already-installed **kind** deployment with
+Cilium enforcement, mock OIDC, gateway auth, and tenant isolation enabled. It
+starts from the on-prem tenant model, runs the same matrix after switching to
+Oracle, and restores on-prem automatically even when an assertion fails.
+
+```bash
+HELMFILE_ENV=kind EXT_AUTHZ_ENABLED=true TENANT_ISOLATION_ENABLED=true \
+  OIDC_ISSUER_MODE=mock TENANT_MODEL=onprem make local-up-kind
+
+HELMFILE_ENV=kind EXT_AUTHZ_ENABLED=true TENANT_ISOLATION_ENABLED=true \
+  OIDC_ISSUER_MODE=mock TENANT_MODEL=onprem make check-gateway-e2e
+```
+
+The suite requires every listed case to run. A successful summary proves human
+tenant and audit-header stamping despite forged headers; rejection before the
+API for missing and invalid credentials; unlisted ServiceAccount and
+ServiceAccount-as-`Bearer` denial; tenant isolation before and after a real
+Sentinel/adapter `Reconciled=True` lifecycle and hard deletion; old-token
+rejection after the on-prem-to-Oracle switch; and a dropped direct connection
+to the API while the gateway remains reachable. It removes its
+`hf-gateway-e2e-*` temporary pods, ServiceAccounts, and API resources.
+
+For focused use, `make check-human-token` runs the human identity checks;
+`scripts/check-gateway-e2e.sh current-model` runs the reusable per-model
+assertion matrix without switching configuration; and `full` adds the model
+switch and kind-only NetworkPolicy probe. The optional
+`GATEWAY_E2E_TIMEOUT`, `GATEWAY_E2E_POLL_INTERVAL`, `GATEWAY_SERVICE`,
+`API_SERVICE`, and `CURL_IMAGE` settings tune its local environment. Tokens
+remain in shell memory or pod stdin and are never placed in object fields,
+arguments, or suite output.
+
+The direct API NetworkPolicy check is meaningful only on clusters with an
+enforcing policy engine; this suite runs it on kind with Cilium.
 
 ### E2E specific variables
 
