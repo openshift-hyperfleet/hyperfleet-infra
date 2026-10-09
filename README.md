@@ -91,10 +91,12 @@ Configuration precedence (highest to lowest):
 | `make install-api` | Install HyperFleet API only |
 | `make install-sentinels` | Install Sentinels only |
 | `make install-adapters` | Install Adapters only |
+| `make install-desire-delivery` | Install the desire delivery stack only (Redis + the applier) |
 | `make uninstall-hyperfleet` | Uninstall all HyperFleet components |
 | `make uninstall-api` | Uninstall API only |
 | `make uninstall-sentinels` | Uninstall Sentinels only |
 | `make uninstall-adapters` | Uninstall Adapters only |
+| `make uninstall-desire-delivery` | Uninstall the desire delivery stack only (Redis + the applier) |
 
 ### Gateway Authentication (Authorino)
 
@@ -145,10 +147,10 @@ Set `TRACING_ENABLED=true` and `OBSERVABILITY_ENABLED=true`.
 | -------- | ------------- |
 | `make create-kind-cluster` | Create kind cluster or export kubeconfig if it exists |
 | `make delete-kind-cluster` | Delete the kind cluster |
-| `make kind-build-images` | Build and load component images into kind (also the applier when `DESIRE_DELIVERY_ENABLED=true`) |
-| `make local-up-kind` | Full local kind setup (with `DESIRE_DELIVERY_ENABLED=true`: desire delivery instead of Maestro, see [Desire delivery](#desire-delivery-optional)) |
+| `make kind-build-images` | Build and load the API, Sentinel, adapter and applier images into kind |
+| `make local-up-kind` | Full local kind setup, including the [desire delivery](#desire-delivery) stack |
 | `make local-down-kind` | Tear down kind stack and delete cluster |
-| `make health-check-desire-delivery` | Wait for Redis and the applier; on kind, fail if the Maestro namespace or AppliedManifestWorks CRD exists |
+| `make health-check-desire-delivery` | Wait for Redis and the applier |
 
 ### Generated values
 
@@ -184,7 +186,7 @@ configurable in the chart values.
 | Target | Description |
 | -------- | ------------- |
 | `make ci-dry-run` | `ci-validate` + `validate maestro` + `validate namespace cleaner` + other chart/config checks |
-| `make validate-desire-delivery` | Render `cl-desire` and the applier for `e2e-kind` and `e2e-gcp` with `DESIRE_DELIVERY_ENABLED=true`; fail on any Maestro reference in the Helmfile state or if a `cl-desire` transport is not remote with `target_cluster` set to the namespace (part of `ci-dry-run`) |
+| `make validate-desire-delivery` | Render the remote adapter, Redis and the applier for every environment; fail if a remote adapter transport is not remote with `target_cluster` set to the namespace, or if the Redis NetworkPolicy does not admit the adapter (part of `ci-dry-run`) |
 | `make ci-test` | `install terraform` + `get-credentials` + `install-maestro` + `create-maestro-consumer` + `health-check-maestro` |
 | `make ci-cleanup` | `uninstall-maestro` + `destroy-terraform` |
 | `make ci-tf-env CI_ID=<id>` | Render `envs/gke/ci-<id>.tfvars` and `.tfbackend` for an ephemeral CI cluster from `ci.tfvars.template` and `ci.tfbackend.template` |
@@ -200,7 +202,7 @@ configurable in the chart values.
 | `API_REPOSITORY` | `redhat-services-prod/hyperfleet-tenant/hyperfleet/hyperfleet-api` | `hyperfleet-api` | |
 | `SENTINEL_REPOSITORY` | `redhat-services-prod/hyperfleet-tenant/hyperfleet/hyperfleet-sentinel` | `hyperfleet-sentinel` | |
 | `ADAPTER_REPOSITORY` | `redhat-services-prod/hyperfleet-tenant/hyperfleet/hyperfleet-adapter` | `hyperfleet-adapter` | |
-| `APPLIER_REPOSITORY` | `redhat-services-prod/hyperfleet-tenant/hyperfleet/hyperfleet-applier` | `hyperfleet-applier` | Used only with `DESIRE_DELIVERY_ENABLED=true` |
+| `APPLIER_REPOSITORY` | `redhat-services-prod/hyperfleet-tenant/hyperfleet/hyperfleet-applier` | `hyperfleet-applier` | |
 | `API_IMAGE_TAG` | `dev` | `local` | |
 | `SENTINEL_IMAGE_TAG` | `dev` | `local` | |
 | `ADAPTER_IMAGE_TAG` | `dev` | `local` | |
@@ -211,7 +213,6 @@ configurable in the chart values.
 | `SENTINEL_CHART_REF` | `main` | `main` | Git ref for Sentinel chart |
 | `ADAPTER_CHART_REF` | `main` | `main` | Git ref for Adapter chart |
 | `APPLIER_CHART_REF` | `main` | `main` | Git ref for the applier chart |
-| `DESIRE_DELIVERY_ENABLED` | `false` | `false` | Deploy Redis + the applier and the single `cl-desire` adapter instead of the e2e adapter set (`e2e-kind`/`e2e-gcp` only) |
 | `TF_ENV` | `dev` | N/A | Selects `envs/gke/<TF_ENV>.tfvars` |
 | `RABBITMQ_URL` | N/A | `amqp://guest:guest@rabbitmq:5672` | |
 | `MAESTRO_CONSUMER` | `cluster1` | `cluster1` | |
@@ -501,50 +502,36 @@ The `ServiceAccount` authorization scheme is intentional: it selects
 Authorino's Kubernetes TokenReview path. To verify a rejection case, request a
 token for a ServiceAccount not included in the Helmfile-derived allow-list.
 
-### Desire delivery (optional)
+### Desire delivery
 
-`DESIRE_DELIVERY_ENABLED=true` runs the delivery chain API → Sentinel →
-adapter → desire store → applier, with no Maestro. It is supported only with
-`HELMFILE_ENV=e2e-kind` and `HELMFILE_ENV=e2e-gcp`; Helmfile rejects it
-elsewhere. In the run namespace it deploys:
+Every environment runs the delivery chain API → Sentinel → remote adapter →
+desire store → applier. In the run namespace Helmfile deploys:
 
 - `redis`: the desire store (`helm/redis`, Service `redis:6379`, no auth, no
-  persistence). The `redis-ingress` NetworkPolicy admits only the `cl-desire`
-  and applier pods.
+  persistence). The `redis-ingress` NetworkPolicy admits only the remote
+  adapter and applier pods.
 - `hyperfleet-applier`: the applier chart from the `hyperfleet-applier` repository,
   named `hyperfleet-applier-<namespace>` (shortened with a hash suffix when that
   exceeds 63 characters). It serves the store partition named
   after the namespace and may manage only Namespaces and ConfigMaps.
-- `cl-desire`: the only adapter. It replaces the e2e adapter set, so the API
-  requires only `cl-desire` for clusters and no adapter for node pools. It runs
-  the adapter chart's shipped `examples/remote-two-resources` task, routed
-  through a remote transport to the same partition.
+- The remote adapter: `cl-desire` in `e2e-kind` and `e2e-gcp`, `adapter2` in
+  `kind` and `gcp`. It runs the adapter chart's shipped
+  `examples/remote-two-resources` task, routed through a remote transport to
+  the same partition (`helmfile/values/remote-adapter.yaml.gotmpl`). The API
+  requires it for clusters like any other adapter.
 
-On kind, the bring-up also skips Maestro and the AppliedManifestWorks CRD,
-builds the applier image (`PROJECTS_DIR` must contain `hyperfleet-applier`),
-and ends with `make health-check-desire-delivery`, which fails if Maestro is
-present on the cluster.
+The e2e environments also deploy `cl-maestro`, and `local-up-kind` and
+`local-up-gcp` also install Maestro. Kind image builds include the applier, so
+`PROJECTS_DIR` must contain `hyperfleet-applier` (or set `BUILD_IMAGES=false`).
+Both bring-up targets end with `make health-check-desire-delivery`.
+
+`make install-desire-delivery` and `make uninstall-desire-delivery` manage only
+the `redis` and `hyperfleet-applier` releases, for example in a cluster where
+the rest of HyperFleet is managed separately:
 
 ```bash
-# kind: one command
-HELMFILE_ENV=e2e-kind DESIRE_DELIVERY_ENABLED=true make local-up-kind
-
-# teardown
-HELMFILE_ENV=e2e-kind DESIRE_DELIVERY_ENABLED=true make local-down-kind
-
-# e2e-gcp, in an existing cluster
-HELMFILE_ENV=e2e-gcp NAMESPACE=<namespace> DESIRE_DELIVERY_ENABLED=true \
-  make install-hyperfleet
+HELMFILE_ENV=e2e-gcp NAMESPACE=<namespace> make install-desire-delivery health-check-desire-delivery
 ```
-
-Keep the same `DESIRE_DELIVERY_ENABLED` value for every command against a
-namespace: `uninstall-hyperfleet` and `install-hyperfleet` manage only the
-adapter set the toggle selects, so switching the value leaves the other set's
-adapters installed. Targets that use the toggle fail at the start when
-`HELMFILE_ENV` is not `e2e-kind` or `e2e-gcp`.
-
-Applying with the toggle off removes the `redis` and `hyperfleet-applier`
-releases.
 
 ### E2E specific variables
 
@@ -575,13 +562,13 @@ hyperfleet-infra/
 │   ├── helmfile.yaml.gotmpl         # Helmfile orchestration
 │   ├── environments/                # Per-env configs (gcp, kind, e2e-gcp, e2e-kind)
 │   ├── configs/
-│   │   ├── base/adapters/           # Adapter configs (adapter1, adapter2, adapter3)
+│   │   ├── base/adapters/           # Adapter configs (adapter1, adapter3; remote adapter2 uses values/remote-adapter.yaml.gotmpl)
 │   │   └── e2e/adapters/            # E2E adapter configs
 │   └── values/                      # Helm value templates (.gotmpl)
 ├── helm/
 │   ├── maestro/                     # Maestro umbrella chart (deps via helm-git)
 │   ├── rabbitmq/                    # Dev-only RabbitMQ (not production-ready)
-│   └── redis/                       # Desire store for DESIRE_DELIVERY_ENABLED (not production-ready)
+│   └── redis/                       # Dev-only desire store (not production-ready)
 ├── scripts/
 │   ├── add-ttl-labels.sh            # Adds TTL labels to existing GKE clusters
 │   ├── generate-rabbitmq-values.sh  # Generates RabbitMQ broker config

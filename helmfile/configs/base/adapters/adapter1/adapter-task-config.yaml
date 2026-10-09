@@ -1,3 +1,5 @@
+schema_version: "2.0"
+
 # Example HyperFleet Adapter task configuration
 params:
 
@@ -60,8 +62,6 @@ preconditions:
 # Resources with valid K8s manifests
 resources:
   - name: "resource0"
-    transport:
-      client: "kubernetes"
     manifest:
       apiVersion: v1
       kind: ConfigMap

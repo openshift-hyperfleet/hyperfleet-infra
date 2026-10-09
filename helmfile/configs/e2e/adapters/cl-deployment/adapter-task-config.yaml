@@ -1,3 +1,5 @@
+schema_version: "2.0"
+
 # Simple valid HyperFleet Adapter Configuration for testing
 
 # Parameters with all required variables
@@ -73,8 +75,6 @@ preconditions:
 # Resources with valid K8s manifests
 resources:
   - name: "testDeployment"
-    transport:
-      client: "kubernetes"
     manifest:
       ref: "/etc/adapter/deployment.yaml"
     discovery:

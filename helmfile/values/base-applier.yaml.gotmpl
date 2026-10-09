@@ -1,4 +1,4 @@
-# Values for the hyperfleet-applier chart (DESIRE_DELIVERY_ENABLED=true).
+# Values for the hyperfleet-applier chart.
 #
 # The chart schema sets additionalProperties: false at the top level, so only
 # keys the chart declares may appear here.
@@ -20,8 +20,8 @@ image:
 fullnameOverride: {{ $fullname }}
 
 config:
-  # The store partition this applier serves. cl-desire writes its desires to the
-  # same partition (transport target_cluster in adapter-configs-desire.yaml.gotmpl).
+  # The store partition this applier serves. Remote adapters write their desires
+  # to the same partition (transport target_cluster in remote-adapter.yaml.gotmpl).
   managementCluster: {{ .Values.namespace | quote }}
   pollInterval: 5s
   redis:

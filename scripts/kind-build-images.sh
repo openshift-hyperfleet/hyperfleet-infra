@@ -10,10 +10,7 @@ APP_VERSION="${APP_VERSION:-"0.0.0-dev"}"
 : "${SENTINEL_IMAGE_TAG:?SENTINEL_IMAGE_TAG must be set and non-empty}"
 : "${ADAPTER_IMAGE_TAG:?ADAPTER_IMAGE_TAG must be set and non-empty}"
 : "${KIND_CLUSTER_NAME:?KIND_CLUSTER_NAME must be set and non-empty}"
-DESIRE_DELIVERY_ENABLED="${DESIRE_DELIVERY_ENABLED:-false}"
-if [[ "${DESIRE_DELIVERY_ENABLED}" == "true" ]]; then
-  : "${APPLIER_IMAGE_TAG:?APPLIER_IMAGE_TAG must be set and non-empty}"
-fi
+: "${APPLIER_IMAGE_TAG:?APPLIER_IMAGE_TAG must be set and non-empty}"
 
 
 detect_platform() {
@@ -41,11 +38,7 @@ if [[ -z "${CONTAINER_TOOL}" ]]; then
 fi
 
 REPO_PREFIX="hyperfleet-"
-COMPONENTS=(api sentinel adapter)
-# Desire delivery also deploys the applier
-if [[ "${DESIRE_DELIVERY_ENABLED}" == "true" ]]; then
-  COMPONENTS+=(applier)
-fi
+COMPONENTS=(api sentinel adapter applier)
 
 component_repo() {
     echo "${REPO_PREFIX}${1}"

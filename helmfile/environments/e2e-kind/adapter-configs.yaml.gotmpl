@@ -118,6 +118,20 @@ adapters:
       - name: adapterTaskConfig.external.manifestwork
         file: configs/e2e/adapters/cl-maestro/adapter-task-resource-manifestwork.yaml
   
+  # Remote adapter: delivers through the desire store and the applier
+  - name: cl-desire
+    resourceType: clusters
+    desireStoreClient: true
+    values:
+      - ./values/remote-adapter.yaml.gotmpl
+      - broker:
+          create: true
+          rabbitmq:
+            url: "amqp://guest:guest@rabbitmq:5672"
+            queue: {{ $namespace }}-clusters-cl-desire
+            exchange: {{ $namespace }}-clusters
+            routingKey: "#"
+
   - name: np-configmap
     resourceType: nodepools
     values:

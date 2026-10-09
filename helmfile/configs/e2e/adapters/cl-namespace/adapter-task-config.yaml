@@ -1,3 +1,5 @@
+schema_version: "2.0"
+
 # Simple valid HyperFleet Adapter Configuration for testing
 
 # Parameters with all required variables
@@ -61,8 +63,6 @@ preconditions:
 # Resources with valid K8s manifests
 resources:
   - name: "clusterNamespace"
-    transport:
-      client: "kubernetes"
     manifest:
       apiVersion: v1
       kind: Namespace

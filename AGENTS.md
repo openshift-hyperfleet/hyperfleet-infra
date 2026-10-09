@@ -48,14 +48,14 @@ HELMFILE_ENV=kind NAMESPACE=my-namespace REGISTRY=quay.io make install-hyperflee
 
 The Makefile `export`s everything, so Helmfile reads these values through `env "NAME"`. When you add a variable, define it in both env files and document it in README.md's variable table.
 
-## Desire delivery (optional, e2e only)
+## Desire delivery
 
-`DESIRE_DELIVERY_ENABLED=true` swaps Maestro delivery for API → Sentinel → `cl-desire` adapter → Redis desire store → `hyperfleet-applier`. It deploys `helm/redis`, the applier chart (pulled from the `hyperfleet-applier` repo), and the single `cl-desire` adapter (`helmfile/environments/adapter-configs-desire.yaml.gotmpl`), which replaces the e2e adapter set. Full description: README.md, "Desire delivery (optional)".
+Every environment delivers through API → Sentinel → remote adapter → Redis desire store → `hyperfleet-applier`. Helmfile deploys `helm/redis`, the applier chart (pulled from the `hyperfleet-applier` repo), and one remote adapter: `cl-desire` in `e2e-kind`/`e2e-gcp`, `adapter2` in `kind`/`gcp`. The remote adapter runs the adapter chart's `examples/remote-two-resources` task with the deployment config in `helmfile/values/remote-adapter.yaml.gotmpl`. Full description: README.md, "Desire delivery".
 
-- Only `e2e-kind` and `e2e-gcp` support it. `check-desire-delivery-env` fails other environments before any cluster work, and Helmfile `fail`s at render time.
-- **Use the same toggle value for every command against a namespace.** The toggle selects which adapter set is in the Helmfile state, so installing or uninstalling with the other value leaves the previous set's adapter releases behind.
-- On kind, `local-up-kind` skips Maestro and the AppliedManifestWorks CRD, builds the applier image (`PROJECTS_DIR` must contain `hyperfleet-applier`), and ends with `health-check-desire-delivery`, which fails if Maestro is present.
-- `make validate-desire-delivery` (part of `ci-dry-run`) checks that the render has no Maestro reference, and that every `cl-desire` transport is `remote` with `target_cluster` equal to the run namespace, which is the store partition the applier serves. Keep that invariant when you edit the desire adapter config.
+- Maestro delivery runs alongside it: the e2e environments also deploy `cl-maestro`, and `local-up-kind`/`local-up-gcp` install Maestro.
+- A remote adapter entry sets `desireStoreClient: true`. The `redis-ingress` NetworkPolicy admits only those adapters and the applier.
+- `make validate-desire-delivery` (part of `ci-dry-run`) checks, for every environment, that each remote adapter transport is `remote` with `target_cluster` equal to the run namespace, which is the store partition the applier serves, and that Redis admits the adapter. Keep that invariant when you edit the remote adapter config.
+- Kind image builds always build the applier, so `PROJECTS_DIR` must contain `hyperfleet-applier` (or set `BUILD_IMAGES=false`).
 - `APPLIER_IMAGE_TAG` defaults to `latest` on GCP because the applier repo publishes no `dev` tag.
 
 ## Terraform
@@ -80,7 +80,7 @@ helm plugin install https://github.com/databus23/helm-diff --verify=false
 
 ## Sibling repos
 
-Charts for `hyperfleet-api`, `hyperfleet-sentinel`, `hyperfleet-adapter` and (with desire delivery only) `hyperfleet-applier` live in their own repos and are pulled at deploy time through `helm-git`. `CHART_ORG` and the `*_CHART_REF` variables select the org and ref.
+Charts for `hyperfleet-api`, `hyperfleet-sentinel`, `hyperfleet-adapter` and `hyperfleet-applier` live in their own repos and are pulled at deploy time through `helm-git`. `CHART_ORG` and the `*_CHART_REF` variables select the org and ref.
 
 For kind image builds, `PROJECTS_DIR` must be the parent directory of those repos (default: `~/openshift-hyperfleet`). Set `BUILD_IMAGES=false` to skip image builds.
 
@@ -113,11 +113,3 @@ It runs `terraform init -backend=false`, so it validates syntax only, not GCS ac
 
 **`shellcheck` is skipped locally but required in CI.**
 Without `shellcheck` installed, `make lint-shellcheck` warns and passes. With `$CI` set, it fails. Install it locally (`brew install shellcheck`).
-
-## Commit message format
-
-```
-HYPERFLEET-XXX - <type>: <subject>
-```
-
-Types: `feat`, `fix`, `docs`, `refactor`, `chore`, `test`. There are no semver releases: infra changes deploy from `main`.

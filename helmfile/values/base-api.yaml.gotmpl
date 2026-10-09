@@ -94,8 +94,8 @@ extraVolumeMounts:
 
 {{/*
   required_adapters lists the adapters each environment deploys for a kind. An
-  environment can deploy none for a kind (the desire delivery set has no node
-  pool adapter), and the API chart schema rejects null, so render a list.
+  environment can deploy none for a kind, and the API chart schema rejects
+  null, so render a list.
 */}}
 {{- $clusterAdapters := list }}
 {{- $nodePoolAdapters := list }}

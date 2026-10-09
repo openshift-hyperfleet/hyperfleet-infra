@@ -1,0 +1,60 @@
+{{- /*
+  Remote adapter: the adapter chart's shipped remote-two-resources example,
+  routed to the desire store. Its task config and manifests come from the chart
+  (adapterTaskConfig.files). Each environment's adapter-configs.yaml.gotmpl
+  adds this file to one adapter entry, marks the entry desireStoreClient so the
+  Redis NetworkPolicy admits it, and supplies the broker block.
+
+  The deployment config is a template rather than a setFiles file so
+  target_cluster renders as this namespace. The applier serves the same
+  partition (config.managementCluster in base-applier.yaml.gotmpl).
+*/}}
+adapterTaskConfig:
+  create: true
+  files:
+    task-config.yaml: examples/remote-two-resources/adapter-task-config.yaml
+    namespace.yaml: examples/remote-two-resources/namespace.yaml
+    configmap.yaml: examples/remote-two-resources/configmap.yaml
+adapterConfig:
+  create: true
+  log:
+    level: debug
+  yaml: |
+    adapter:
+      name: {{ .Release.Name }}
+
+    # Log the full merged configuration after load (default: false)
+    debug_config: false
+    log:
+      level: debug
+
+    clients:
+      hyperfleet_api:
+        base_url: CHANGE_ME
+        version: v1
+        timeout: 2s
+        retry_attempts: 3
+        retry_backoff: exponential
+
+      broker:
+        subscription_id: CHANGE_ME
+        topic: CHANGE_ME
+
+      kubernetes:
+        api_version: "v1"
+
+    # Names referenced by the example task config. Redis runs in this
+    # namespace without authentication.
+    stores:
+      remote-store:
+        type: redis
+        url: {{ .Values.desireStoreUrl }}
+
+    transports:
+      remote-primary:
+        type: remote
+        store: remote-store
+        target_cluster: "{{ .Values.namespace }}"
+        resource_plurals:
+          "v1/Namespace": namespaces
+          "v1/ConfigMap": configmaps

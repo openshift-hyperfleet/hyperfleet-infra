@@ -12,14 +12,12 @@ adapters:
           resources:
             - configmaps
 
+  # Remote adapter: delivers through the desire store and the applier
   - name: adapter2
     resourceType: clusters
-    setFiles:
-      - name: adapterConfig.yaml
-        file: configs/base/adapters/adapter2/adapter-config.yaml
-      - name: adapterTaskConfig.yaml
-        file: configs/base/adapters/adapter2/adapter-task-config.yaml
+    desireStoreClient: true
     values:
+      - ./values/remote-adapter.yaml.gotmpl
       - {{ readFile "../../../generated-values-from-terraform/adapter2.yaml" | fromYaml | toYaml | nindent 8 }}
 
   - name: adapter3

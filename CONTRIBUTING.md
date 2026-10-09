@@ -69,7 +69,7 @@ hyperfleet-infra/
 │   ├── helmfile.yaml.gotmpl         # Helmfile orchestration
 │   ├── environments/                # Per-env configs (gcp, kind, e2e-gcp, e2e-kind)
 │   ├── configs/
-│   │   ├── base/adapters/           # Adapter configs (adapter1, adapter2, adapter3)
+│   │   ├── base/adapters/           # Adapter configs (adapter1, adapter3; remote adapter2 uses values/remote-adapter.yaml.gotmpl)
 │   │   └── e2e/adapters/            # E2E adapter configs
 │   └── values/                      # Helm value templates
 ├── helm/
