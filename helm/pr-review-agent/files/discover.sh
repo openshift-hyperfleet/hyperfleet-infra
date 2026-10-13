@@ -45,6 +45,15 @@ if [[ ! "$review_actor" =~ ^[A-Za-z0-9-]+$ ]]; then
   exit 1
 fi
 readonly review_actor
+# The runner uploads a gh wrapper that retries proxy transport errors. Put it
+# first on PATH so the scripts and Claude Code use it.
+if [[ -f /tmp/gh-retry.sh ]]; then
+  mkdir -p /tmp/hfreview-bin
+  cp /tmp/gh-retry.sh /tmp/hfreview-bin/gh
+  chmod 0755 /tmp/hfreview-bin/gh
+  export PATH="/tmp/hfreview-bin:$PATH"
+fi
+wait_for_sandbox_proxy
 load_allowed_authors
 
 has_bot_review() {

@@ -158,6 +158,7 @@ readonly sandbox_upload_dir=/work/hfreview-upload-files
 readonly discovery_upload_file=$sandbox_upload_dir/discover.sh
 readonly review_upload_file=$sandbox_upload_dir/review.sh
 readonly history_upload_file=$sandbox_upload_dir/history.sh
+readonly gh_retry_upload_file=$sandbox_upload_dir/gh-retry.sh
 active_pids=()
 gateway_login_at=0
 
@@ -165,6 +166,7 @@ mkdir -p "$sandbox_upload_dir"
 cp --dereference /opt/hfreview/discover.sh "$discovery_upload_file"
 cp --dereference /opt/hfreview/review.sh "$review_upload_file"
 cp --dereference /opt/hfreview/history.sh "$history_upload_file"
+cp --dereference /opt/hfreview/gh-retry.sh "$gh_retry_upload_file"
 chmod 0400 "$discovery_upload_file" "$review_upload_file" "$history_upload_file"
 
 if [[ ! -f "$discovery_upload_file" || -L "$discovery_upload_file" ||
@@ -323,6 +325,7 @@ run_discovery() (
   wait_for_current_sandbox
   upload_to_current_sandbox "$discovery_upload_file" /tmp/hfreview-discover.sh
   upload_to_current_sandbox "$history_upload_file" /tmp/history.sh
+  upload_to_current_sandbox "$gh_retry_upload_file" /tmp/gh-retry.sh
   printf 'Find pull request heads that need an HyperFleet review.\n'
   renew_gateway_login "$config_root" true
   env \
@@ -410,6 +413,7 @@ run_review() (
   wait_for_current_sandbox
   upload_to_current_sandbox "$review_upload_file" /tmp/hfreview.sh
   upload_to_current_sandbox "$history_upload_file" /tmp/history.sh
+  upload_to_current_sandbox "$gh_retry_upload_file" /tmp/gh-retry.sh
   printf 'Run the HyperFleet review for %s#%s at %s.\n' \
     "$REPOSITORY" "$pr_number" "$head_sha"
 

@@ -3,6 +3,56 @@
 # The review runner supplies the repository, account, and pull request values.
 # shellcheck disable=SC2154
 
+# The sandbox proxy can drop a connection shortly after the sandbox starts.
+# Retry a read-only gh call on a transport error; keep API errors as they are.
+gh_api_with_retry() {
+  local attempt output status
+  local max_attempts=${GH_API_MAX_ATTEMPTS:-4}
+  local delay=${GH_API_RETRY_DELAY_SECONDS:-3}
+  local error_file=/tmp/hfreview-gh-error.txt
+
+  for attempt in $(seq 1 "$max_attempts"); do
+    status=0
+    # Keep stdout and stderr apart: the gh wrapper writes retry notices to
+    # stderr, and the caller must only see the API response.
+    output=$(gh api "$@" 2>"$error_file") || status=$?
+    if (( status == 0 )); then
+      cat "$error_file" >&2
+      printf '%s\n' "$output"
+      return 0
+    fi
+    if (( attempt >= max_attempts )) ||
+      ! grep --quiet --extended-regexp --ignore-case \
+        'EOF|connection reset|connection refused|broken pipe|timeout|unexpected end' "$error_file"; then
+      cat "$error_file" >&2
+      return "$status"
+    fi
+    printf 'Transient GitHub API error (attempt %s of %s). Retry in %s seconds.\n' \
+      "$attempt" "$max_attempts" "$delay" >&2
+    sleep "$delay"
+  done
+}
+
+# The sandbox proxy can drop connections for a few seconds after the sandbox
+# starts. Wait until a cheap GitHub call succeeds three times in a row.
+wait_for_sandbox_proxy() {
+  local successes=0 attempt
+  local max_attempts=${PROXY_WARMUP_MAX_ATTEMPTS:-30}
+
+  for attempt in $(seq 1 "$max_attempts"); do
+    if gh api rate_limit --jq .rate.limit >/dev/null 2>&1; then
+      successes=$((successes + 1))
+      (( successes >= 3 )) && return 0
+    else
+      successes=0
+      printf 'The sandbox proxy is not ready (attempt %s of %s).\n' "$attempt" "$max_attempts" >&2
+    fi
+    sleep "${PROXY_WARMUP_DELAY_SECONDS:-2}"
+  done
+  printf 'The sandbox proxy did not become ready.\n' >&2
+  return 1
+}
+
 load_allowed_authors() {
   local author
   local membership
@@ -23,12 +73,12 @@ load_allowed_authors() {
   : >"$members_file"
   if [[ "$include_org" == true ]]; then
     # A non-member can get a successful but incomplete public membership list.
-    membership=$(gh api "user/memberships/orgs/$org" --jq .state) || return 1
+    membership=$(gh_api_with_retry "user/memberships/orgs/$org" --jq .state) || return 1
     if [[ "$membership" != active ]]; then
       printf 'HyperFleet review needs active organization membership to read review history.\n' >&2
       return 1
     fi
-    gh api --paginate "orgs/$org/members?per_page=100" \
+    gh_api_with_retry --paginate "orgs/$org/members?per_page=100" \
       --jq '.[].login' >"$members_file" || return 1
     if ! grep --ignore-case --fixed-strings --line-regexp --quiet \
       "$review_actor" "$members_file"; then

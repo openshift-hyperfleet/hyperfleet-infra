@@ -25,7 +25,6 @@ network_policies:
       - host: api.github.com
         port: 443
         protocol: rest
-        tls: terminate
         enforcement: enforce
         access: read-only
     binaries:

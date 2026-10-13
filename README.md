@@ -174,6 +174,8 @@ configurable in the chart values.
 |--------|-------------|
 | `make install-pr-review-agent` | Install the pull request review CronJob for one repository, `PR_REVIEW_REPO=api\|sentinel\|adapter\|applier` (see [helm/pr-review-agent](helm/pr-review-agent/README.md)) |
 | `make install-pr-review-agents` | Install the pull request review CronJobs for all repositories in `PR_REVIEW_REPOS` |
+| `make bootstrap-pr-review-gateway` | Create the OpenShell gateway, service accounts, Secret and profiles (`PR_REVIEW_CLUSTER`, needs `hsctl` login) |
+| `make create-pr-review-providers` | Create or update the GitHub, Jira and Vertex providers on that gateway (`PR_REVIEW_ADMIN_ENV_FILE`; prompts for tokens) |
 | `make uninstall-pr-review-agent` | Uninstall the pull request review CronJob for one repository |
 
 ### Lifecycle Enforcer

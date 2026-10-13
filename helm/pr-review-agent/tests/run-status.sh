@@ -5,22 +5,29 @@ set -Eeuo pipefail
 if [[ "${HFREVIEW_TEST_IN_CONTAINER:-}" != true ]]; then
   test_script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
   app_dir=$(dirname -- "$test_script_dir")
+  # The sandbox image provides bash, jq, openssl, and base64 like the real
+  # review environment. gh, git, and claude are replaced by mocks on PATH.
   podman run --rm \
+    --platform linux/amd64 \
     --security-opt label=disable \
-    --user 50000:0 \
     --tmpfs /sandbox:rw,mode=1777 \
     --tmpfs /tmp:rw,mode=1777 \
     --tmpfs /mock-state:rw,mode=1777 \
     --tmpfs /mock-bin:rw,mode=1777 \
     --env HFREVIEW_TEST_IN_CONTAINER=true \
-    --entrypoint /usr/sbin/bash \
+    --entrypoint /usr/bin/bash \
     --volume "$app_dir:/opt/chart:ro" \
-    registry.access.redhat.com/hi/git@sha256:ec726bb5db20e24d5c642eb866bba5c89d504b435a6d0a85cc85535cfb365ff5 \
+    quay.io/amarin/hyperfleet-review@sha256:f478cf69222796020aeb2889f4b5a084abc2925f1eb3b16d1da01caa4ceaa164 \
     /opt/chart/tests/run-status.sh
   exit
 fi
 
 export MOCK_STATE_DIR=/mock-state
+export PROXY_WARMUP_DELAY_SECONDS=0
+# The runner uploads the gh wrapper; it must call the mock, not the real gh.
+cp /opt/chart/files/gh-retry.sh /tmp/gh-retry.sh
+export HFREVIEW_REAL_GH=/mock-bin/gh
+export GH_API_RETRY_DELAY_SECONDS=0
 mkdir -p /mock-bin
 ln -s /opt/chart/tests/mock-review-tools /mock-bin/gh
 ln -s /opt/chart/tests/mock-review-tools /mock-bin/git
@@ -100,12 +107,30 @@ assert_labels() {
   fi
 }
 
+# A transient transport error on the first membership call is retried, and
+# the proxy warm-up waits for two failed probes.
+printf '%s\n' bug >"$MOCK_STATE_DIR/labels"
+if ! MOCK_MEMBERSHIP_EOF_ONCE=true MOCK_PROXY_NOT_READY=2 MOCK_PULL_EOF_ONCE=true \
+  GH_API_RETRY_DELAY_SECONDS=0 PROXY_WARMUP_DELAY_SECONDS=0 \
+  /usr/bin/bash /opt/chart/files/review.sh >"$MOCK_STATE_DIR/review-eof.log" 2>&1; then
+  cat "$MOCK_STATE_DIR/review-eof.log" >&2
+  exit 1
+fi
+# The gh wrapper absorbs both dropped calls before the scripts notice them.
+test "$(grep --fixed-strings --count -- 'gh: transient transport error (attempt 1 of 4)' \
+  "$MOCK_STATE_DIR/review-eof.log")" -eq 2
+# The warm-up probes also run through the wrapper, so its two failed probes
+# are retried silently; the probe count still shows them.
+test "$(wc -l <"$MOCK_STATE_DIR/proxy-warmups")" -eq 5
+test -f "$MOCK_STATE_DIR/review-posted"
+rm -rf /sandbox/trusted /sandbox/pr /sandbox/plugins "${MOCK_STATE_DIR:?}"/*
+
 # Direct Vertex mode: the provider token becomes the Claude Code bearer.
 # The mock claude command rejects the run when the environment is wrong.
 printf '%s\n' bug >"$MOCK_STATE_DIR/labels"
 if ! VERTEX_PROJECT_ID=example-project VERTEX_REGION=global \
   VERTEX_AI_TOKEN=openshell:resolve:env:VERTEX_AI_TOKEN \
-  /usr/sbin/bash /opt/chart/files/review.sh >"$MOCK_STATE_DIR/review-vertex.log" 2>&1; then
+  /usr/bin/bash /opt/chart/files/review.sh >"$MOCK_STATE_DIR/review-vertex.log" 2>&1; then
   cat "$MOCK_STATE_DIR/review-vertex.log" >&2
   exit 1
 fi
@@ -114,7 +139,7 @@ test -f "$MOCK_STATE_DIR/review-posted"
 rm -rf /sandbox/trusted /sandbox/pr /sandbox/plugins "${MOCK_STATE_DIR:?}"/*
 printf '%s\n' hf-review/changes-requested hf-review/self-review bug >"$MOCK_STATE_DIR/labels"
 review_log_file="$MOCK_STATE_DIR/review.log"
-if ! /usr/sbin/bash /opt/chart/files/review.sh >"$review_log_file" 2>&1; then
+if ! /usr/bin/bash /opt/chart/files/review.sh >"$review_log_file" 2>&1; then
   cat "$review_log_file" >&2
   exit 1
 fi
@@ -124,6 +149,13 @@ assert_labels $'bug\nhf-review/approved\nhf-review/self-review'
 
 test -f "$MOCK_STATE_DIR/progress-published"
 test -f "$MOCK_STATE_DIR/status-final"
+# The run metrics are appended once to the review and shown in the status.
+grep --fixed-strings --quiet -- '<!-- hfreview-metrics:v1 -->' "$MOCK_STATE_DIR/posted-review-body"
+# shellcheck disable=SC2016
+grep --extended-regexp --quiet -- 'Review run: [0-9]+m [0-9]{2}s wall time, model cost about \$1\.23 \(client-side estimate, 1500 input and 200 output tokens, claude-opus-4-8\)\.' "$MOCK_STATE_DIR/posted-review-body"
+# shellcheck disable=SC2016
+grep --fixed-strings --quiet -- 'model cost about $1.23' "$MOCK_STATE_DIR/status-body"
+test "$(wc -l <"$MOCK_STATE_DIR/review-updates")" -eq 1
 assert_only_status_image "$in_progress_image" "$MOCK_STATE_DIR/progress-body"
 assert_only_status_image "$approve_image" "$MOCK_STATE_DIR/status-body"
 grep --fixed-strings --quiet -- 'Status: **Complete**' \
@@ -142,7 +174,7 @@ grep --fixed-strings --quiet -- \
   "<!-- hfreview:v1 repo=$REPOSITORY pr=$PR_NUMBER head=$EXPECTED_HEAD_SHA -->" \
   "$MOCK_STATE_DIR/status-body"
 
-/usr/sbin/bash /opt/chart/files/discover.sh >"$MOCK_STATE_DIR/discovery-complete"
+/usr/bin/bash /opt/chart/files/discover.sh >"$MOCK_STATE_DIR/discovery-complete"
 test ! -s "$MOCK_STATE_DIR/discovery-complete"
 
 printf '%s\n\n## HyperFleet review\n\nStatus: **In progress**\n' \
@@ -150,17 +182,17 @@ printf '%s\n\n## HyperFleet review\n\nStatus: **In progress**\n' \
   >"$MOCK_STATE_DIR/status-body"
 rm "$MOCK_STATE_DIR/status-final"
 
-/usr/sbin/bash /opt/chart/files/discover.sh >"$MOCK_STATE_DIR/discovery-repair"
+/usr/bin/bash /opt/chart/files/discover.sh >"$MOCK_STATE_DIR/discovery-repair"
 grep --fixed-strings --quiet -- \
   "$PR_NUMBER"$'\t'"$EXPECTED_HEAD_SHA" \
   "$MOCK_STATE_DIR/discovery-repair"
 
-/usr/sbin/bash /opt/chart/files/review.sh
+/usr/bin/bash /opt/chart/files/review.sh
 test -f "$MOCK_STATE_DIR/status-final"
 test "$(wc -l <"$MOCK_STATE_DIR/claude-calls")" -eq 1
 assert_only_status_image "$approve_image" "$MOCK_STATE_DIR/status-body"
 
-/usr/sbin/bash /opt/chart/files/review.sh
+/usr/bin/bash /opt/chart/files/review.sh
 test "$(wc -l <"$MOCK_STATE_DIR/claude-calls")" -eq 1
 
 export MOCK_STATE_DIR=/mock-state/model-retry
@@ -168,7 +200,7 @@ export MOCK_CLAUDE_MODEL_FAILURES=2
 export PR_NUMBER=212
 export EXPECTED_HEAD_SHA=cccccccccccccccccccccccccccccccccccccccc
 mkdir -p "$MOCK_STATE_DIR"
-/usr/sbin/bash /opt/chart/files/review.sh
+/usr/bin/bash /opt/chart/files/review.sh
 test "$(wc -l <"$MOCK_STATE_DIR/claude-calls")" -eq 3
 test "$(wc -l <"$MOCK_STATE_DIR/history-loads")" -eq 4
 test -f "$MOCK_STATE_DIR/status-final"
@@ -180,7 +212,7 @@ export PR_NUMBER=218
 export EXPECTED_HEAD_SHA=3333333333333333333333333333333333333333
 mkdir -p "$MOCK_STATE_DIR"
 printf '%s\n' hf-review/approved bug >"$MOCK_STATE_DIR/labels"
-/usr/sbin/bash /opt/chart/files/review.sh
+/usr/bin/bash /opt/chart/files/review.sh
 assert_only_status_image "$in_progress_image" "$MOCK_STATE_DIR/progress-body"
 assert_only_status_image "$changes_image" "$MOCK_STATE_DIR/status-body"
 assert_labels $'bug\nhf-review/changes-requested'
@@ -192,7 +224,7 @@ export PR_NUMBER=219
 export EXPECTED_HEAD_SHA=4444444444444444444444444444444444444444
 mkdir -p "$MOCK_STATE_DIR"
 printf '%s\n' hf-review/approved hf-review/changes-requested bug >"$MOCK_STATE_DIR/labels"
-/usr/sbin/bash /opt/chart/files/review.sh
+/usr/bin/bash /opt/chart/files/review.sh
 assert_labels bug
 assert_only_status_image "$neutral_image" "$MOCK_STATE_DIR/status-body"
 unset MOCK_REVIEW_VERDICT
@@ -203,7 +235,7 @@ export MOCK_OMIT_VERDICT_MARKER=true
 export PR_NUMBER=220
 export EXPECTED_HEAD_SHA=5555555555555555555555555555555555555555
 mkdir -p "$MOCK_STATE_DIR"
-/usr/sbin/bash /opt/chart/files/review.sh
+/usr/bin/bash /opt/chart/files/review.sh
 assert_only_status_image "$approve_image" "$MOCK_STATE_DIR/status-body"
 unset MOCK_REVIEW_VERDICT MOCK_OMIT_VERDICT_MARKER
 
@@ -212,14 +244,14 @@ export MOCK_PR_DRAFT=true
 export PR_NUMBER=213
 export EXPECTED_HEAD_SHA=dddddddddddddddddddddddddddddddddddddddd
 mkdir -p "$MOCK_STATE_DIR"
-/usr/sbin/bash /opt/chart/files/discover.sh >"$MOCK_STATE_DIR/discovery-draft"
+/usr/bin/bash /opt/chart/files/discover.sh >"$MOCK_STATE_DIR/discovery-draft"
 test ! -s "$MOCK_STATE_DIR/discovery-draft"
 export MOCK_PR_DRAFT=false
-/usr/sbin/bash /opt/chart/files/discover.sh >"$MOCK_STATE_DIR/discovery-ready"
+/usr/bin/bash /opt/chart/files/discover.sh >"$MOCK_STATE_DIR/discovery-ready"
 grep --fixed-strings --quiet -- \
   "$PR_NUMBER"$'\t'"$EXPECTED_HEAD_SHA" \
   "$MOCK_STATE_DIR/discovery-ready"
-/usr/sbin/bash /opt/chart/files/review.sh
+/usr/bin/bash /opt/chart/files/review.sh
 test -f "$MOCK_STATE_DIR/status-final"
 test "$(wc -l <"$MOCK_STATE_DIR/claude-calls")" -eq 1
 unset MOCK_PR_DRAFT
@@ -229,7 +261,7 @@ export MOCK_PR_DRAFT=true
 export PR_NUMBER=214
 export EXPECTED_HEAD_SHA=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
 mkdir -p "$MOCK_STATE_DIR"
-/usr/sbin/bash /opt/chart/files/review.sh
+/usr/bin/bash /opt/chart/files/review.sh
 test ! -e "$MOCK_STATE_DIR/progress-published"
 test ! -e "$MOCK_STATE_DIR/claude-calls"
 unset MOCK_PR_DRAFT
@@ -239,7 +271,7 @@ export MOCK_DRAFT_ON_PULL_READ=2
 export PR_NUMBER=215
 export EXPECTED_HEAD_SHA=ffffffffffffffffffffffffffffffffffffffff
 mkdir -p "$MOCK_STATE_DIR"
-/usr/sbin/bash /opt/chart/files/review.sh
+/usr/bin/bash /opt/chart/files/review.sh
 test "$(<"$MOCK_STATE_DIR/pull-read-count")" -eq 2
 test ! -e "$MOCK_STATE_DIR/progress-published"
 test ! -e "$MOCK_STATE_DIR/claude-calls"
@@ -250,7 +282,7 @@ export MOCK_DRAFT_DURING_REVIEW=true
 export PR_NUMBER=216
 export EXPECTED_HEAD_SHA=1111111111111111111111111111111111111111
 mkdir -p "$MOCK_STATE_DIR"
-/usr/sbin/bash /opt/chart/files/review.sh
+/usr/bin/bash /opt/chart/files/review.sh
 test "$(wc -l <"$MOCK_STATE_DIR/claude-calls")" -eq 1
 test ! -e "$MOCK_STATE_DIR/review-posted"
 grep --fixed-strings --quiet -- 'Status: **Stopped**' \
@@ -266,11 +298,11 @@ export SKIP_DRAFT_PRS=false
 export PR_NUMBER=217
 export EXPECTED_HEAD_SHA=2222222222222222222222222222222222222222
 mkdir -p "$MOCK_STATE_DIR"
-/usr/sbin/bash /opt/chart/files/discover.sh >"$MOCK_STATE_DIR/discovery"
+/usr/bin/bash /opt/chart/files/discover.sh >"$MOCK_STATE_DIR/discovery"
 grep --fixed-strings --quiet -- \
   "$PR_NUMBER"$'\t'"$EXPECTED_HEAD_SHA" \
   "$MOCK_STATE_DIR/discovery"
-/usr/sbin/bash /opt/chart/files/review.sh
+/usr/bin/bash /opt/chart/files/review.sh
 test -f "$MOCK_STATE_DIR/status-final"
 test "$(wc -l <"$MOCK_STATE_DIR/claude-calls")" -eq 1
 unset MOCK_PR_DRAFT
@@ -283,7 +315,7 @@ export EXPECTED_HEAD_SHA=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 mkdir -p "$MOCK_STATE_DIR"
 failed_review_log_file="$MOCK_STATE_DIR/review.log"
 set +e
-/usr/sbin/bash /opt/chart/files/review.sh >"$failed_review_log_file" 2>&1
+/usr/bin/bash /opt/chart/files/review.sh >"$failed_review_log_file" 2>&1
 failed_review_status=$?
 set -e
 cat "$failed_review_log_file"
@@ -307,14 +339,14 @@ printf '%s\n' \
   'Status: **Complete**' \
   "<!-- hfreview:v1 repo=$REPOSITORY pr=$PR_NUMBER head=$EXPECTED_HEAD_SHA -->" \
   >"$MOCK_STATE_DIR/status-body"
-/usr/sbin/bash /opt/chart/files/discover.sh >"$MOCK_STATE_DIR/discovery"
+/usr/bin/bash /opt/chart/files/discover.sh >"$MOCK_STATE_DIR/discovery"
 test -s "$MOCK_STATE_DIR/discovery"
-/usr/sbin/bash /opt/chart/files/review.sh
+/usr/bin/bash /opt/chart/files/review.sh
 assert_labels hf-review/approved
 test ! -e "$MOCK_STATE_DIR/claude-calls"
-/usr/sbin/bash /opt/chart/files/discover.sh >"$MOCK_STATE_DIR/discovery"
+/usr/bin/bash /opt/chart/files/discover.sh >"$MOCK_STATE_DIR/discovery"
 test ! -s "$MOCK_STATE_DIR/discovery"
-/usr/sbin/bash /opt/chart/files/review.sh
+/usr/bin/bash /opt/chart/files/review.sh
 test "$(wc -l <"$MOCK_STATE_DIR/label-writes")" -eq 1
 
 # Retry each failed label operation without another review.
@@ -323,16 +355,16 @@ for operation in GET DELETE POST; do
   export MOCK_LABEL_FAILURE=$operation
   mkdir -p "$MOCK_STATE_DIR"
   printf '%s\n' hf-review/changes-requested bug >"$MOCK_STATE_DIR/labels"
-  if /usr/sbin/bash /opt/chart/files/review.sh; then
+  if /usr/bin/bash /opt/chart/files/review.sh; then
     printf 'A failed label operation returned success.\n' >&2
     exit 1
   fi
   grep --fixed-strings --quiet -- 'Status: **Failed**' "$MOCK_STATE_DIR/status-body"
   test ! -e "$MOCK_STATE_DIR/status-final"
-  /usr/sbin/bash /opt/chart/files/discover.sh >"$MOCK_STATE_DIR/discovery"
+  /usr/bin/bash /opt/chart/files/discover.sh >"$MOCK_STATE_DIR/discovery"
   test -s "$MOCK_STATE_DIR/discovery"
   unset MOCK_LABEL_FAILURE
-  /usr/sbin/bash /opt/chart/files/review.sh
+  /usr/bin/bash /opt/chart/files/review.sh
   assert_labels $'bug\nhf-review/approved'
   test "$(wc -l <"$MOCK_STATE_DIR/claude-calls")" -eq 1
   test -f "$MOCK_STATE_DIR/status-final"
@@ -350,7 +382,7 @@ for assessment in missing conflicting; do
     printf '%s\n' '<!-- hfreview-verdict:v1 result=APPROVE -->' \
       '<!-- hfreview-verdict:v1 result=REQUEST_CHANGES -->' >>"$MOCK_STATE_DIR/review-body"
   fi
-  /usr/sbin/bash /opt/chart/files/review.sh
+  /usr/bin/bash /opt/chart/files/review.sh
   assert_labels bug
 done
 
@@ -364,7 +396,7 @@ for change in head closed draft; do
     closed) export MOCK_STATE_AFTER_REVIEW=closed ;;
     draft) export MOCK_DRAFT_AFTER_REVIEW=true ;;
   esac
-  /usr/sbin/bash /opt/chart/files/review.sh
+  /usr/bin/bash /opt/chart/files/review.sh
   assert_labels bug
   test ! -e "$MOCK_STATE_DIR/label-writes"
   grep --fixed-strings --quiet -- 'Status: **Stopped**' "$MOCK_STATE_DIR/status-body"
@@ -375,10 +407,10 @@ done
 export MOCK_STATE_DIR=/mock-state/persistent-history
 export MOCK_OLD_REVIEW=true
 mkdir -p "$MOCK_STATE_DIR"
-/usr/sbin/bash /opt/chart/files/review.sh
+/usr/bin/bash /opt/chart/files/review.sh
 rm "$MOCK_STATE_DIR/review-posted" "$MOCK_STATE_DIR/status-final"
 export EXPECTED_HEAD_SHA=8888888888888888888888888888888888888888
-/usr/sbin/bash /opt/chart/files/review.sh
+/usr/bin/bash /opt/chart/files/review.sh
 test "$(wc -l <"$MOCK_STATE_DIR/status-creates")" -eq 1
 test "$(wc -l <"$MOCK_STATE_DIR/claude-calls")" -eq 2
 test "$(wc -l <"$MOCK_STATE_DIR/hide-calls")" -eq 2
@@ -387,15 +419,15 @@ test "$(wc -l <"$MOCK_STATE_DIR/hide-calls")" -eq 2
 export MOCK_STATE_DIR=/mock-state/hide-failure
 export MOCK_HIDE_FAILURE=true
 mkdir -p "$MOCK_STATE_DIR"
-if /usr/sbin/bash /opt/chart/files/review.sh; then
+if /usr/bin/bash /opt/chart/files/review.sh; then
   printf 'A failed cleanup returned success.\n' >&2
   exit 1
 fi
 test ! -e "$MOCK_STATE_DIR/status-final"
-/usr/sbin/bash /opt/chart/files/discover.sh >"$MOCK_STATE_DIR/discovery"
+/usr/bin/bash /opt/chart/files/discover.sh >"$MOCK_STATE_DIR/discovery"
 test -s "$MOCK_STATE_DIR/discovery"
 unset MOCK_HIDE_FAILURE
-/usr/sbin/bash /opt/chart/files/review.sh
+/usr/bin/bash /opt/chart/files/review.sh
 test "$(wc -l <"$MOCK_STATE_DIR/claude-calls")" -eq 1
 test -f "$MOCK_STATE_DIR/status-final"
 unset MOCK_OLD_REVIEW
@@ -404,7 +436,7 @@ unset MOCK_OLD_REVIEW
 export MOCK_STATE_DIR=/mock-state/membership-failure
 export MOCK_MEMBERSHIP_FAILURE=true
 mkdir -p "$MOCK_STATE_DIR"
-if /usr/sbin/bash /opt/chart/files/review.sh; then
+if /usr/bin/bash /opt/chart/files/review.sh; then
   printf 'A failed membership check returned success.\n' >&2
   exit 1
 fi
@@ -415,17 +447,17 @@ unset MOCK_MEMBERSHIP_FAILURE
 # New and edited allowed follow-ups select the same commit again.
 export MOCK_STATE_DIR=/mock-state/followup-trigger
 mkdir -p "$MOCK_STATE_DIR"
-/usr/sbin/bash /opt/chart/files/review.sh
-/usr/sbin/bash /opt/chart/files/discover.sh >"$MOCK_STATE_DIR/discovery"
+/usr/bin/bash /opt/chart/files/review.sh
+/usr/bin/bash /opt/chart/files/discover.sh >"$MOCK_STATE_DIR/discovery"
 test ! -s "$MOCK_STATE_DIR/discovery"
 for version in new edited; do
   export MOCK_FOLLOWUP_VERSION=$version
-  /usr/sbin/bash /opt/chart/files/discover.sh >"$MOCK_STATE_DIR/discovery"
+  /usr/bin/bash /opt/chart/files/discover.sh >"$MOCK_STATE_DIR/discovery"
   test -s "$MOCK_STATE_DIR/discovery"
-  /usr/sbin/bash /opt/chart/files/review.sh
-  /usr/sbin/bash /opt/chart/files/discover.sh >"$MOCK_STATE_DIR/discovery"
+  /usr/bin/bash /opt/chart/files/review.sh
+  /usr/bin/bash /opt/chart/files/discover.sh >"$MOCK_STATE_DIR/discovery"
   test ! -s "$MOCK_STATE_DIR/discovery"
-  /usr/sbin/bash /opt/chart/files/review.sh
+  /usr/bin/bash /opt/chart/files/review.sh
 done
 test "$(wc -l <"$MOCK_STATE_DIR/claude-calls")" -eq 3
 test "$(wc -l <"$MOCK_STATE_DIR/status-creates")" -eq 1

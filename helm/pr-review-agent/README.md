@@ -30,7 +30,10 @@ the gateway service account, the Secret, and the providers.
    value to use a workspace inference route on `inference.local` instead.
 5. The shell maintains a status comment, the verdict labels
    `hf-review/approved` and `hf-review/changes-requested`, and hides the
-   earlier review summaries of the bot.
+   earlier review summaries of the bot. It appends a footer with the wall
+   time and the model cost of the run to the submitted review and to the
+   status comment. The cost is the client-side estimate that Claude Code
+   reports in its JSON result, summed over retries.
 
 The pod contains no model or GitHub credentials. The gateway holds them as
 OpenShell providers. The sandbox policy (`files/policy.yaml`) and the provider
@@ -43,6 +46,16 @@ reviewed repository.
 `AskUserQuestion` flow and its rule that forbids GitHub posts without a typed
 user command. Read the wrapper prompt again when the skill changes. Set
 `plugins.ref` to a tag to prevent silent changes of the review instructions.
+
+## Where it runs
+
+The CronJobs run on the shared GKE CI cluster `hyperfleet-dev-prow`
+(`us-central1-a`, Terraform env `dev-prow`, namespace `pr-review-agent`).
+Get its credentials with `make get-credentials TF_ENV=dev-prow` or
+`gcloud container clusters get-credentials hyperfleet-dev-prow --zone us-central1-a --project hcm-hyperfleet`.
+Never run the same releases on two clusters at the same time: the releases
+share the gateway workspace, and the stale sandbox cleanup of one cluster
+deletes the in-flight sandboxes of the other.
 
 ## Requirements
 
@@ -75,87 +88,63 @@ The chart default `sandbox.source` is the digest of the last pushed image.
 Override it with `PR_REVIEW_SANDBOX_SOURCE` after a new push.
 The cluster of the gateway pulls this image, not this cluster.
 
-### 2. Create the gateway service account and the Secret
+### 2. Bootstrap the gateway (script)
 
-The runner logs in to the gateway with an OpenShell gateway service account
-(OIDC client credentials). HyperShell returns the client secret one time.
+`scripts/bootstrap-gateway.sh` creates everything on the HyperShell side
+except the provider credentials, and is safe to rerun after an instance
+rebuild:
 
 ```bash
-hsctl list gateways                    # find the gateway ID
-hsctl create serviceAccount \
-  --gateway-id <gateway-id> \
-  --name hyperfleet-pr-review \
-  --description 'PR review CronJob on hyperfleet-dev-review (GKE)' \
-  --role openshell-user \
-  --expires-in 365d \
-  --output-file /path/outside/git/pr-review-bundle.json
-
-# With the kubectl context of this cluster:
-helm/pr-review-agent/scripts/create-gateway-secret.sh \
-  /path/outside/git/pr-review-bundle.json
-rm /path/outside/git/pr-review-bundle.json
+hsctl login --no-browser --url https://api.<instance>.infra.hypershell.app \
+  --issuer-url https://keycloak.<instance>.infra.hypershell.app/realms/hypershell
+make get-credentials TF_ENV=dev-prow        # KUBECONFIG of the CronJob cluster
+make bootstrap-pr-review-gateway PR_REVIEW_CLUSTER=<managed-cluster-name> \
+  PR_REVIEW_ADMIN_ENV_FILE=<path-outside-git>/hyperfleet-review-admin.env
 ```
 
-The script creates the `pr-review-gateway` Secret in the `pr-review-agent`
-namespace and prints the service account subject. It does not print the client
-secret. `secret.example.yaml` shows the Secret format for a manual procedure.
+It creates the gateway when missing (Route enabled) and waits for its
+address, a runner service account (`openshell-user`) and the Secret
+`pr-review-gateway` in the CronJob namespace, an administrator service
+account (`openshell-admin`) whose credentials go to the env file, the
+workspace membership of the runner, and the provider profiles from
+`openshell/`. Keep the env file outside Git; it is the only copy of the
+administrator secret. Service account credentials expire after 365 days at
+most; rerun the script before that to replace them.
 
-The credential expires after 365 days at most. HyperShell has no rotation in
-place: before the expiry, create a new service account, run the script again,
-add the new subject to the workspace, and delete the old service account.
+### 3. Create the providers (script)
 
-### 3. Create the gateway providers
-
-Use a gateway administrator identity. The chart uses the `default` workspace
-(value `gateway.workspace`).
+`scripts/create-providers.sh` creates or updates the three providers with
+the administrator credentials. It prompts for the GitHub token and the Jira
+email and API token without echo, and reads the Vertex AI credentials from
+the local gcloud Application Default Credentials:
 
 ```bash
-openshell gateway select '<administrator-gateway-name>'
-openshell settings set --global --key providers_v2_enabled --value true --yes
-
-openshell provider profile import --workspace default \
-  --file helm/pr-review-agent/openshell/hfreview-github-provider.yaml
-openshell provider profile import --workspace default \
-  --file helm/pr-review-agent/openshell/hfreview-jira-provider.yaml
-
 gcloud auth application-default login
-openshell provider create --workspace default \
-  --name hyperfleet-vertex --type google-vertex-ai --from-gcloud-adc \
-  --config VERTEX_AI_PROJECT_ID=<vertex-project> \
-  --config VERTEX_AI_REGION=global
-
-read -r -s -p 'GitHub token: ' GH_TOKEN; printf '\n'; export GH_TOKEN
-openshell provider create --workspace default \
-  --name hfreview-github --type hfreview-github --credential GH_TOKEN
-unset GH_TOKEN
-
-read -r -s -p 'Jira email: ' JIRA_EMAIL; printf '\n'
-read -r -s -p 'Jira API token: ' JIRA_API_TOKEN; printf '\n'
-export JIRA_BASIC_AUTH="$JIRA_EMAIL:$JIRA_API_TOKEN"
-openshell provider create --workspace default \
-  --name hfreview-jira --type hfreview-jira --credential JIRA_BASIC_AUTH
-unset JIRA_BASIC_AUTH JIRA_EMAIL JIRA_API_TOKEN
-
-# The subject comes from step 2.
-openshell workspace member add --workspace default \
-  --subject '<service-account-subject>' --role user
+make create-pr-review-providers \
+  PR_REVIEW_ADMIN_ENV_FILE=<path-outside-git>/hyperfleet-review-admin.env
 ```
 
-To run without JIRA validation, skip the Jira commands and install the chart
-with `--set providers.jira=""`.
+The GitHub token belongs to the review account (a bot or a user that is a
+member of the organization). `--skip-vertex`, `--skip-github`, and
+`--skip-jira` limit a run to the providers that changed; the Vertex provider
+is recreated on each run so its refresh material is current. To run without
+JIRA validation, pass `--skip-jira` and install the chart with
+`--set providers.jira=""`.
 
-If the workspace already has a Vertex provider, do not create it again. Set
-`providers.claude` to its name. `claude.vertex.projectId` must be the Google
-Cloud project of that provider.
+#### Manual equivalent
 
-The `openshell` CLI of the gateway administrator must match the gateway build
-as well. For a gateway with a version suffix such as `v0.0.116-rhaiv.6`, run
-the CLI from `quay.io/opendatahub/odh-openshell-cli:<tag>` in a container:
-
-```bash
-podman run --rm -it -v "$HOME/.config/openshell:/home/1000/.config/openshell" \
-  quay.io/opendatahub/odh-openshell-cli:v0.0.116-rhaiv.6 --help
-```
+The scripts wrap these `hsctl` and `openshell` commands, which also work by
+hand: `hsctl create gateway --name <name> --cluster-id <id> --route
+'{"enabled": true}'`, `hsctl create serviceAccount --gateway-id <id> --role
+openshell-user --output-file <bundle>` followed by
+`scripts/create-gateway-secret.sh <bundle>`, and in a container of
+`openshell.image` (see `values.yaml`) with the administrator credentials in
+the environment: `openshell gateway add`, `gateway login`, `workspace member
+add --role user`, `provider profile import --file openshell/<profile>.yaml`,
+and `provider create --type {google-vertex-ai,hfreview-github,hfreview-jira}`.
+Set `XDG_CONFIG_HOME` and `XDG_STATE_HOME` to a writable directory such as
+`/tmp` inside that container, and `OPENSHELL_GATEWAY_INSECURE=true` only
+for a gateway whose certificate is not trusted.
 
 ### 4. Install
 
@@ -199,6 +188,13 @@ provider profile.
 These items have no test yet:
 
 - The cluster of the gateway must be able to pull the sandbox image.
+- A gateway exposed by an OpenShift Route in passthrough mode presents the
+  gateway's own `openshell-ca` certificate. Set `gateway.insecure: true` for
+  such a gateway (hyp2 on hypc-ibm-02 is one).
+- The sandbox proxy of OpenShell 0.1.x drops connections now and then
+  (`EOF`). `files/gh-retry.sh` is uploaded as a `gh` wrapper that retries
+  transport errors for every call except `POST`; the scripts also wait for
+  three successful probes before the first call.
 - Direct Vertex AI mode: the name of the token variable that the Vertex
   provider injects depends on the credential type. `files/review.sh` accepts
   the ADC and service-account variants of the builtin profile.

@@ -33,7 +33,9 @@ gateway:
   secretName: pr-review-gateway
   name: hyperfleet-review
   workspace: default
-  # Set to true only when the gateway certificate issuer is not trusted.
+  # Set to true only when the gateway certificate issuer is not trusted (for
+  # example a passthrough Route that presents the gateway's own openshell-ca
+  # certificate). The hyp2 spoke routes use Let's Encrypt certificates.
   insecure: false
   loginRefreshSeconds: 180
 
@@ -71,7 +73,8 @@ timeouts:
 # image that the same pipeline publishes under the same tag. The init
 # container copies /usr/local/bin/openshell from this image.
 openshell:
-  image: quay.io/opendatahub/odh-openshell-cli@sha256:3a7b405dd53e2eb3050ade2d921cafa2c04bd02779085b0ef247e158bebb6373
+  # v0.1.2-rhaiv.0
+  image: quay.io/opendatahub/odh-openshell-cli@sha256:7d04766147c6960da7d06580f3efd6538679d147aa3b0cd364993c534c3a6c7b
 
 images:
   runner: registry.access.redhat.com/hi/git@sha256:ec726bb5db20e24d5c642eb866bba5c89d504b435a6d0a85cc85535cfb365ff5

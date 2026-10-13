@@ -96,6 +96,8 @@ PR_REVIEW_REPOS          ?= api sentinel adapter applier
 PR_REVIEW_PLUGINS_REF    ?= main
 PR_REVIEW_SANDBOX_SOURCE ?=
 PR_REVIEW_GATEWAY_SECRET ?= pr-review-gateway
+PR_REVIEW_CLUSTER        ?=
+PR_REVIEW_ADMIN_ENV_FILE ?=
 
 # ==== Terraform Targets ====
 .PHONY: install-terraform
@@ -510,6 +512,18 @@ install-pr-review-agent: check-helm check-kubectl ## Install the PR review CronJ
 .PHONY: install-pr-review-agents
 install-pr-review-agents: ## Install the PR review CronJobs for all repositories in PR_REVIEW_REPOS
 	@for repo in $(PR_REVIEW_REPOS); do $(MAKE) install-pr-review-agent PR_REVIEW_REPO=$$repo || exit 1; done
+
+.PHONY: bootstrap-pr-review-gateway
+bootstrap-pr-review-gateway: check-kubectl ## Create the OpenShell gateway, service accounts, Secret and profiles for the PR review agent (PR_REVIEW_CLUSTER required; hsctl must be logged in)
+	@[ -n "$(PR_REVIEW_CLUSTER)" ] || { echo "ERROR: PR_REVIEW_CLUSTER (HyperShell managed cluster name) is required"; exit 1; }
+	$(HELM_DIR)/pr-review-agent/scripts/bootstrap-gateway.sh --cluster "$(PR_REVIEW_CLUSTER)" \
+		--namespace $(PR_REVIEW_NAMESPACE) --secret $(PR_REVIEW_GATEWAY_SECRET) \
+		$(if $(PR_REVIEW_ADMIN_ENV_FILE),--admin-env-file "$(PR_REVIEW_ADMIN_ENV_FILE)")
+
+.PHONY: create-pr-review-providers
+create-pr-review-providers: ## Create or update the GitHub, Jira and Vertex providers on the PR review gateway (PR_REVIEW_ADMIN_ENV_FILE required; prompts for tokens)
+	@[ -n "$(PR_REVIEW_ADMIN_ENV_FILE)" ] || { echo "ERROR: PR_REVIEW_ADMIN_ENV_FILE is required (written by bootstrap-pr-review-gateway)"; exit 1; }
+	$(HELM_DIR)/pr-review-agent/scripts/create-providers.sh --admin-env-file "$(PR_REVIEW_ADMIN_ENV_FILE)"
 
 .PHONY: uninstall-pr-review-agent
 uninstall-pr-review-agent: check-helm check-kubectl ## Uninstall the PR review CronJob for one repository (PR_REVIEW_REPO)

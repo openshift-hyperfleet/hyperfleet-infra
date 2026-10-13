@@ -6,7 +6,7 @@ metadata:
   labels:
     {{- include "pr-review-agent.labels" . | nindent 4 }}
 data:
-  {{- range list "run.sh" "discover.sh" "review.sh" "history.sh" "agent-runtime.sh" }}
+  {{- range list "run.sh" "discover.sh" "review.sh" "history.sh" "agent-runtime.sh" "gh-retry.sh" }}
   {{ . }}: |
     {{- $.Files.Get (printf "files/%s" .) | nindent 4 }}
   {{- end }}

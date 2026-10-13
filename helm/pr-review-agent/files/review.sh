@@ -116,10 +116,21 @@ readonly labels_marker='<!-- hfreview-labels:v1 -->'
 readonly status_comment_ids_file=/tmp/hfreview-status-comment-ids.txt
 readonly status_comment_body_file=/tmp/hfreview-status-comment-body.txt
 readonly claude_output_file=/tmp/hfreview-claude-output.txt
+readonly claude_error_file=/tmp/hfreview-claude-stderr.txt
+readonly metrics_marker='<!-- hfreview-metrics:v1 -->'
 readonly approve_verdict_marker='<!-- hfreview-verdict:v1 result=APPROVE -->'
 readonly changes_verdict_marker='<!-- hfreview-verdict:v1 result=REQUEST_CHANGES -->'
 readonly comment_verdict_marker='<!-- hfreview-verdict:v1 result=COMMENT -->'
 
+# The runner uploads a gh wrapper that retries proxy transport errors. Put it
+# first on PATH so the scripts and Claude Code use it.
+if [[ -f /tmp/gh-retry.sh ]]; then
+  mkdir -p /tmp/hfreview-bin
+  cp /tmp/gh-retry.sh /tmp/hfreview-bin/gh
+  chmod 0755 /tmp/hfreview-bin/gh
+  export PATH="/tmp/hfreview-bin:$PATH"
+fi
+wait_for_sandbox_proxy
 if ! review_actor=$(gh api user --jq .login); then
   printf 'Cannot read the GitHub review account.\n' >&2
   exit 1
@@ -135,6 +146,13 @@ readonly legacy_status_prefix="<!-- hfreview-status:v1 repo=$REPOSITORY pr=$PR_N
 
 remote_state=""
 remote_head_sha=""
+# Run metrics for the review footer. Claude Code reports a client-side cost
+# estimate and token usage in its JSON result; the shell measures wall time.
+review_wall_start=$SECONDS
+model_cost_usd=0
+model_input_tokens=0
+model_output_tokens=0
+model_names=""
 remote_draft=""
 completed_review_id=""
 status_comment_id=""
@@ -301,9 +319,22 @@ create_status_comment() {
   if ! response_id=$(gh api --method POST \
     "repos/$REPOSITORY/issues/$PR_NUMBER/comments" \
     --raw-field "body=$body" --jq .id); then
-    printf 'Cannot create the HyperFleet review status comment for %s#%s.\n' \
-      "$REPOSITORY" "$PR_NUMBER" >&2
-    return 1
+    # A dropped connection can hide a comment that GitHub created. Look for
+    # it before the retry, so the pull request never gets two status comments.
+    sleep "${GH_API_RETRY_DELAY_SECONDS:-3}"
+    local lookup_status=0
+    load_status_comment || lookup_status=$?
+    if (( lookup_status == 0 )); then
+      update_status_comment "$body"
+      return
+    fi
+    if (( lookup_status != 1 )) || ! response_id=$(gh api --method POST \
+      "repos/$REPOSITORY/issues/$PR_NUMBER/comments" \
+      --raw-field "body=$body" --jq .id); then
+      printf 'Cannot create the HyperFleet review status comment for %s#%s.\n' \
+        "$REPOSITORY" "$PR_NUMBER" >&2
+      return 1
+    fi
   fi
   if [[ ! "$response_id" =~ ^[1-9][0-9]*$ ]]; then
     printf 'GitHub returned an invalid comment ID.\n' >&2
@@ -458,6 +489,63 @@ update_verdict_labels() {
   fi
 }
 
+record_claude_usage() {
+  local cost input output names
+
+  if ! jq --exit-status 'type == "object"' "$claude_output_file" >/dev/null 2>&1; then
+    return 0
+  fi
+  cost=$(jq --raw-output '.total_cost_usd // 0' "$claude_output_file")
+  input=$(jq --raw-output '(.usage.input_tokens // 0) + (.usage.cache_read_input_tokens // 0) + (.usage.cache_creation_input_tokens // 0)' "$claude_output_file")
+  output=$(jq --raw-output '.usage.output_tokens // 0' "$claude_output_file")
+  names=$(jq --raw-output '(.modelUsage // {}) | keys | join(", ")' "$claude_output_file")
+  [[ "$cost" =~ ^[0-9]+(\.[0-9]+)?$ ]] || cost=0
+  [[ "$input" =~ ^[0-9]+$ ]] || input=0
+  [[ "$output" =~ ^[0-9]+$ ]] || output=0
+  model_cost_usd=$(jq --null-input --raw-output --arg a "$model_cost_usd" --arg b "$cost" \
+    '(($a | tonumber) + ($b | tonumber)) * 10000 | round / 10000')
+  model_input_tokens=$((model_input_tokens + input))
+  model_output_tokens=$((model_output_tokens + output))
+  if [[ -n "$names" && "$model_names" != *"$names"* ]]; then
+    model_names="${model_names:+$model_names, }$names"
+  fi
+}
+
+format_duration() {
+  local total=$1
+  printf '%dm %02ds' "$((total / 60))" "$((total % 60))"
+}
+
+review_metrics_line() {
+  local duration
+
+  duration=$(format_duration "$((SECONDS - review_wall_start))")
+  printf 'Review run: %s wall time, model cost about $%.2f (client-side estimate, %s input and %s output tokens%s).' \
+    "$duration" "$model_cost_usd" "$model_input_tokens" "$model_output_tokens" \
+    "${model_names:+, $model_names}"
+}
+
+# Append the run metrics to the submitted review once. The review body keeps
+# its markers; the footer is added after them.
+append_review_metrics() {
+  local body footer
+
+  if [[ ! "$completed_review_id" =~ ^[1-9][0-9]*$ ]] || [[ "$model_cost_usd" == 0 ]]; then
+    return 0
+  fi
+  body=$(cat "$review_body_file")
+  if [[ "$body" == *"$metrics_marker"* ]]; then
+    return 0
+  fi
+  footer=$(printf '\n\n---\n%s\n_%s_' "$metrics_marker" "$(review_metrics_line)")
+  if ! gh api --method PUT \
+    "repos/$REPOSITORY/pulls/$PR_NUMBER/reviews/$completed_review_id" \
+    --raw-field "body=$body$footer" --jq .id >/dev/null; then
+    printf 'Cannot append the run metrics to review %s.\n' "$completed_review_id" >&2
+    return 0
+  fi
+}
+
 publish_completed_status() {
   local body
   local review_url
@@ -472,10 +560,11 @@ publish_completed_status() {
 
   classify_verdict
   update_verdict_labels
+  append_review_metrics
   hide_previous_reviews
   review_url="https://github.com/$REPOSITORY/pull/$PR_NUMBER#pullrequestreview-$completed_review_id"
-  body=$(printf '%s\n\n## HyperFleet review\n\nStatus: **Complete**\n\nVerdict: **%s**\n\n[View the submitted review.](%s)\n\n%s\n%s' \
-    "$status_marker" "$verdict_result" "$review_url" "$review_marker" "$labels_marker"$'\n'"$history_marker"$'\n'"$followup_marker")
+  body=$(printf '%s\n\n## HyperFleet review\n\nStatus: **Complete**\n\nVerdict: **%s**\n\n[View the submitted review.](%s)\n\n%s\n\n%s\n%s' \
+    "$status_marker" "$verdict_result" "$review_url" "$(review_metrics_line)" "$review_marker" "$labels_marker"$'\n'"$history_marker"$'\n'"$followup_marker")
   publish_status_comment "$body"
   status_terminal=true
   printf 'HyperFleet review status comment %s links to the submitted review.\n' \
@@ -673,7 +762,7 @@ Do not use gh pr review, gh pr comment, or a GraphQL mutation.
 Use one POST /repos/$REPOSITORY/pulls/$PR_NUMBER/reviews request to submit the review together with its inline comments.
 Set commit_id to $EXPECTED_HEAD_SHA in the request body.
 Use COMMENT as the GitHub review event.
-Put each numbered recommendation for a file and line in the diff into the comments array of that request, with path, line, side RIGHT, and body. Write each body in the GitHub comment format from output-format.md, with its category, severity, and confidence.
+Put each numbered recommendation for a file and line in the diff into the comments array of that request, with path, line, side RIGHT, and body. Use the line number of the file at the head commit in the line field, and set side to RIGHT. Do not use the position field. Write each body in the GitHub comment format from output-format.md, with its category, severity, and confidence.
 Put a recommendation that has no line in the diff into the review body.
 Start the submitted review body with a concise ## Verdict section.
 Put the exact heading ## Verdict on a separate line.
@@ -738,10 +827,17 @@ while true; do
     claude --bare \
     --model "$CLAUDE_MODEL" \
     --dangerously-skip-permissions \
+    --output-format json \
     -p "$prompt" \
-    2>&1 | tee "$claude_output_file"
-  claude_status=${PIPESTATUS[0]}
+    >"$claude_output_file" 2>"$claude_error_file"
+  claude_status=$?
   set -e
+  cat "$claude_error_file"
+  # Log the final assistant text; the JSON envelope carries the metrics.
+  if ! jq --raw-output '.result // empty' "$claude_output_file" 2>/dev/null; then
+    cat "$claude_output_file"
+  fi
+  record_claude_usage
 
   if (( claude_status == 0 || claude_attempt >= CLAUDE_MAX_ATTEMPTS )) ||
     ! grep --fixed-strings --quiet -- \
