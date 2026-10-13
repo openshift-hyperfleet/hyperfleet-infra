@@ -25,6 +25,20 @@ else
 OIDC_ISSUER_MODE ?= external
 endif
 
+# e2e-gcp: default JWT auth on and discover the cluster's OIDC issuer.
+# env.gcp is included for every *gcp environment and sets file-level defaults
+# (auth off, empty issuer), so a plain ?= here would be a no-op. The origin
+# checks below default auth on for e2e-gcp; explicit environment or
+# command-line values still win, matching the ?= convention elsewhere.
+ifeq ($(HELMFILE_ENV),e2e-gcp)
+ifeq ($(filter environment command line,$(origin JWT_AUTH_ENABLED)),)
+JWT_AUTH_ENABLED = true
+endif
+ifeq ($(filter environment command line,$(origin OIDC_ISSUER_URL)),)
+OIDC_ISSUER_URL = $(shell kubectl get --raw /.well-known/openid-configuration 2>/dev/null | jq -r '.issuer // empty' 2>/dev/null)
+endif
+endif
+
 export
 GIT_SHA ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 TF_ENV           ?= dev
