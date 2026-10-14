@@ -102,8 +102,8 @@ The upstream Maestro chart's CRD install is broken. `install-maestro` applies th
 **The Authorino operator is a cluster-singleton prerequisite for gateway ext_authz.**
 With `EXT_AUTHZ_ENABLED=true`, the `hyperfleet-gateway` chart renders `Authorino` and `AuthConfig` CRs. `install-hyperfleet` installs the pinned operator (`AUTHORINO_OPERATOR_VERSION`) first through `maybe-install-authorino-operator`. If you apply the CRs before the operator exists, Helmfile fails on unknown CRDs.
 
-**The OIDC issuer mode depends on the environment.**
-`kind`, `e2e-kind` and `e2e-gcp` default to `OIDC_ISSUER_MODE=mock` (the in-namespace `mock-oidc` chart). Any other environment defaults to `external`. For `gcp`, `OIDC_ISSUER_URL` comes from `generated-values-from-terraform/oidc.env`. For `e2e-gcp` with an external issuer, pass `OIDC_ISSUER_URL` yourself.
+**OIDC defaults to the development-only mock issuer in every environment.**
+Authenticated mock deployments emit a Helmfile warning; its in-memory signing keys are replaced on issuer rollout, invalidating minted tokens. **Never use mock mode in production.** Set `OIDC_ISSUER_MODE=external` and provide `OIDC_ISSUER_URL` for an external issuer; direct human OIDC with `AUTH_MODE=API` also needs `OIDC_JWKS_URL`.
 
 **Terraform state locking is always disabled.**
 `install-terraform` and `destroy-terraform` pass `-lock=false`. If an apply left a `terraform/errored.tfstate`, resolve it before re-running.

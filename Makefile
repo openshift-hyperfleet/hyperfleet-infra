@@ -12,15 +12,7 @@ else
 	-include env.gcp
 endif
 
-# Only the test environments default to the namespace-local mock issuer. New
-# environments fail safe by defaulting to external until explicitly classified.
-# ?= preserves explicit CLI and shell-environment overrides.
-MOCK_OIDC_ENVIRONMENTS := kind e2e-kind e2e-gcp
-ifneq ($(filter $(HELMFILE_ENV),$(MOCK_OIDC_ENVIRONMENTS)),)
 OIDC_ISSUER_MODE ?= mock
-else
-OIDC_ISSUER_MODE ?= external
-endif
 
 export
 GIT_SHA ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
@@ -632,7 +624,7 @@ check-helmfile-env: check-desire-delivery-env check-helmfile check-kubectl-conte
 .PHONY: check-helmfile-env-generated
 check-helmfile-env-generated: ## Check that the generated directory exists based on HELMFILE_ENV
 	@if [ "$(HELMFILE_ENV)" = "gcp" ]; then \
-		test -d $(GENERATED_DIR) || { echo "ERROR: generated-values-from-terraform directory does not exist"; exit 1; }; \
+		test -d $(GENERATED_DIR) || { echo "ERROR: HELMFILE_ENV=gcp requires Terraform-generated Google Pub/Sub values in $(GENERATED_DIR). The GCP Helmfile has no RabbitMQ fallback; set use_pubsub=true and configure pubsub_topic_configs in $(TF_DIR)/$(TF_VARS), then run make install-terraform."; exit 1; }; \
 		echo "OK: generated-values-from-terraform directory exists"; \
 	elif [ "$(HELMFILE_ENV)" = "kind" ]; then \
 		test -d $(GENERATED_RABBITMQ_DIR) || { echo "ERROR: generated-values-rabbitmq directory does not exist"; exit 1; }; \

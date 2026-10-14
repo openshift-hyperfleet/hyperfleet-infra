@@ -1,6 +1,6 @@
 # Base values for HyperFleet Gateway
 {{- $edgeAuth := has .Values.authMode (list "EDGE" "EDGE+API") -}}
-{{- $mockIssuer := eq (env "OIDC_ISSUER_MODE" | default "external") "mock" -}}
+{{- $mockIssuer := eq (env "OIDC_ISSUER_MODE" | default "mock") "mock" -}}
 
 {{ if eq (env "OBSERVABILITY_ENABLED" | default "false") "true" }}
 monitoring:

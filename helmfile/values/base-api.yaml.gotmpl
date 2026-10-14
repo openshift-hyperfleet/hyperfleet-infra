@@ -10,7 +10,7 @@ replicaCount: 2
 {{ $tenantIsolationEnabled := eq (env "TENANT_ISOLATION_ENABLED" | default "false") "true" }}
 {{ $tenantModel := env "TENANT_MODEL" | default "onprem" }}
 {{ $kubernetesOIDC := dict }}
-{{ $mockOIDC := and (eq $authMode "API") (eq (env "OIDC_ISSUER_MODE" | default "external") "mock") }}
+{{ $mockOIDC := and (eq $authMode "API") (eq (env "OIDC_ISSUER_MODE" | default "mock") "mock") }}
 {{ $mockIssuer := printf "https://hyperfleet-mock-oidc.%s.svc.cluster.local:8443/default" .Release.Namespace }}
 {{ $mockJWKS := printf "%s/jwks" $mockIssuer }}
 {{ if eq $authMode "API" }}
