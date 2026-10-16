@@ -144,6 +144,8 @@ for mode in NONE EDGE API EDGE+API; do
     case "$mode" in
         EDGE|EDGE+API)
             assert_contains "$out" '^kind: Authorino$' "($mode): Authorino missing"
+            assert_contains "$out" '^  clusterWide: false$' \
+                "($mode): Authorino must explicitly watch only its own namespace"
             assert_contains "$out" 'image: "quay.io/kuadrant/authorino:v0.28.0"' \
                 "($mode): expected pinned Authorino image is missing"
             assert_contains "$out" 'failure_mode_allow: false' \

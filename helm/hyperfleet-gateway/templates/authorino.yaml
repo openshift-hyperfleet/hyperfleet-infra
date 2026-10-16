@@ -7,6 +7,9 @@ metadata:
   labels:
     {{- include "hyperfleet-gateway.labels" . | nindent 4 }}
 spec:
+  # This namespaced instance watches only this namespace. Do not depend on the
+  # operator/CRD default, which is cluster-wide.
+  clusterWide: false
   {{- if .Values.auth.authorino.image }}
   # Pin image; operator default may be unpublished on quay.
   image: {{ .Values.auth.authorino.image | quote }}
