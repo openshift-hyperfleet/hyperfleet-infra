@@ -26,6 +26,7 @@ helmDefaults:
 
 # Base values for all environments
 values:
+  - values/production-entities.yaml
   # AUTH_MODE is the sole authentication-placement control.
   - authMode: {{ env "AUTH_MODE" | default "NONE" | quote }}
   - namespace: {{ requiredEnv "NAMESPACE" }}
@@ -49,7 +50,7 @@ values:
       applier:
         chartRef: {{ env "APPLIER_CHART_REF" | default "main" }}
 
-# Environment configurations - e2e, e2e-kind, kind, gcp
+# Environment configurations - e2e-gcp, e2e-kind, kind, gcp
 environments:
   e2e-gcp:
     values:
@@ -58,6 +59,7 @@ environments:
         gatewayServiceType: {{ env "GATEWAY_SERVICE_TYPE" | default "LoadBalancer" }}
         runId: {{ env "RUN_ID" | quote }}
       - environments/e2e-authentication.yaml.gotmpl
+      - environments/e2e/fixture-entities.yaml
       - environments/e2e-gcp/adapter-configs.yaml.gotmpl
       - environments/e2e-gcp/sentinel-configs.yaml
   e2e-kind:
@@ -66,6 +68,7 @@ environments:
         gatewayServiceType: {{ env "GATEWAY_SERVICE_TYPE" | default "ClusterIP" }}
         runId: {{ env "RUN_ID" | quote }}
       - environments/e2e-authentication.yaml.gotmpl
+      - environments/e2e/fixture-entities.yaml
       - environments/e2e-kind/adapter-configs.yaml.gotmpl
       - environments/e2e-kind/sentinel-configs.yaml
   kind:
@@ -86,6 +89,10 @@ commonLabels:
   group: hyperfleet
 
 ---
+
+{{- if and (.Values | get "fixtureEntities" (list)) (not (has .Environment.Name (list "e2e-kind" "e2e-gcp"))) }}
+{{ fail "fixtureEntities are only allowed in e2e-kind and e2e-gcp" }}
+{{- end }}
 
 {{ if not (has .Values.authMode (list "NONE" "EDGE" "API" "EDGE+API")) }}
 {{ fail "AUTH_MODE must be NONE, EDGE, API, or EDGE+API" }}

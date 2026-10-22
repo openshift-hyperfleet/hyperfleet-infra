@@ -92,62 +92,21 @@ extraVolumeMounts:
     readOnly: true
 {{ end }}
 
-{{/*
-  required_adapters lists the adapters each environment deploys for a kind. An
-  environment can deploy none for a kind, and the API chart schema rejects
-  null, so render a list.
-*/}}
-{{- $clusterAdapters := list }}
-{{- $nodePoolAdapters := list }}
-{{- range .Values.adapters }}
-{{- if eq .resourceType "clusters" }}
-{{- $clusterAdapters = append $clusterAdapters .name }}
-{{- else if eq .resourceType "nodepools" }}
-{{- $nodePoolAdapters = append $nodePoolAdapters .name }}
-{{- end }}
-{{- end }}
+{{/* Match deployed adapters by plural for production and fixture entities alike.
+     Render [] when none match: the API chart rejects null required_adapters. */}}
+{{- $fixtureEntities := .Values | get "fixtureEntities" (list) }}
 config:
   entities:
-    - kind: Cluster
-      plural: clusters
-      spec_schema_name: ClusterSpec
-      required_adapters:
-        {{- if $clusterAdapters }}
-        {{- toYaml $clusterAdapters | nindent 8 }}
-        {{- else }} []
-        {{- end }}
-      references:
-        - ref_type: wif_config
-          target_kind: WifConfig
-          min: 0
-          max: 1
-      name_min_len: 3
-      name_max_len: 53
-      require_spec_schema: true
-    - kind: NodePool
-      plural: nodepools
-      parent_kind: Cluster
-      on_parent_delete: cascade
-      spec_schema_name: NodePoolSpec
-      required_adapters:
-        {{- if $nodePoolAdapters }}
-        {{- toYaml $nodePoolAdapters | nindent 8 }}
-        {{- else }} []
-        {{- end }}
-      name_min_len: 3
-      name_max_len: 15
-      require_spec_schema: true
-    - kind: Channel
-      plural: channels
-      spec_schema_name: ChannelSpec
-    - kind: Version
-      plural: versions
-      parent_kind: Channel
-      on_parent_delete: restrict
-      spec_schema_name: VersionSpec
-    - kind: WifConfig
-      plural: wifconfigs
-      spec_schema_name: WifConfigSpec
+{{- range concat .Values.productionEntities $fixtureEntities }}
+{{- $adapters := list }}
+{{- $entity := . }}
+{{- range $.Values.adapters }}
+{{- if eq .resourceType $entity.plural }}
+{{- $adapters = append $adapters .name }}
+{{- end }}
+{{- end }}
+    - {{ set (deepCopy $entity) "required_adapters" $adapters | toYaml | nindent 6 | trim }}
+{{- end }}
   {{/*
     EDGE authenticates exclusively at the gateway. API validates direct caller
     credentials in API mode, and validates only gateway-issued wristbands in

@@ -1,0 +1,4 @@
+apiVersion: v2
+name: fixture-entity-contract
+description: Assertions over rendered Helmfile values and manifests; never installed.
+version: 0.1.0
