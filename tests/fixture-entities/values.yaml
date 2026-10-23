@@ -50,4 +50,12 @@ fixtureEntities:
         max: 1
   - kind: Target
     plural: targets
+# E2E-only machine callers that are not Helmfile Sentinel or adapter releases.
+# Keep these independent of the deployment values so the allow-list check is exact.
+e2eMachineServiceAccounts:
+  - adapter-clusters-cl-stuck
+  - adapter-clusters-cl-param-error
+  - adapter-clusters-cl-crash
+  - adapter-clusters-cl-invalid-resource
+  - hyperfleet-e2e-runner
 probe: false

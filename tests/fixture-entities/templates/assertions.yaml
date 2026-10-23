@@ -80,5 +80,8 @@
     {{- $accounts = append $accounts (printf "%s-hyperfleet-adapter" .) -}}
   {{- end -}}
 {{- end -}}
+{{- if $e2e -}}
+  {{- $accounts = concat $accounts .Values.e2eMachineServiceAccounts -}}
+{{- end -}}
 {{- include "assertEqual" (list (sortAlpha $accounts) (sortAlpha $gateway.auth.machineIdentity.allowedServiceAccounts) "gateway service accounts") -}}
 {{- end -}}
