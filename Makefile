@@ -716,7 +716,7 @@ help: ## Show this help message
 
 # ==== CI Targets ====
 # ci-dry-run: validate terraform, lint charts and scripts, and check chart and
-#   Helmfile renders (network policies, namespace cleaner, desire delivery)
+#   Helmfile renders (network policies, namespace cleaner, desire delivery, fixture entities)
 # ci-test: install terraform, then deploy and health check the desire delivery
 #   stack (Redis desire store + hyperfleet-applier)
 # ci-cleanup: uninstall the desire delivery stack and destroy terraform resources
@@ -849,12 +849,17 @@ validate-desire-delivery: check-helm ## Validate the desire delivery render (rem
 		done; \
 	done
 
+.PHONY: validate-fixture-entities
+validate-fixture-entities: check-helmfile ## Validate E2E fixture entities, Sentinels and non-E2E isolation
+	@./scripts/validate-fixture-entities.sh
+
 .PHONY: ci-dry-run
 ci-dry-run: ci-validate ## Ci dry-run: ci-validate + test GKE policy modes + validate chart rendering
 	$(MAKE) test-terraform-network-policy
 	$(MAKE) validate-network-policies
 	$(MAKE) validate-namespace-cleaner
 	$(MAKE) validate-desire-delivery
+	$(MAKE) validate-fixture-entities
 
 .PHONY: health-check-desire-delivery
 health-check-desire-delivery: check-kubectl ## Verify desire delivery components (Redis + applier)

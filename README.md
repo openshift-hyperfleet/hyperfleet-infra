@@ -62,6 +62,37 @@ The OCI external-dns addon is disabled by default. It uses instance principals o
 
 `HELMFILE_ENV` defaults to `gcp` if not set.
 
+### E2E fixture entities
+
+`e2e-kind` and `e2e-gcp` load `fixtureEntities` from
+[`helmfile/environments/e2e/fixture-entities.yaml`](helmfile/environments/e2e/fixture-entities.yaml).
+These five test-only types are appended to the five production types in the API's
+`config.entities`; they define resource types, not individual test resources.
+
+| Kind | Plural | Parent / delete policy | Reference | Sentinel |
+| ---- | ------ | ---------------------- | --------- | -------- |
+| Parent | `parents` | Root | None | `parents` |
+| CascadeChild | `cascadechildren` | Parent / cascade | None | `cascadechildren` |
+| RestrictChild | `restrictchildren` | Parent / restrict | None | None |
+| Referencer | `referencers` | Root | Optional `target` → Target, at most one | None |
+| Target | `targets` | Root | None | None |
+
+Both E2E environments have ten entity types and four Sentinels. The CascadeChild
+Sentinel includes the parent's owner references in its events, as NodePool does.
+`kind` and `gcp` retain five entity types and two Sentinels, and reject nonempty
+`fixtureEntities` overrides.
+
+For every entity, `required_adapters` is derived from adapter entries whose
+`resourceType` matches its plural. No match renders an empty list. The fixture
+success adapters are separate work (HYPERFLEET-1729); until they are configured,
+fixture creation verifies API routing, not adapter-backed reconciliation.
+
+Run `make validate-fixture-entities` to render and check all four environments.
+It uses temporary broker values and mocked Kubernetes OIDC discovery, so it does
+not need a cluster or alter generated values in the repository. Chart downloads
+still require network access; `API_CHART_REF` and `SENTINEL_CHART_REF` select their
+revisions. This check is included in `make ci-dry-run`.
+
 ### Environment variable loading
 
 The Makefile selects the env file based on `HELMFILE_ENV`:
@@ -178,7 +209,8 @@ configurable in the chart values.
 
 | Target | Description |
 | -------- | ------------- |
-| `make ci-dry-run` | `ci-validate` + `test-terraform-network-policy` + `validate-network-policies` + `validate-namespace-cleaner` + `validate-desire-delivery` |
+| `make ci-dry-run` | `ci-validate` + `test-terraform-network-policy` + `validate-network-policies` + `validate-namespace-cleaner` + `validate-desire-delivery` + `validate-fixture-entities` |
+| `make validate-fixture-entities` | Render API, Sentinel and gateway configuration for every environment; check fixture isolation, entity metadata, adapter matching and Sentinel owner references (part of `ci-dry-run`) |
 | `make validate-desire-delivery` | Render the remote adapters (the `desire-store-client` releases), Redis and the applier for every environment; fail if a remote adapter transport is not remote with `target_cluster` set to the namespace, or if the Redis NetworkPolicy does not admit the adapter (part of `ci-dry-run`) |
 | `make ci-test` | `install-terraform` + `get-credentials` + `install-priority-classes` + `install-desire-delivery` + `health-check-desire-delivery`. Run with `HELMFILE_ENV=e2e-gcp`: the default `gcp` needs Terraform-generated values |
 | `make ci-cleanup` | `uninstall-desire-delivery` + `destroy-terraform`. Run with `HELMFILE_ENV=e2e-gcp`, like `ci-test` |

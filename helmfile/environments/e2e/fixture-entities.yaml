@@ -1,0 +1,22 @@
+# Test-only resource types. Load this file only in e2e-kind and e2e-gcp.
+# Required adapters are derived from each environment's adapters list.
+fixtureEntities:
+  - kind: Parent
+    plural: parents
+  - kind: CascadeChild
+    plural: cascadechildren
+    parent_kind: Parent
+    on_parent_delete: cascade
+  - kind: RestrictChild
+    plural: restrictchildren
+    parent_kind: Parent
+    on_parent_delete: restrict
+  - kind: Referencer
+    plural: referencers
+    references:
+      - ref_type: target
+        target_kind: Target
+        min: 0
+        max: 1
+  - kind: Target
+    plural: targets

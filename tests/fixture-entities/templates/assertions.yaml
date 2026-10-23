@@ -1,0 +1,87 @@
+{{/* Helm supplies the YAML parser, so these checks need no additional CI tools. */}}
+{{- define "assertEqual" -}}
+{{- if ne (toJson (index . 0)) (toJson (index . 1)) -}}
+{{- fail (printf "%s: expected %s, got %s" (index . 2) (toJson (index . 0)) (toJson (index . 1))) -}}
+{{- end -}}
+{{- end -}}
+
+{{- $e2e := has .Values.environment (list "e2e-kind" "e2e-gcp") -}}
+{{- $expected := deepCopy .Values.productionEntities -}}
+{{- $adapters := dict "clusters" (list "adapter1" "adapter2") "nodepools" (list "adapter3") -}}
+{{- $sentinels := list "clusters" "nodepools" -}}
+{{- if $e2e -}}
+  {{- $expected = concat $expected .Values.fixtureEntities -}}
+  {{- $adapters = dict "clusters" (list "cl-namespace" "cl-job" "cl-deployment" "cl-desire") "nodepools" (list "np-configmap") -}}
+  {{- $sentinels = concat $sentinels (list "parents" "cascadechildren") -}}
+{{- end -}}
+{{- if .Values.probe -}}
+  {{- $expected = append (deepCopy .Values.productionEntities) (dict "kind" "AdapterProbe" "plural" "adapterprobes") -}}
+  {{- $adapters = dict "adapterprobes" (list "probe-first" "probe-second") "channels" (list "channel-probe") -}}
+{{- end -}}
+{{- range $expected -}}
+  {{- $_ := set . "required_adapters" (get $adapters .plural | default list) -}}
+{{- end -}}
+{{- $apiValues := fromYaml .Values.apiValues -}}
+{{- include "assertEqual" (list $expected $apiValues.config.entities "API Helm values entities") -}}
+
+{{- if not .Values.probe -}}
+{{- $configs := dict -}}
+{{- $renderedSentinels := list -}}
+{{- range regexSplit "(?m)^---[ \t]*$" .Values.manifests -1 -}}
+  {{- $doc := fromYaml . -}}
+  {{- if eq ($doc.kind | default "") "ConfigMap" -}}
+    {{- if hasKey ($doc.data | default dict) "config.yaml" -}}
+      {{- $config := fromYaml (index $doc.data "config.yaml") -}}
+      {{- $_ := set $configs $doc.metadata.name $config -}}
+      {{- if hasKey $config "resource_type" -}}
+        {{- $renderedSentinels = append $renderedSentinels $config.resource_type -}}
+      {{- end -}}
+    {{- end -}}
+  {{- end -}}
+{{- end -}}
+{{- include "assertEqual" (list (sortAlpha $sentinels) (sortAlpha $renderedSentinels) "Sentinel resource types") -}}
+{{- $api := get $configs "hyperfleet-api-config" -}}
+{{- include "assertEqual" (list (len $expected) (len $api.entities) "rendered API entity count") -}}
+{{- range $i, $entity := $expected -}}
+  {{- $actual := index $api.entities $i -}}
+  {{- range $field := list "kind" "plural" "parent_kind" "on_parent_delete" "spec_schema_name" -}}
+    {{- include "assertEqual" (list (get $entity $field | default "") (get $actual $field | default "") (printf "%s.%s" $entity.kind $field)) -}}
+  {{- end -}}
+  {{- include "assertEqual" (list $entity.required_adapters ($actual.required_adapters | default list) (printf "%s.required_adapters" $entity.kind)) -}}
+  {{- range $field := list "name_min_len" "name_max_len" -}}
+    {{- include "assertEqual" (list (get $entity $field | default 0) (get $actual $field | default 0) (printf "%s.%s" $entity.kind $field)) -}}
+  {{- end -}}
+  {{- include "assertEqual" (list ($entity.require_spec_schema | default false) ($actual.require_spec_schema | default false) (printf "%s.require_spec_schema" $entity.kind)) -}}
+  {{- $refs := $actual.references | default list -}}
+  {{- include "assertEqual" (list (len ($entity.references | default list)) (len $refs) (printf "%s.references count" $entity.kind)) -}}
+  {{- range $j, $ref := $entity.references -}}
+    {{- $actualRef := index $refs $j -}}
+    {{- include "assertEqual" (list $ref.ref_type $actualRef.ref_type "reference type") -}}
+    {{- include "assertEqual" (list $ref.target_kind $actualRef.target_kind "reference target kind") -}}
+    {{- include "assertEqual" (list $ref.min ($actualRef.min | default 0) "reference minimum") -}}
+    {{- include "assertEqual" (list $ref.max ($actualRef.max | default 0) "reference maximum") -}}
+  {{- end -}}
+{{- end -}}
+
+{{- $gateway := fromYaml .Values.gatewayValues -}}
+{{- $accounts := list -}}
+{{- range $sentinels -}}
+  {{- $accounts = append $accounts (printf "%s-hyperfleet-sentinel" .) -}}
+  {{- $config := get $configs (printf "%s-hyperfleet-sentinel-config" .) -}}
+  {{- include "assertEqual" (list (printf "%s-%s" $.Values.namespace .) $config.clients.broker.topic "Sentinel topic") -}}
+  {{- include "assertEqual" (list "Bearer" $config.clients.hyperfleet_api.auth.scheme "Sentinel API authentication") -}}
+  {{- if has . (list "nodepools" "cascadechildren") -}}
+    {{- $owner := dict "id" "resource.owner_references.id" "href" "resource.owner_references.href" "kind" "resource.owner_references.kind" -}}
+    {{- include "assertEqual" (list $owner $config.message_data.owner_references (printf "%s owner references" .)) -}}
+  {{- end -}}
+{{- end -}}
+{{- range $adapters -}}
+  {{- range . -}}
+    {{- $accounts = append $accounts (printf "%s-hyperfleet-adapter" .) -}}
+  {{- end -}}
+{{- end -}}
+{{- if $e2e -}}
+  {{- $accounts = concat $accounts .Values.e2eMachineServiceAccounts -}}
+{{- end -}}
+{{- include "assertEqual" (list (sortAlpha $accounts) (sortAlpha $gateway.auth.machineIdentity.allowedServiceAccounts) "gateway service accounts") -}}
+{{- end -}}

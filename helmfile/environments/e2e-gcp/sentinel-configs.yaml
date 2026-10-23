@@ -13,3 +13,18 @@ sentinels:
               id: "resource.owner_references.id"
               href: "resource.owner_references.href"
               kind: "resource.owner_references.kind"
+
+  - name: parents
+    values:
+      - config:
+          resourceType: parents
+
+  - name: cascadechildren
+    values:
+      - config:
+          resourceType: cascadechildren
+          messageData:
+            owner_references:
+              id: "resource.owner_references.id"
+              href: "resource.owner_references.href"
+              kind: "resource.owner_references.kind"

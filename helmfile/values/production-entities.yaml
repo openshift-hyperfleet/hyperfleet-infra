@@ -1,0 +1,32 @@
+# Production API entities shared by every Helmfile environment.
+productionEntities:
+  - kind: Cluster
+    plural: clusters
+    spec_schema_name: ClusterSpec
+    references:
+      - ref_type: wif_config
+        target_kind: WifConfig
+        min: 0
+        max: 1
+    name_min_len: 3
+    name_max_len: 53
+    require_spec_schema: true
+  - kind: NodePool
+    plural: nodepools
+    parent_kind: Cluster
+    on_parent_delete: cascade
+    spec_schema_name: NodePoolSpec
+    name_min_len: 3
+    name_max_len: 15
+    require_spec_schema: true
+  - kind: Channel
+    plural: channels
+    spec_schema_name: ChannelSpec
+  - kind: Version
+    plural: versions
+    parent_kind: Channel
+    on_parent_delete: restrict
+    spec_schema_name: VersionSpec
+  - kind: WifConfig
+    plural: wifconfigs
+    spec_schema_name: WifConfigSpec
