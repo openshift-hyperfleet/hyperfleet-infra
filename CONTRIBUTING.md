@@ -69,7 +69,7 @@ Run these before opening a PR:
 ### CI Validation
 ```bash
 make ci-validate     # terraform fmt+validate + lint checks
-make ci-dry-run      # ci-validate + GKE network policy mode tests + render checks: network policies, namespace cleaner, desire delivery
+make ci-dry-run      # ci-validate + GKE network policy mode tests + render checks: network policies, namespace cleaner, desire delivery, fixture entities
 ```
 
 Individual checks:
@@ -78,6 +78,7 @@ Individual checks:
 make validate-terraform            # terraform init (no backend) + fmt check + validate
 make lint-helm                     # helm lint all charts under helm/*/
 make lint-shellcheck               # shellcheck all *.sh
+make validate-fixture-entities     # E2E fixture entities, Sentinels, adapter matching and isolation
 HELMFILE_ENV=<env> make lint-helmfile
 HELMFILE_ENV=<env> make template-helmfile   # dry-run render for one env
 ```

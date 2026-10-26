@@ -24,19 +24,17 @@ export PATH="$work/bin:$PATH"
 export AUTH_MODE=API OIDC_ISSUER_MODE=external OIDC_ISSUER_URL='' OIDC_JWKS_URL=''
 export TENANT_ISOLATION_ENABLED=false OBSERVABILITY_ENABLED=false TRACING_ENABLED=false
 export EXTERNAL_DNS_ENABLED=false
+namespace_prefix=hf-fixtures
+scripts/prepare-helmfile-render-inputs.sh --generated-dir "$work" \
+    --rabbitmq-namespace "${namespace_prefix}-kind"
 export GENERATED_RABBITMQ_DIR="$work/rabbitmq" GENERATED_DIR="$work/terraform"
-scripts/generate-rabbitmq-values.sh --out-dir "$GENERATED_RABBITMQ_DIR" \
-    --namespace hf-fixtures-kind --rabbitmq-url amqp://guest:guest@rabbitmq:5672 >/dev/null
-for name in adapter1 adapter2 adapter3 sentinel-clusters sentinel-nodepools; do
-    printf '%s\n' 'broker: {}' > "$GENERATED_DIR/$name.yaml"
-done
 
 state=(-f helmfile/helmfile.yaml.gotmpl)
 selected=(-l component=api -l component=sentinel -l component=gateway)
-export NAMESPACE=hf-fixtures RUN_ID=hf-fixtures
+export NAMESPACE="$namespace_prefix" RUN_ID="$namespace_prefix"
 helmfile "${state[@]}" -e e2e-kind repos >/dev/null
 for environment in e2e-kind e2e-gcp kind gcp; do
-    export NAMESPACE="hf-fixtures-$environment" RUN_ID="hf-fixtures-$environment"
+    export NAMESPACE="${namespace_prefix}-${environment}" RUN_ID="${namespace_prefix}-${environment}"
     helmfile "${state[@]}" -e "$environment" "${selected[@]}" template --skip-deps > "$work/manifests.yaml"
     helmfile "${state[@]}" -e "$environment" -l component=api -l component=gateway --skip-deps \
         write-values --output-file-template "$work/values/{{ .Release.Name }}.yaml" >/dev/null

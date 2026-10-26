@@ -14,7 +14,7 @@ Infrastructure as code that provisions HyperFleet dev and e2e environments with 
 
 ```bash
 make ci-validate     # terraform fmt (terraform/, ci/tools/) + validate (terraform/, terraform/oci/), helm lint, shellcheck, authorino templates
-make ci-dry-run      # ci-validate + GKE network policy mode tests + render checks: network policies, namespace cleaner, desire delivery
+make ci-dry-run      # ci-validate + GKE network policy mode tests + render checks: network policies, namespace cleaner, desire delivery, fixture entities
 ```
 
 Run `ci-validate` before proposing changes. `ci-dry-run` is the full pre-merge check, and Prow calls both.
@@ -37,6 +37,10 @@ CI tools image (`ci/tools/`): `make build-ci-tools` and `make test-ci-tools`. Se
 **Never edit or commit `generated-values-from-terraform/` or `generated-values-rabbitmq/`.** Both are generated and gitignored. Helmfile renders incorrectly or fails if they are missing. `make clean-generated` removes both.
 
 Helmfile uses Go templates (`.gotmpl`) throughout. Per-environment adapter and sentinel lists live in `helmfile/environments/<env>/`, and the adapter config files they reference live in `helmfile/configs/{base,e2e}/adapters/`.
+
+## Fixture entities
+
+Only `e2e-kind` and `e2e-gcp` load `fixtureEntities` from `helmfile/environments/e2e/fixture-entities.yaml`; the Helmfile rejects a nonempty override in any other environment. For every entity, `required_adapters` is derived from adapters whose `resourceType` equals its plural, and no match renders `[]`. Do not add kind-specific adapter branches. `make validate-fixture-entities` enforces both rules.
 
 ## Environment variable loading
 

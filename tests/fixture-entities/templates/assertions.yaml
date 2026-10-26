@@ -7,16 +7,16 @@
 
 {{- $e2e := has .Values.environment (list "e2e-kind" "e2e-gcp") -}}
 {{- $expected := deepCopy .Values.productionEntities -}}
-{{- $adapters := dict "clusters" (list "adapter1" "adapter2") "nodepools" (list "adapter3") -}}
-{{- $sentinels := list "clusters" "nodepools" -}}
+{{- $adapters := deepCopy .Values.productionAdapters -}}
+{{- $sentinels := .Values.productionSentinels -}}
 {{- if $e2e -}}
   {{- $expected = concat $expected .Values.fixtureEntities -}}
-  {{- $adapters = dict "clusters" (list "cl-namespace" "cl-job" "cl-deployment" "cl-desire") "nodepools" (list "np-configmap") -}}
-  {{- $sentinels = concat $sentinels (list "parents" "cascadechildren") -}}
+  {{- $adapters = deepCopy .Values.e2eAdapters -}}
+  {{- $sentinels = .Values.e2eSentinels -}}
 {{- end -}}
 {{- if .Values.probe -}}
-  {{- $expected = append (deepCopy .Values.productionEntities) (dict "kind" "AdapterProbe" "plural" "adapterprobes") -}}
-  {{- $adapters = dict "adapterprobes" (list "probe-first" "probe-second") "channels" (list "channel-probe") -}}
+  {{- $expected = concat (deepCopy .Values.productionEntities) .Values.probeEntities -}}
+  {{- $adapters = .Values.probeAdapters -}}
 {{- end -}}
 {{- range $expected -}}
   {{- $_ := set . "required_adapters" (get $adapters .plural | default list) -}}

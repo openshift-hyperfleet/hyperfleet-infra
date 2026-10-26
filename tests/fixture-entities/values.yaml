@@ -50,6 +50,37 @@ fixtureEntities:
         max: 1
   - kind: Target
     plural: targets
+productionAdapters:
+  clusters:
+    - adapter1
+    - adapter2
+  nodepools:
+    - adapter3
+e2eAdapters:
+  clusters:
+    - cl-namespace
+    - cl-job
+    - cl-deployment
+    - cl-desire
+  nodepools:
+    - np-configmap
+probeEntities:
+  - kind: AdapterProbe
+    plural: adapterprobes
+probeAdapters:
+  adapterprobes:
+    - probe-first
+    - probe-second
+  channels:
+    - channel-probe
+productionSentinels:
+  - clusters
+  - nodepools
+e2eSentinels:
+  - clusters
+  - nodepools
+  - parents
+  - cascadechildren
 # E2E-only machine callers that are not Helmfile Sentinel or adapter releases.
 # Keep these independent of the deployment values so the allow-list check is exact.
 e2eMachineServiceAccounts:
