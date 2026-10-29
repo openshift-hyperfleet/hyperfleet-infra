@@ -1,7 +1,16 @@
 {{- $runnerServiceAccount := "hyperfleet-e2e-runner" -}}
+# Adapters the E2E suite deploys from its testdata during a spec are not Helmfile
+# releases, so their ServiceAccounts are not derivable here. DeployAdapter sets
+# fullnameOverride to the generated release name (adapter-<plural>-<role>), which
+# makes the ServiceAccount exactly that name.
 additionalMachineServiceAccounts:
   - "adapter-clusters-cl-stuck"
   - "adapter-clusters-cl-param-error"
   - "adapter-clusters-cl-crash"
   - "adapter-clusters-cl-invalid-resource"
+  # Fixture failure roles, deployed on parents only.
+  - "adapter-parents-adapter-failure"
+  - "adapter-parents-adapter-crash"
+  - "adapter-parents-adapter-stuck"
+  - "adapter-parents-adapter-invalid-resource"
   - {{ $runnerServiceAccount | quote }}

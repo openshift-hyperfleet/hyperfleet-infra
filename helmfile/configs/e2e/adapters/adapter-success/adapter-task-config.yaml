@@ -1,0 +1,212 @@
+schema_version: "2.0"
+
+# Success role for the adapter-backed fixture kinds.
+#
+# The resource URL is taken from the event, not from a plural literal, so this
+# one config serves every adapter-backed plural (parents and cascadechildren).
+# The event href is already an absolute API path - a root kind has one segment
+# before the id and a child has its owner's path as a prefix - and the adapter
+# client passes api/* paths through unchanged.
+
+params:
+  - name: "resourceId"
+    source: "event.id"
+    type: "string"
+    required: true
+
+  # Deliberately required: without the href this config cannot address the
+  # resource, and failing the param phase is louder than guessing a URL.
+  - name: "href"
+    source: "event.href"
+    type: "string"
+    required: true
+
+  - name: "ci"
+    source: "env.CI"
+    type: "string"
+    required: false
+    default: "false"
+
+  - name: "runId"
+    source: "env.RUN_ID"
+    type: "string"
+    required: true
+
+  - name: "resourceStatus"
+    source:
+      api_call:
+        method: "GET"
+        url: "{{ .href }}"
+        timeout: 10s
+        retry_attempts: 3
+        retry_backoff: "exponential"
+
+  - name: "resourceName"
+    source: "resourceStatus.name"
+
+  - name: "generationSpec"
+    source: "resourceStatus.generation"
+
+  - name: "is_deleting"
+    source:
+      expression: "resourceStatus.?deleted_time.hasValue()"
+
+  # Self-healing: act when the resource is not reconciled, or is reconciled but
+  # has been stable for longer than the retry window since its last transition.
+  - name: "notReconciled"
+    source:
+      expression: |
+        resourceStatus.?status.?conditions.orValue([]).filter(c, c.type == "Reconciled").size() > 0
+          ? resourceStatus.?status.?conditions.orValue([]).filter(c, c.type == "Reconciled")[0].status != "True"
+          : true
+
+  # The API hard-deletes a soft-deleted resource only on an adapter report that
+  # arrives when no child rows remain. A parent with a cascading child can report
+  # Finalized=True before the child is hard-deleted, and the parent is already
+  # Reconciled=True by then, so nothing wakes it again until this retry window
+  # elapses. Deletion therefore retries every 15s while the steady-state
+  # self-heal window stays long enough to avoid constant re-application.
+  - name: "selfHealDue"
+    source:
+      expression: |
+        (timestamp(now()) - timestamp(
+          resourceStatus.?status.?conditions.orValue([]).filter(c, c.type == "Reconciled").size() > 0
+            ? resourceStatus.?status.?conditions.orValue([]).filter(c, c.type == "Reconciled")[0].last_transition_time
+            : now()
+        )).getSeconds() > (is_deleting ? 15 : 300)
+
+preconditions:
+  - name: "validationCheck"
+    expression: |
+      is_deleting || notReconciled || selfHealDue
+
+resources:
+  - name: "resourceNamespace"
+    manifest:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ .resourceId }}"
+        labels:
+          hyperfleet.io/resource-id: "{{ .resourceId }}"
+          hyperfleet.io/resource-name: "{{ .resourceName }}"
+          e2e.hyperfleet.io/ci: "{{ .ci }}"
+          e2e.hyperfleet.io/managed-by: "test-framework"
+          e2e.hyperfleet.io/run-id: "{{ .runId }}"
+        annotations:
+          hyperfleet.io/generation: "{{ .generationSpec }}"
+    discovery:
+      namespace: "*"
+      by_selectors:
+        label_selector:
+          hyperfleet.io/resource-id: "{{ .resourceId }}"
+          hyperfleet.io/resource-name: "{{ .resourceName }}"
+    lifecycle:
+      delete:
+        propagationPolicy: Foreground
+        when:
+          expression: "is_deleting"
+
+post:
+  payloads:
+    - name: "resourceStatusPayload"
+      build:
+        adapter: "{{ .adapter.name }}"
+        conditions:
+          - type: "Applied"
+            status:
+              expression: |
+                resources.?resourceNamespace.?status.?phase.orValue("") == "Active" ? "True" : "False"
+            reason:
+              expression: |
+                resources.?resourceNamespace.?status.?phase.orValue("") == "Active"
+                  ? "NamespaceCreated"
+                  : "NamespacePending"
+            message:
+              expression: |
+                resources.?resourceNamespace.?status.?phase.orValue("") == "Active"
+                  ? "Namespace created successfully"
+                  : "Namespace creation in progress"
+          - type: "Available"
+            status:
+              expression: |
+                resources.?resourceNamespace.?status.?phase.orValue("") == "Active" ? "True" : "False"
+            reason:
+              expression: |
+                resources.?resourceNamespace.?status.?phase.orValue("") == "Active" ? "NamespaceReady" : "NamespaceNotReady"
+            message:
+              expression: |
+                resources.?resourceNamespace.?status.?phase.orValue("") == "Active"
+                  ? "Namespace is active and ready"
+                  : "Namespace is not active and ready"
+          - type: "Health"
+            status:
+              expression: |
+                adapter.?executionStatus.orValue("") == "success"
+                  && !adapter.?resourcesSkipped.orValue(false)
+                ? "True"
+                : "False"
+            reason:
+              expression: |
+                adapter.?executionStatus.orValue("") != "success"
+                ? "ExecutionFailed:" + adapter.?executionError.?phase.orValue("unknown")
+                : adapter.?resourcesSkipped.orValue(false)
+                  ? "ResourcesSkipped"
+                  : "Healthy"
+            message:
+              expression: |
+                adapter.?executionStatus.orValue("") != "success"
+                ? "Adapter failed at phase ["
+                    + adapter.?executionError.?phase.orValue("unknown")
+                    + "] step ["
+                    + adapter.?executionError.?step.orValue("unknown")
+                    + "]: "
+                    + adapter.?executionError.?message.orValue(adapter.?errorMessage.orValue("no details"))
+                : adapter.?resourcesSkipped.orValue(false)
+                  ? "Resources skipped: " + adapter.?skipReason.orValue("unknown reason")
+                  : "Adapter execution completed successfully"
+          # Finalized: True once the namespace is confirmed deleted
+          - type: "Finalized"
+            status:
+              expression: |
+                is_deleting
+                  && adapter.?executionStatus.orValue("") == "success"
+                  && !adapter.?resourcesSkipped.orValue(false)
+                  && !resources.?resourceNamespace.hasValue()
+                ? "True"
+                : "False"
+            reason:
+              expression: |
+                !is_deleting ? "NotDeleting"
+                : !resources.?resourceNamespace.hasValue()
+                  ? "CleanupConfirmed"
+                  : "CleanupInProgress"
+            message:
+              expression: |
+                !is_deleting ? "Resource not marked for deletion"
+                : !resources.?resourceNamespace.hasValue()
+                  ? "All resources deleted; cleanup confirmed"
+                  : "Deletion in progress; waiting for namespace to be removed"
+        # Event generation ID metadata field needs to use expression to avoid interpolation issues
+        observed_generation:
+          expression: "generationSpec"
+        observed_time: "{{ now | date \"2006-01-02T15:04:05Z07:00\" }}"
+
+        data:
+          namespace:
+            name:
+              expression: |
+                resources.?resourceNamespace.?metadata.?name.orValue("")
+            status:
+              expression: |
+                resources.?resourceNamespace.?status.?phase.orValue("")
+
+  post_actions:
+    - name: "reportResourceStatus"
+      api_call:
+        method: "PUT"
+        url: "{{ .href }}/statuses"
+        headers:
+          - name: "Content-Type"
+            value: "application/json"
+        body: "{{ .resourceStatusPayload }}"

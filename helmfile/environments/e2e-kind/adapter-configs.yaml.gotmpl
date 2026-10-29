@@ -130,6 +130,60 @@ adapters:
         file: configs/e2e/adapters/np-configmap/adapter-task-config.yaml
       - name: adapterTaskConfig.external.configmap
         file: configs/e2e/adapters/np-configmap/adapter-task-resource-configmap.yaml
-      
+  # Fixture success role. One shared task config serves both
+  # adapter-backed fixture plurals; the resource URL comes from the event href,
+  # so only the deployment config and the queue differ per release. The queue and
+  # subscription are named {namespace}-{release} rather than the cluster
+  # releases' {namespace}-{plural}-{release}, because the role name already
+  # carries the plural and the longer form would repeat it.
 
- 
+  - name: parents-success
+    resourceType: parents
+    values:
+      - adapterTaskConfig:
+          create: true
+        adapterConfig:
+          create: true
+          log:
+            level: debug
+        rbac:
+          resources:
+            - namespaces
+        broker:
+          create: true
+          rabbitmq:
+            url: "amqp://guest:guest@rabbitmq:5672"
+            queue: {{ $namespace }}-parents-success
+            exchange: {{ $namespace }}-parents
+            routingKey: "#"
+    setFiles:
+      - name: adapterConfig.yaml
+        file: configs/e2e/adapters/parents-success/adapter-config.yaml
+      - name: adapterTaskConfig.yaml
+        file: configs/e2e/adapters/adapter-success/adapter-task-config.yaml
+
+  - name: cascadechildren-success
+    resourceType: cascadechildren
+    values:
+      - adapterTaskConfig:
+          create: true
+        adapterConfig:
+          create: true
+          log:
+            level: debug
+        rbac:
+          resources:
+            - namespaces
+        broker:
+          create: true
+          rabbitmq:
+            url: "amqp://guest:guest@rabbitmq:5672"
+            queue: {{ $namespace }}-cascadechildren-success
+            exchange: {{ $namespace }}-cascadechildren
+            routingKey: "#"
+    setFiles:
+      - name: adapterConfig.yaml
+        file: configs/e2e/adapters/cascadechildren-success/adapter-config.yaml
+      - name: adapterTaskConfig.yaml
+        file: configs/e2e/adapters/adapter-success/adapter-task-config.yaml
+

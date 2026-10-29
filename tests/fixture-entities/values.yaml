@@ -64,6 +64,13 @@ e2eAdapters:
     - cl-desire
   nodepools:
     - np-configmap
+  # Adapter-backed fixture kinds (HYPERFLEET-1729). The release name is also the
+  # adapter identity: hyperfleet-infra renders required_adapters from the release
+  # names, and the API matches adapter reports by that name.
+  parents:
+    - parents-success
+  cascadechildren:
+    - cascadechildren-success
 probeEntities:
   - kind: AdapterProbe
     plural: adapterprobes
@@ -88,5 +95,9 @@ e2eMachineServiceAccounts:
   - adapter-clusters-cl-param-error
   - adapter-clusters-cl-crash
   - adapter-clusters-cl-invalid-resource
+  - adapter-parents-adapter-failure
+  - adapter-parents-adapter-crash
+  - adapter-parents-adapter-stuck
+  - adapter-parents-adapter-invalid-resource
   - hyperfleet-e2e-runner
 probe: false
