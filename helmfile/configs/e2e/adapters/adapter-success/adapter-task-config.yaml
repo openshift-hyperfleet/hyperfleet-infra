@@ -175,18 +175,36 @@ post:
                   && !resources.?resourceNamespace.hasValue()
                 ? "True"
                 : "False"
+            # The status also requires a successful execution, so the reason and
+            # message branch on the same inputs. Reporting CleanupConfirmed while
+            # the run failed reads as contradictory on a stuck Finalized.
             reason:
               expression: |
-                !is_deleting ? "NotDeleting"
-                : !resources.?resourceNamespace.hasValue()
-                  ? "CleanupConfirmed"
-                  : "CleanupInProgress"
+                !is_deleting
+                  ? "NotDeleting"
+                  : adapter.?executionStatus.orValue("") != "success"
+                    ? "ExecutionFailed:" + adapter.?executionError.?phase.orValue("unknown")
+                    : adapter.?resourcesSkipped.orValue(false)
+                      ? "ResourcesSkipped"
+                      : !resources.?resourceNamespace.hasValue()
+                        ? "CleanupConfirmed"
+                        : "CleanupInProgress"
             message:
               expression: |
-                !is_deleting ? "Resource not marked for deletion"
-                : !resources.?resourceNamespace.hasValue()
-                  ? "All resources deleted; cleanup confirmed"
-                  : "Deletion in progress; waiting for namespace to be removed"
+                !is_deleting
+                  ? "Resource not marked for deletion"
+                  : adapter.?executionStatus.orValue("") != "success"
+                    ? "Adapter failed at phase ["
+                        + adapter.?executionError.?phase.orValue("unknown")
+                        + "] step ["
+                        + adapter.?executionError.?step.orValue("unknown")
+                        + "]: "
+                        + adapter.?executionError.?message.orValue(adapter.?errorMessage.orValue("no details"))
+                    : adapter.?resourcesSkipped.orValue(false)
+                      ? "Resources skipped: " + adapter.?skipReason.orValue("unknown reason")
+                      : !resources.?resourceNamespace.hasValue()
+                        ? "All resources deleted; cleanup confirmed"
+                        : "Deletion in progress; waiting for namespace to be removed"
         # Event generation ID metadata field needs to use expression to avoid interpolation issues
         observed_generation:
           expression: "generationSpec"

@@ -37,47 +37,105 @@ export GENERATED_RABBITMQ_DIR="$work/rabbitmq" GENERATED_DIR="$work/terraform"
 # Directories without an adapter-config.yaml only hold shared files (the success
 # role's task config) and carry no identity, so they are not checked here.
 shopt -s nullglob
-adapter_configs=(helmfile/configs/e2e/adapters/*/adapter-config.yaml)
-if (( ${#adapter_configs[@]} == 0 )); then
-    echo "ERROR: no adapter-config.yaml found under helmfile/configs/e2e/adapters" >&2
-    exit 1
-fi
-for adapter_config in "${adapter_configs[@]}"; do
-    adapter_dir=$(basename "$(dirname "$adapter_config")")
-    declared=$(awk '/^adapter:/{found=1; next} found && /^  name:/{print $2; exit}' "$adapter_config")
-    if [[ "$declared" != "$adapter_dir" ]]; then
-        echo "ERROR: $adapter_config declares adapter.name '$declared', expected '$adapter_dir'" >&2
-        exit 1
+
+check_adapter_identity() {
+    local root="$1" config adapter_dir declared
+    local configs=("$root"/*/adapter-config.yaml)
+    if (( ${#configs[@]} == 0 )); then
+        echo "ERROR: no adapter-config.yaml found under $root" >&2
+        return 1
     fi
-done
-echo "OK: every e2e adapter declares the release name as its identity"
+    for config in "${configs[@]}"; do
+        adapter_dir=$(basename "$(dirname "$config")")
+        declared=$(awk '/^adapter:/{found=1; next} found && /^  name:/{print $2; exit}' "$config")
+        if [[ "$declared" != "$adapter_dir" ]]; then
+            echo "ERROR: $config declares adapter.name '$declared', expected '$adapter_dir'" >&2
+            return 1
+        fi
+    done
+}
 
 # The fixture success role is one task config for both adapter-backed fixture
 # plurals, so its resource URL must come from the event rather than a plural.
-success_task_config=helmfile/configs/e2e/adapters/adapter-success/adapter-task-config.yaml
-grep -q 'source: "event.href"' "$success_task_config" || {
-    echo "ERROR: $success_task_config does not take the resource URL from event.href" >&2
-    exit 1
+check_success_role() {
+    local config="$1" hard_coded_urls
+    grep -q 'source: "event.href"' "$config" || {
+        echo "ERROR: $config does not take the resource URL from event.href" >&2
+        return 1
+    }
+    grep -q 'url: "{{ .href }}"' "$config" || {
+        echo "ERROR: $config does not read the resource from .href" >&2
+        return 1
+    }
+    grep -q 'url: "{{ .href }}/statuses"' "$config" || {
+        echo "ERROR: $config does not report status to .href/statuses" >&2
+        return 1
+    }
+    # Every API URL must be built from the event href. Listing plurals by hand
+    # goes stale as soon as another adapter-backed kind appears, so require the
+    # prefix instead: a url that does not start from .href is a hard-coded path.
+    hard_coded_urls=$(grep -E '^[[:space:]]+url:[[:space:]]' "$config" \
+        | grep -vE '^[[:space:]]+url:[[:space:]]*"\{\{ \.href \}\}' || true)
+    if [[ -n "$hard_coded_urls" ]]; then
+        echo "ERROR: $config builds a URL without .href:" >&2
+        echo "$hard_coded_urls" >&2
+        return 1
+    fi
 }
-grep -q 'url: "{{ .href }}"' "$success_task_config" || {
-    echo "ERROR: $success_task_config does not read the resource from .href" >&2
-    exit 1
-}
-grep -q 'url: "{{ .href }}/statuses"' "$success_task_config" || {
-    echo "ERROR: $success_task_config does not report status to .href/statuses" >&2
-    exit 1
-}
-# Every API URL must be built from the event href. Listing plurals by hand goes
-# stale as soon as another adapter-backed kind appears, so require the prefix
-# instead: any url that does not start from .href is a hard-coded resource path.
-hard_coded_urls=$(grep -E '^[[:space:]]+url:[[:space:]]' "$success_task_config" \
-    | grep -vE '^[[:space:]]+url:[[:space:]]*"\{\{ \.href \}\}' || true)
-if [[ -n "$hard_coded_urls" ]]; then
-    echo "ERROR: $success_task_config builds a URL without .href:" >&2
-    echo "$hard_coded_urls" >&2
+
+adapters_dir=helmfile/configs/e2e/adapters
+success_task_config=$adapters_dir/adapter-success/adapter-task-config.yaml
+check_adapter_identity "$adapters_dir"
+check_success_role "$success_task_config"
+echo "OK: every e2e adapter declares the release name as its identity"
+echo "OK: the fixture success role binds the resource URL from the event"
+
+# A guard that only ever sees valid input proves nothing, so break a throwaway
+# copy of each input and require the guard to reject it. The non-E2E rejection at
+# the end of this script is automated for the same reason.
+broken="$work/broken"
+mkdir -p "$broken/adapters/parents-success"
+cp "$adapters_dir/parents-success/adapter-config.yaml" "$broken/adapters/parents-success/"
+sed 's/^  name: parents-success$/  name: not-the-release-name/' \
+    "$broken/adapters/parents-success/adapter-config.yaml" > "$broken/mismatch.yaml"
+mv "$broken/mismatch.yaml" "$broken/adapters/parents-success/adapter-config.yaml"
+if check_adapter_identity "$broken/adapters" 2>/dev/null; then
+    echo "ERROR: the adapter identity guard accepted a mismatched adapter.name" >&2
     exit 1
 fi
-echo "OK: the fixture success role binds the resource URL from the event"
+
+sed 's/^    source: "event.href"$/    source: "event.id"/' \
+    "$success_task_config" > "$broken/no-href.yaml"
+if check_success_role "$broken/no-href.yaml" 2>/dev/null; then
+    echo "ERROR: the success role guard accepted a config without event.href" >&2
+    exit 1
+fi
+
+# Satisfies every required-shape assertion but adds a second, plural-specific URL,
+# which only the URL-origin rule can catch.
+cat > "$broken/hard-coded.yaml" <<'HARDCODED'
+params:
+  - name: "href"
+    source: "event.href"
+  - name: "resourceStatus"
+    source:
+      api_call:
+        url: "{{ .href }}"
+  - name: "childList"
+    source:
+      api_call:
+        url: "/parents/{{ .resourceId }}/cascadechildren"
+post:
+  post_actions:
+    - name: "reportResourceStatus"
+      api_call:
+        url: "{{ .href }}/statuses"
+HARDCODED
+if check_success_role "$broken/hard-coded.yaml" 2>/dev/null; then
+    echo "ERROR: the success role guard accepted a plural-specific URL" >&2
+    exit 1
+fi
+echo "OK: the adapter identity and URL guards reject broken input"
 
 state=(-f helmfile/helmfile.yaml.gotmpl)
 selected=(-l component=api -l component=sentinel -l component=gateway)
