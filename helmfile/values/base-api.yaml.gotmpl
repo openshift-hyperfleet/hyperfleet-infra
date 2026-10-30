@@ -120,20 +120,28 @@ config:
     {{ if $tenantIsolationEnabled }}
     tenant:
       enabled: true
+      # In edge+api mode the gateway issues a signed wristband whose claims
+      # carry the tenant dimensions and hf_system; the API reads them from the
+      # validated token and ignores the (forgeable) headers.
+      claims_enabled: {{ $wristbandMode }}
       system_header: x-hyperfleet-system
       dimensions:
       {{ if eq $tenantModel "onprem" }}
         - header: x-tenant-org
+          claim: org_id
           key: org
           required: true
         - header: x-tenant-project
+          claim: project_id
           key: project
           required: false
       {{ else if eq $tenantModel "oracle" }}
         - header: x-tenant-tenancy-ocid
+          claim: tenancy_ocid
           key: tenancy_ocid
           required: true
         - header: x-tenant-compartment
+          claim: compartment_id
           key: compartment_id
           required: false
       {{ else }}
