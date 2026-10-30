@@ -4,5 +4,6 @@ metadata:
   name: "{{ .resourceId }}-remote"
   labels:
     hyperfleet.io/cluster-id: "{{ .resourceId }}"
+    e2e.hyperfleet.io/run-id: "{{ .runId }}"
   annotations:
     hyperfleet.io/generation: "{{ .generation }}"
