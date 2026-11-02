@@ -18,6 +18,8 @@ spec:
           labels:
             {{- include "namespace-cleaner.selectorLabels" . | nindent 12 }}
         spec:
+          securityContext:
+            {{- toYaml .Values.podSecurityContext | nindent 12 }}
           priorityClassName: {{ .Values.priorityClassName }}
           serviceAccountName: {{ include "namespace-cleaner.fullname" . }}
           restartPolicy: OnFailure
@@ -26,10 +28,15 @@ spec:
             configMap:
               name: {{ include "namespace-cleaner.fullname" . }}
               defaultMode: 0755
+          # Bash uses temporary files for large resource snapshots in here-strings.
+          - name: tmp
+            emptyDir: {}
           containers:
           - name: cleaner
             image: "{{ .Values.image.repository }}"
             imagePullPolicy: {{ .Values.image.pullPolicy }}
+            securityContext:
+              {{- toYaml .Values.securityContext | nindent 14 }}
             env:
             - name: LABEL_SELECTOR
               value: {{ .Values.labelSelector | quote }}
@@ -56,6 +63,8 @@ spec:
             volumeMounts:
             - name: script
               mountPath: /scripts
+            - name: tmp
+              mountPath: /tmp
             command:
             - /bin/bash
             - /scripts/namespace-cleaner.sh

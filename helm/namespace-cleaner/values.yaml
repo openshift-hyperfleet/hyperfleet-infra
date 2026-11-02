@@ -5,6 +5,20 @@ image:
   repository: alpine/k8s@sha256:15cfdf84d6de3559bc54d7479eb4e8aadbf71f6d7f08782cb1e91f3446f4b2d8
   pullPolicy: IfNotPresent
 
+podSecurityContext:
+  fsGroup: 65532
+  runAsNonRoot: true
+  runAsUser: 65532
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: true
+  seccompProfile:
+    type: RuntimeDefault
+
 # Cron schedule for the cleaner job (default: every hour)
 schedule: "0 * * * *"
 
