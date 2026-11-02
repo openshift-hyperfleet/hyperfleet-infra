@@ -191,6 +191,45 @@ uses `Replace` concurrency so stale active Jobs do not block later schedules;
 missed schedules are limited to 300 seconds. These scheduling bounds are
 configurable in the chart values.
 
+Each run applies two rules:
+
+- **Namespaces** (always on): delete each Active namespace that carries a label
+  key in `CLEANER_LABEL_SELECTOR` and is older than `CLEANER_AGE_MINUTES`.
+- **Orphans of E2E runs** (off unless `CLEANER_ORPHANS_ENABLED=true`): an E2E
+  run namespace is `e2e-<19 digits>` or `rc-e2e-<19 digits>`. When that
+  namespace no longer exists, delete the Pub/Sub subscriptions and topics in
+  `CLEANER_PUBSUB_PROJECT` whose name starts with `<run namespace>-`, then the
+  ClusterRoleBindings and ClusterRoles labelled
+  `app.kubernetes.io/managed-by=Helm` whose `meta.helm.sh/release-namespace`
+  annotation is that namespace. This covers adapter and applier RBAC whose
+  Helm release record is gone.
+
+The orphan rule lists these resources before the namespaces, and a Terminating
+namespace counts as present, so a live run keeps its resources. Pub/Sub and
+RBAC are checked separately: Pub/Sub is skipped when the cluster is not
+`CLEANER_OWNER_CLUSTER`, the token request fails or a Pub/Sub list fails; RBAC
+is skipped when an RBAC list fails. Both are skipped when the namespace list
+fails or is empty. A skipped kind logs `[ERROR] ... orphan cleanup skipped`
+and fails the job, after the namespace rule has run. A failed delete
+is logged as `[WARN]` and the others continue, like a failed namespace delete,
+and does not fail the job; a 404 counts as deleted. A run whose namespace list
+succeeds logs one `Orphan cleanup summary` line with `found`, `kept`, `deleted`
+and `failed`.
+`CLEANER_DRY_RUN=true` logs what both rules would delete without deleting
+anything.
+
+The cleaner calls Pub/Sub with the pod's Workload Identity token from the GKE
+metadata server, so its Kubernetes ServiceAccount needs permission to list and
+delete topics and subscriptions in `CLEANER_PUBSUB_PROJECT`. All clusters that
+run E2E against a project share its Pub/Sub, but only the cluster that runs a
+job has its namespace. A project-wide IAM grant does not tell clusters apart,
+so before listing Pub/Sub resources the cleaner reads the cluster name from the
+GKE metadata server and skips Pub/Sub cleanup unless it is
+`CLEANER_OWNER_CLUSTER`. RBAC cleanup uses the local namespace list and runs
+independently of this check.
+Every `e2e-<19 digits>` name in `hcm-hyperfleet` belongs to
+`hyperfleet-dev-prow`; see the [Prow cluster install steps](https://github.com/openshift-hyperfleet/architecture/blob/main/hyperfleet/docs/prow-cicd-cluster.md#install-the-namespace-cleaner).
+
 | Target | Description |
 |--------|-------------|
 | `make install-cleaner` | Install namespace cleaner CronJob (configurable via `CLEANER_*` variables) |
@@ -209,7 +248,8 @@ configurable in the chart values.
 
 | Target | Description |
 | -------- | ------------- |
-| `make ci-dry-run` | `ci-validate` + `test-terraform-network-policy` + `validate-network-policies` + `validate-namespace-cleaner` + `validate-desire-delivery` + `validate-fixture-entities` |
+| `make ci-dry-run` | `ci-validate` + `test-terraform-network-policy` + `validate-network-policies` + `validate-namespace-cleaner` + `test-namespace-cleaner` + `validate-desire-delivery` + `validate-fixture-entities` |
+| `make test-namespace-cleaner` | Run the namespace-cleaner script against stub `kubectl` and `curl`; check that orphans of deleted E2E run namespaces are deleted and that live, Terminating and non-E2E resources are kept (part of `ci-dry-run`) |
 | `make validate-fixture-entities` | Render API, Sentinel and gateway configuration for every environment; check fixture isolation, entity metadata, adapter matching and Sentinel owner references (part of `ci-dry-run`) |
 | `make validate-desire-delivery` | Render the remote adapters (the `desire-store-client` releases), Redis and the applier for every environment; fail if a remote adapter transport is not remote with `target_cluster` set to the namespace, or if the Redis NetworkPolicy does not admit the adapter (part of `ci-dry-run`) |
 | `make ci-test` | `install-terraform` + `get-credentials` + `install-priority-classes` + `install-desire-delivery` + `health-check-desire-delivery`. Run with `HELMFILE_ENV=e2e-gcp`: the default `gcp` needs Terraform-generated values |
@@ -245,6 +285,10 @@ configurable in the chart values.
 | `CLEANER_SCHEDULE` | `0 * * * *` | `0 * * * *` | Cron schedule for the cleaner job |
 | `CLEANER_LABEL_SELECTOR` | `hyperfleet.io/cluster-id hyperfleet.io/test-run e2e.hyperfleet.io/run-id` | `hyperfleet.io/cluster-id hyperfleet.io/test-run e2e.hyperfleet.io/run-id` | Space-separated label selectors to identify orphan namespaces; a namespace matching any of them is eligible |
 | `CLEANER_AGE_MINUTES` | `120` | `120` | Minimum age (minutes) before a namespace is eligible for cleanup |
+| `CLEANER_DRY_RUN` | `false` | `false` | Log what the cleaner would delete without deleting anything |
+| `CLEANER_ORPHANS_ENABLED` | `false` | `false` | Delete the Pub/Sub resources and Helm-managed cluster RBAC of deleted E2E run namespaces. Enable only on the cluster that runs the E2E jobs for `CLEANER_PUBSUB_PROJECT` (`hyperfleet-dev-prow`) |
+| `CLEANER_PUBSUB_PROJECT` | (empty) | (empty) | GCP project of the E2E Pub/Sub resources; required when `CLEANER_ORPHANS_ENABLED=true` |
+| `CLEANER_OWNER_CLUSTER` | (empty) | (empty) | GKE cluster that runs the E2E jobs for `CLEANER_PUBSUB_PROJECT`; required when `CLEANER_ORPHANS_ENABLED=true`. On another cluster, Pub/Sub cleanup is skipped and the job fails; local RBAC cleanup still runs |
 | `OBSERVABILITY_ENABLED` | `false` | `false` | Set to `true` to deploy kube-prometheus-stack (Prometheus + Grafana) and enable ServiceMonitors |
 | `TRACING_ENABLED` | `false` | `false` | Set to `true` to deploy Tempo + OpenTelemetry Collector and enable OTLP tracing (requires `OBSERVABILITY_ENABLED=true`) |
 | `MONITORING_NAMESPACE` | `monitoring` | `monitoring` | Namespace for the observability helmfile releases |

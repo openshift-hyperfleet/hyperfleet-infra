@@ -1,6 +1,6 @@
 # Default values for namespace-cleaner
 
-# alpine/k8s includes kubectl and bash
+# alpine/k8s includes bash and kubectl, plus curl and jq for the orphan rules
 image:
   repository: alpine/k8s@sha256:15cfdf84d6de3559bc54d7479eb4e8aadbf71f6d7f08782cb1e91f3446f4b2d8
   pullPolicy: IfNotPresent
@@ -26,6 +26,24 @@ ageMinutes: 120
 
 # When true, log what would be deleted without actually deleting anything
 dryRun: false
+
+# Orphan rules: delete Pub/Sub topics and subscriptions named "<run namespace>-*"
+# and Helm-managed ClusterRoles and ClusterRoleBindings whose Helm release
+# namespace is a run namespace, once that namespace no longer exists. Run
+# namespaces are e2e-<19 digits> and rc-e2e-<19 digits>. Pub/Sub is reached with
+# the pod's Workload Identity token, so the Kubernetes ServiceAccount needs to
+# list and delete topics and subscriptions in pubsubProject. Every cluster that
+# runs E2E against the same project sees the same topics, but only one has their
+# run namespaces. A project-wide IAM grant does not tell clusters apart, so the
+# cleaner checks the cluster name from the GKE metadata server against
+# ownerCluster and skips Pub/Sub cleanup anywhere else. RBAC cleanup uses the
+# local namespace list and runs independently of this check.
+orphans:
+  enabled: false
+  # GCP project that holds the E2E Pub/Sub resources. Required when enabled.
+  pubsubProject: ""
+  # GKE cluster that runs the E2E jobs for pubsubProject. Required when enabled.
+  ownerCluster: ""
 
 resources:
   requests:

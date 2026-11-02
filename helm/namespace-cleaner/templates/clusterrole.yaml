@@ -8,3 +8,8 @@ rules:
 - apiGroups: [""]
   resources: ["namespaces"]
   verbs: ["get", "list", "delete"]
+{{- if .Values.orphans.enabled }}
+- apiGroups: ["rbac.authorization.k8s.io"]
+  resources: ["clusterroles", "clusterrolebindings"]
+  verbs: ["list", "delete"]
+{{- end }}
