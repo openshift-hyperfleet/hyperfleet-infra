@@ -9,6 +9,13 @@ params:
     source: event.id
     type: string
     required: true
+  # Labels the namespace so the e2e end-of-suite sweep finds it. Only the e2e
+  # environments set RUN_ID, so it is optional and empty elsewhere.
+  - name: runId
+    source: env.RUN_ID
+    type: string
+    required: false
+    default: ""
   - name: resourceStatus
     source:
       api_call:
