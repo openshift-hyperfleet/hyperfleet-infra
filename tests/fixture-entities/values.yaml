@@ -95,6 +95,7 @@ e2eMachineServiceAccounts:
   - adapter-clusters-cl-param-error
   - adapter-clusters-cl-crash
   - adapter-clusters-cl-invalid-resource
+  - adapter-clusters-cl-desire-reapply
   - adapter-parents-adapter-failure
   - adapter-parents-adapter-crash
   - adapter-parents-adapter-stuck
