@@ -111,6 +111,13 @@ CLEANER_NAMESPACE    ?= $(NAMESPACE)
 CLEANER_SCHEDULE     ?= 0 * * * *
 CLEANER_LABEL_SELECTOR ?= hyperfleet.io/cluster-id hyperfleet.io/test-run e2e.hyperfleet.io/run-id
 CLEANER_AGE_MINUTES  ?= 120
+CLEANER_DRY_RUN      ?= false
+# Orphan rules (Pub/Sub and cluster RBAC of deleted E2E run namespaces).
+# Pub/Sub cleanup runs only on CLEANER_OWNER_CLUSTER, the GKE cluster that runs
+# the E2E jobs for CLEANER_PUBSUB_PROJECT. RBAC cleanup uses local namespaces.
+CLEANER_ORPHANS_ENABLED ?= false
+CLEANER_PUBSUB_PROJECT  ?=
+CLEANER_OWNER_CLUSTER   ?=
 
 # ==== Terraform Targets ====
 .PHONY: install-terraform
@@ -466,13 +473,17 @@ test-ci-tools: build-ci-tools ## Run ci-dry-run, then terraform init without net
 
 # ==== Namespace Cleaner Targets ====
 .PHONY: install-cleaner
-install-cleaner: check-helm check-kubectl install-priority-classes ## Install namespace cleaner CronJob (CLEANER_SCHEDULE, CLEANER_LABEL_SELECTOR, CLEANER_AGE_MINUTES)
+install-cleaner: check-helm check-kubectl install-priority-classes ## Install namespace cleaner CronJob (CLEANER_SCHEDULE, CLEANER_LABEL_SELECTOR, CLEANER_AGE_MINUTES, CLEANER_DRY_RUN, CLEANER_ORPHANS_ENABLED, CLEANER_PUBSUB_PROJECT, CLEANER_OWNER_CLUSTER)
 	$(call check-namespace,CLEANER_NAMESPACE)
 	helm upgrade --install namespace-cleaner $(HELM_DIR)/namespace-cleaner \
 		--namespace $(CLEANER_NAMESPACE) \
 		--set-string "schedule=$(CLEANER_SCHEDULE)" \
 		--set-string "labelSelector=$(CLEANER_LABEL_SELECTOR)" \
 		--set "ageMinutes=$(CLEANER_AGE_MINUTES)" \
+		--set "dryRun=$(CLEANER_DRY_RUN)" \
+		--set "orphans.enabled=$(CLEANER_ORPHANS_ENABLED)" \
+		--set-string "orphans.pubsubProject=$(CLEANER_PUBSUB_PROJECT)" \
+		--set-string "orphans.ownerCluster=$(CLEANER_OWNER_CLUSTER)" \
 		--wait
 	@echo "OK: namespace cleaner installed in namespace $(CLEANER_NAMESPACE)"
 
@@ -716,7 +727,8 @@ help: ## Show this help message
 
 # ==== CI Targets ====
 # ci-dry-run: validate terraform, lint charts and scripts, and check chart and
-#   Helmfile renders (network policies, namespace cleaner, desire delivery, fixture entities)
+#   Helmfile renders (network policies, namespace cleaner, desire delivery, fixture entities),
+#   and test the namespace-cleaner script against stubs
 # ci-test: install terraform, then deploy and health check the desire delivery
 #   stack (Redis desire store + hyperfleet-applier)
 # ci-cleanup: uninstall the desire delivery stack and destroy terraform resources
@@ -787,8 +799,42 @@ validate-namespace-cleaner: check-helm ## Validate namespace-cleaner Helm chart 
 	echo "$$out" | grep -q '^          priorityClassName: hyperfleet-critical$$' \
 		|| { echo "ERROR: namespace-cleaner priority class is not hyperfleet-critical at Pod level"; exit 1; }; \
 	echo "$$out" | awk '/- name: AGE_MINUTES/{getline; if ($$0 ~ /value: "120"/) found=1} END{exit !found}' \
-		|| { echo "ERROR: namespace-cleaner AGE_MINUTES is not 120"; exit 1; }
+		|| { echo "ERROR: namespace-cleaner AGE_MINUTES is not 120"; exit 1; }; \
+	echo "$$out" | awk '/- name: ORPHANS_ENABLED/{getline; if ($$0 ~ /value: "false"/) found=1} END{exit !found}' \
+		|| { echo "ERROR: namespace-cleaner orphan rules are not off by default"; exit 1; }; \
+	role=$$(helm template namespace-cleaner $(HELM_DIR)/namespace-cleaner --namespace hyperfleet --show-only templates/clusterrole.yaml) \
+		|| { echo "ERROR: namespace-cleaner ClusterRole failed to render"; exit 1; }; \
+	! echo "$$role" | grep -q 'apiGroups: \["rbac.authorization.k8s.io"\]' \
+		|| { echo "ERROR: namespace-cleaner grants RBAC access with orphan rules off"; exit 1; }
 	@echo "OK: namespace-cleaner chart rendered with scheduled-run replacement and critical priority"
+	@orphans="--namespace hyperfleet --set orphans.enabled=true --set-string orphans.pubsubProject=hcm-hyperfleet --set-string orphans.ownerCluster=hyperfleet-dev-prow"; \
+	out=$$(helm template namespace-cleaner $(HELM_DIR)/namespace-cleaner $$orphans --show-only templates/cronjob.yaml) \
+		|| { echo "ERROR: namespace-cleaner chart failed to render with orphan rules on"; exit 1; }; \
+	echo "$$out" | awk '/- name: ORPHANS_ENABLED/{getline; if ($$0 ~ /value: "true"/) found=1} END{exit !found}' \
+		|| { echo "ERROR: namespace-cleaner ORPHANS_ENABLED is not true"; exit 1; }; \
+	echo "$$out" | awk '/- name: PUBSUB_PROJECT/{getline; if ($$0 ~ /value: "hcm-hyperfleet"/) found=1} END{exit !found}' \
+		|| { echo "ERROR: namespace-cleaner PUBSUB_PROJECT is not hcm-hyperfleet"; exit 1; }; \
+	echo "$$out" | awk '/- name: OWNER_CLUSTER/{getline; if ($$0 ~ /value: "hyperfleet-dev-prow"/) found=1} END{exit !found}' \
+		|| { echo "ERROR: namespace-cleaner OWNER_CLUSTER is not hyperfleet-dev-prow"; exit 1; }; \
+	role=$$(helm template namespace-cleaner $(HELM_DIR)/namespace-cleaner $$orphans --show-only templates/clusterrole.yaml) \
+		|| { echo "ERROR: namespace-cleaner ClusterRole failed to render with orphan rules on"; exit 1; }; \
+	echo "$$role" | awk '/apiGroups: \["rbac.authorization.k8s.io"\]/{getline r; getline v; if (r ~ /resources: \["clusterroles", "clusterrolebindings"\]/ && v ~ /verbs: \["list", "delete"\]/) found=1} END{exit !found}' \
+		|| { echo "ERROR: namespace-cleaner ClusterRole lacks list and delete on clusterroles and clusterrolebindings"; exit 1; }; \
+	if err=$$(helm template namespace-cleaner $(HELM_DIR)/namespace-cleaner --set orphans.enabled=true 2>&1); then \
+		echo "ERROR: namespace-cleaner rendered with orphan rules on and no orphans.pubsubProject"; exit 1; \
+	fi; \
+	echo "$$err" | grep -q 'orphans.pubsubProject is required when orphans.enabled is true' \
+		|| { echo "ERROR: namespace-cleaner failed to render for another reason: $$err"; exit 1; }; \
+	if err=$$(helm template namespace-cleaner $(HELM_DIR)/namespace-cleaner --set orphans.enabled=true --set-string orphans.pubsubProject=hcm-hyperfleet 2>&1); then \
+		echo "ERROR: namespace-cleaner rendered with orphan rules on and no orphans.ownerCluster"; exit 1; \
+	fi; \
+	echo "$$err" | grep -q 'orphans.ownerCluster is required when orphans.enabled is true' \
+		|| { echo "ERROR: namespace-cleaner failed to render for another reason: $$err"; exit 1; }
+	@echo "OK: namespace-cleaner orphan rules render their env and RBAC, and require orphans.pubsubProject and orphans.ownerCluster"
+
+.PHONY: test-namespace-cleaner
+test-namespace-cleaner: check-jq ## Run the namespace-cleaner script against stub kubectl and curl
+	@./scripts/test-namespace-cleaner.sh
 
 .PHONY: ci-validate
 ci-validate: validate-terraform lint-helm lint-shellcheck validate-authorino ## Ci validate: validate terraform (all stacks) + lint helm + lint shellcheck + gateway Authorino templates
@@ -851,10 +897,11 @@ validate-fixture-entities: check-helmfile ## Validate E2E fixture entities, Sent
 	@./scripts/validate-fixture-entities.sh
 
 .PHONY: ci-dry-run
-ci-dry-run: ci-validate ## Ci dry-run: ci-validate + test GKE policy modes + validate chart rendering
+ci-dry-run: ci-validate ## Ci dry-run: ci-validate + test GKE policy modes + validate chart rendering + test the namespace-cleaner script
 	$(MAKE) test-terraform-network-policy
 	$(MAKE) validate-network-policies
 	$(MAKE) validate-namespace-cleaner
+	$(MAKE) test-namespace-cleaner
 	$(MAKE) validate-desire-delivery
 	$(MAKE) validate-fixture-entities
 
