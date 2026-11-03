@@ -798,6 +798,10 @@ validate-namespace-cleaner: check-helm ## Validate namespace-cleaner Helm chart 
 		|| { echo "ERROR: namespace-cleaner starting deadline is not 300 seconds"; exit 1; }; \
 	echo "$$out" | grep -q '^          priorityClassName: hyperfleet-critical$$' \
 		|| { echo "ERROR: namespace-cleaner priority class is not hyperfleet-critical at Pod level"; exit 1; }; \
+	echo "$$out" | grep -q '^      backoffLimit: 0$$' \
+		|| { echo "ERROR: namespace-cleaner backoffLimit is not 0"; exit 1; }; \
+	echo "$$out" | grep -q '^          restartPolicy: Never$$' \
+		|| { echo "ERROR: namespace-cleaner restartPolicy is not Never"; exit 1; }; \
 	echo "$$out" | awk '/- name: AGE_MINUTES/{getline; if ($$0 ~ /value: "120"/) found=1} END{exit !found}' \
 		|| { echo "ERROR: namespace-cleaner AGE_MINUTES is not 120"; exit 1; }; \
 	echo "$$out" | awk '/- name: ORPHANS_ENABLED/{getline; if ($$0 ~ /value: "false"/) found=1} END{exit !found}' \

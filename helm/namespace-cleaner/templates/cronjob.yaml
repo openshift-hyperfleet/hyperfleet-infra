@@ -13,6 +13,9 @@ spec:
   failedJobsHistoryLimit: 3
   jobTemplate:
     spec:
+      # One attempt per schedule: a failed run stays failed and visible in
+      # failedJobsHistoryLimit, and the next cron schedule retries it.
+      backoffLimit: 0
       template:
         metadata:
           labels:
@@ -22,7 +25,7 @@ spec:
             {{- toYaml .Values.podSecurityContext | nindent 12 }}
           priorityClassName: {{ .Values.priorityClassName }}
           serviceAccountName: {{ include "namespace-cleaner.fullname" . }}
-          restartPolicy: OnFailure
+          restartPolicy: Never
           volumes:
           - name: script
             configMap:
