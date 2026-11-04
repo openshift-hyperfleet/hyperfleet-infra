@@ -846,6 +846,23 @@ validate-desire-delivery: check-helm ## Validate the desire delivery render (rem
 		done; \
 	done
 
+.PHONY: validate-tenant-claims
+validate-tenant-claims: check-helm check-helmfile ## Validate that tenant claims config survives the API chart render (catches a stale API_CHART_REF)
+	@echo "Validating tenant claims render..."
+	@set -eu; \
+	ns=hf-validate-claims; \
+	export NAMESPACE=$$ns RUN_ID=$$ns OIDC_ISSUER_MODE=mock OIDC_ISSUER_URL= OIDC_JWKS_URL=; \
+	export TENANT_ISOLATION_ENABLED=true AUTH_MODE=EDGE+API; \
+	helmfile -f helmfile/helmfile.yaml.gotmpl -e e2e-kind repos >/dev/null \
+		|| { echo "ERROR: Helmfile repository setup failed"; exit 1; }; \
+	out=$$(helmfile -f helmfile/helmfile.yaml.gotmpl -e e2e-kind -l component=api template --skip-deps) \
+		|| { echo "ERROR: API release template failed"; exit 1; }; \
+	echo "$$out" | grep -q "claims_enabled: true" \
+		|| { echo "ERROR: claims_enabled: true not rendered — is API_CHART_REF stale (chart without claims support)?"; exit 1; }; \
+	echo "$$out" | grep -q 'claim: "org_id"' \
+		|| { echo "ERROR: the onprem org_id claim is not rendered"; exit 1; }; \
+	echo "OK: tenant claims rendered into the API ConfigMap"
+
 .PHONY: validate-fixture-entities
 validate-fixture-entities: check-helmfile ## Validate E2E fixture entities, Sentinels and non-E2E isolation
 	@./scripts/validate-fixture-entities.sh
@@ -856,6 +873,7 @@ ci-dry-run: ci-validate ## Ci dry-run: ci-validate + test GKE policy modes + val
 	$(MAKE) validate-network-policies
 	$(MAKE) validate-namespace-cleaner
 	$(MAKE) validate-desire-delivery
+	$(MAKE) validate-tenant-claims
 	$(MAKE) validate-fixture-entities
 
 .PHONY: health-check-desire-delivery

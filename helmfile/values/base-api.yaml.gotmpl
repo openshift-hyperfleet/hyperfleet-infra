@@ -125,6 +125,8 @@ config:
       # validated token and ignores the (forgeable) headers.
       claims_enabled: {{ $wristbandMode }}
       system_header: x-hyperfleet-system
+      # Per-model claim/header pairs mirror the gateway's tenant.models
+      # (helm/hyperfleet-gateway values.yaml) — keep in sync.
       dimensions:
       {{ if eq $tenantModel "onprem" }}
         - header: x-tenant-org
