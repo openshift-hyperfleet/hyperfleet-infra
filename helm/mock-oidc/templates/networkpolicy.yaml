@@ -26,6 +26,15 @@ spec:
             matchLabels:
               control-plane: controller-manager
               authorino-resource: authorino
+        # hyperfleet-e2e mints human tokens through the API server's service
+        # proxy. On GKE that proxy reaches pods through konnectivity-agent in
+        # kube-system; on kind the API server connects from the node.
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: konnectivity-agent
       ports:
         - protocol: TCP
           port: {{ .Values.service.port }}
