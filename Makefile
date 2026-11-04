@@ -852,7 +852,7 @@ validate-tenant-claims: check-helm check-helmfile ## Validate that tenant claims
 	@set -eu; \
 	ns=hf-validate-claims; \
 	export NAMESPACE=$$ns RUN_ID=$$ns OIDC_ISSUER_MODE=mock OIDC_ISSUER_URL= OIDC_JWKS_URL=; \
-	export TENANT_ISOLATION_ENABLED=true AUTH_MODE=EDGE+API; \
+	export TENANT_ISOLATION_ENABLED=true AUTH_MODE=EDGE+API TENANT_MODEL=onprem; \
 	helmfile -f helmfile/helmfile.yaml.gotmpl -e e2e-kind repos >/dev/null \
 		|| { echo "ERROR: Helmfile repository setup failed"; exit 1; }; \
 	out=$$(helmfile -f helmfile/helmfile.yaml.gotmpl -e e2e-kind -l component=api template --skip-deps) \
