@@ -1,0 +1,39 @@
+# POC Gateway for HYPERFLEET-1681
+# 443 terminates TLS with the cert-manager-issued certificate; 80 exists for
+# the ACME HTTP-01 solver (allowedRoutes from All so cert-manager's temporary
+# solver HTTPRoute can attach). The infrastructure annotations land on the
+# Envoy Gateway-generated LoadBalancer Service: the ExternalDNS hostname, the
+# CCM security-rule-management mode (per ADR-0024 — without it the load
+# balancer falls back to the shared security list), and the flexible LB shape
+# HYPERFLEET-1536 validated on OKE.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: hyperfleet-poc
+  namespace: hyperfleet-oci-test
+spec:
+  gatewayClassName: eg
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+      allowedRoutes:
+        namespaces:
+          from: All
+    - name: https
+      protocol: HTTPS
+      port: 443
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - name: api-oci-hypershell-app-tls
+      allowedRoutes:
+        namespaces: 
+          from: Same
+  infrastructure:
+    annotations:
+      external-dns.kubernetes.io/hostname: api.oci.hypershell.app
+      oci.oraclecloud.com/security-rule-management-mode: "NSG"
+      oci.oraclecloud.com/shape: flexible
+      oci.oraclecloud.com/flexible-shape-min-shape: 10Mbps
+      oci.oraclecloud.com/flexible-shape-max-shape: 100Mbps

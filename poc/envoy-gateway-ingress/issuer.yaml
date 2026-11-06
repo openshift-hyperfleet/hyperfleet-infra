@@ -1,0 +1,21 @@
+# Let's Encrypt staging issuer with the Gateway API HTTP-01 solver
+# (cert-manager >= 1.15, requires config.gatewayAPI.enabled — see the README).
+# The solver creates a temporary HTTPRoute attached to the POC Gateway's
+# port-80 listener; the Gateway itself is never edited.
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: letsencrypt-staging
+  namespace: hyperfleet-oci-test
+spec:
+  acme:
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    privateKeySecretRef:
+      name: letsencrypt-staging-account-key
+    solvers:
+      - http01:
+          gatewayHTTPRoute:
+            parentRefs:
+              - name: hyperfleet-poc
+                namespace: hyperfleet-oci-test
+                kind: Gateway

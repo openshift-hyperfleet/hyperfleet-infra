@@ -1,0 +1,19 @@
+# JSON patch applied with: kubectl patch deployment cert-manager -n cert-manager --type=json --patch-file <this file>
+# It appends the --config flag and mounts the ConfigMap without touching the
+# deployment's customized args (pinned acmesolver image, max-concurrent-challenges):
+# a strategic merge would replace the args list wholesale.
+- op: add
+  path: /spec/template/spec/containers/0/args/-
+  value: --config=/etc/cert-manager/config.yaml
+- op: add
+  path: /spec/template/spec/containers/0/volumeMounts
+  value:
+    - name: config
+      mountPath: /etc/cert-manager
+      readOnly: true
+- op: add
+  path: /spec/template/spec/volumes
+  value:
+    - name: config
+      configMap:
+        name: cert-manager-config

@@ -1,0 +1,15 @@
+# cert-manager controller config enabling Gateway API support (>= 1.15):
+# the gatewayHTTPRoute HTTP-01 solver is opt-in via the config file. The file
+# must be a ControllerConfiguration object (apiVersion/kind required) — bare
+# values crash the controller on startup.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cert-manager-config
+  namespace: cert-manager
+data:
+  config.yaml: |
+    apiVersion: controller.config.cert-manager.io/v1alpha1
+    kind: ControllerConfiguration
+    gatewayAPI:
+      enabled: true

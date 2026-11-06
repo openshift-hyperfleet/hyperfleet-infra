@@ -1,0 +1,15 @@
+# The gateway hostname's certificate: Let's Encrypt staging (production allows
+# five duplicate certificates per week; switch last). HYPERFLEET-1536's TLS
+# termination consumes the issued Secret.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: api-oci-hypershell-app
+  namespace: hyperfleet-oci-test
+spec:
+  secretName: api-oci-hypershell-app-tls
+  dnsNames:
+    - api.oci.hypershell.app
+  issuerRef:
+    name: letsencrypt-staging
+    kind: Issuer

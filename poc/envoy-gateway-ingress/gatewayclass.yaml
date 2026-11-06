@@ -1,0 +1,8 @@
+# The GatewayClass the Envoy Gateway helm chart does not install — without
+# it, Gateways sit in "Waiting for controller".
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: eg
+spec:
+  controllerName: gateway.envoyproxy.io/gatewayclass-controller

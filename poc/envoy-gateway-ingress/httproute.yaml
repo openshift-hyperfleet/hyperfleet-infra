@@ -1,0 +1,17 @@
+# Route the hostname on the 443 listener to the API Service. Returns 503 until
+# the chart rework widens the API NetworkPolicy selector — see README caveats.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: hyperfleet-api
+  namespace: hyperfleet-oci-test
+spec:
+  parentRefs:
+    - name: hyperfleet-poc
+      sectionName: https
+  hostnames:
+    - api.oci.hypershell.app
+  rules:
+    - backendRefs:
+        - name: hyperfleet-api
+          port: 8000
