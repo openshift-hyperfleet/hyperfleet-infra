@@ -247,10 +247,10 @@ validate-helmfile-config: check-helmfile-env ## Validate Helmfile inputs before 
 
 # ==== Gateway Security Targets ====
 .PHONY: check-manifest-fetch-settings
-check-manifest-fetch-settings: ## Verify the pinned-manifest download settings are numeric
-	@case "$(MANIFEST_FETCH_ATTEMPTS)" in ''|*[!0-9]*|0) echo "ERROR: MANIFEST_FETCH_ATTEMPTS must be a positive integer, got '$(MANIFEST_FETCH_ATTEMPTS)'"; exit 1;; esac
-	@case "$(MANIFEST_FETCH_MAX_TIME)" in ''|*[!0-9]*|0) echo "ERROR: MANIFEST_FETCH_MAX_TIME must be a positive integer, got '$(MANIFEST_FETCH_MAX_TIME)'"; exit 1;; esac
-	@case "$(MANIFEST_FETCH_DELAY)" in ''|*[!0-9]*) echo "ERROR: MANIFEST_FETCH_DELAY must be a non-negative integer, got '$(MANIFEST_FETCH_DELAY)'"; exit 1;; esac
+check-manifest-fetch-settings: ## Verify the pinned-manifest download settings are sane integers
+	@case "$(MANIFEST_FETCH_ATTEMPTS)" in [1-9]|[1-9][0-9]|[1-9][0-9][0-9]) ;; *) echo "ERROR: MANIFEST_FETCH_ATTEMPTS must be an integer from 1 to 999, got '$(MANIFEST_FETCH_ATTEMPTS)'"; exit 1;; esac
+	@case "$(MANIFEST_FETCH_MAX_TIME)" in [1-9]|[1-9][0-9]|[1-9][0-9][0-9]|[1-9][0-9][0-9][0-9]) ;; *) echo "ERROR: MANIFEST_FETCH_MAX_TIME must be an integer from 1 to 9999 seconds, got '$(MANIFEST_FETCH_MAX_TIME)'"; exit 1;; esac
+	@case "$(MANIFEST_FETCH_DELAY)" in 0|[1-9]|[1-9][0-9]|[1-9][0-9][0-9]) ;; *) echo "ERROR: MANIFEST_FETCH_DELAY must be an integer from 0 to 999 seconds, got '$(MANIFEST_FETCH_DELAY)'"; exit 1;; esac
 
 .PHONY: install-cert-manager
 install-cert-manager: check-kubectl check-manifest-fetch-settings ## Install cert-manager (pinned, cluster-wide) for gateway internal TLS
