@@ -72,7 +72,15 @@ CURL_IMAGE ?= curlimages/curl:8.22.0@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2
 # The pinned manifests below are verified by SHA-256 after download, so retrying
 # only absorbs transient CDN failures (timeouts, HTTP 429/500/502/503/504) instead
 # of aborting an install that has nothing wrong with it.
-MANIFEST_CURL_FLAGS ?= --retry 5 --retry-delay 5 --connect-timeout 10 --max-time 300
+#
+# The retries are done in shell rather than with curl --retry on purpose: curl
+# honors a Retry-After header, --max-time does not cover that wait, and the curl
+# 7.76.1 shipped with UBI 9 (the e2e runtime image) ignores --retry-max-time for
+# it, so a single 429/503 could stall setup for hours. Worst case here is
+# MANIFEST_FETCH_ATTEMPTS x (MANIFEST_FETCH_MAX_TIME + MANIFEST_FETCH_DELAY).
+MANIFEST_FETCH_ATTEMPTS ?= 4
+MANIFEST_FETCH_MAX_TIME ?= 120
+MANIFEST_FETCH_DELAY    ?= 5
 
 # Machine-token helper defaults. E2E environments deploy cl-desire instead of
 # adapter1; override MACHINE_SERVICE_ACCOUNT to exercise a different allowed
@@ -242,9 +250,14 @@ validate-helmfile-config: check-helmfile-env ## Validate Helmfile inputs before 
 install-cert-manager: check-kubectl ## Install cert-manager (pinned, cluster-wide) for gateway internal TLS
 	@echo "Installing cert-manager $(CERT_MANAGER_VERSION)..."
 	@tmp=$$(mktemp) && \
-	if ! curl -fsSL $(MANIFEST_CURL_FLAGS) -o "$$tmp" "$(CERT_MANAGER_MANIFEST)"; then \
-		echo "ERROR: failed to download cert-manager manifest"; rm -f "$$tmp"; exit 1; \
-	fi; \
+	attempt=1; \
+	until curl -fsSL --connect-timeout 10 --max-time $(MANIFEST_FETCH_MAX_TIME) -o "$$tmp" "$(CERT_MANAGER_MANIFEST)"; do \
+		if [ $$attempt -ge $(MANIFEST_FETCH_ATTEMPTS) ]; then \
+			echo "ERROR: failed to download cert-manager manifest after $(MANIFEST_FETCH_ATTEMPTS) attempts"; rm -f "$$tmp"; exit 1; \
+		fi; \
+		echo "WARN: cert-manager manifest download failed (attempt $$attempt/$(MANIFEST_FETCH_ATTEMPTS)), retrying in $(MANIFEST_FETCH_DELAY)s"; \
+		attempt=$$((attempt+1)); sleep $(MANIFEST_FETCH_DELAY); \
+	done; \
 	actual=$$( (command -v sha256sum >/dev/null 2>&1 && sha256sum "$$tmp" || shasum -a 256 "$$tmp") | cut -d' ' -f1 ); \
 	if [ "$$actual" != "$(CERT_MANAGER_MANIFEST_SHA256)" ]; then \
 		echo "ERROR: cert-manager manifest checksum mismatch (expected $(CERT_MANAGER_MANIFEST_SHA256), got $$actual)"; rm -f "$$tmp"; exit 1; \
@@ -258,9 +271,14 @@ install-cert-manager: check-kubectl ## Install cert-manager (pinned, cluster-wid
 uninstall-cert-manager: check-kubectl ## Uninstall cert-manager explicitly (cluster-wide)
 	@echo "Uninstalling cert-manager $(CERT_MANAGER_VERSION)..."
 	@tmp=$$(mktemp) && \
-	if ! curl -fsSL $(MANIFEST_CURL_FLAGS) -o "$$tmp" "$(CERT_MANAGER_MANIFEST)"; then \
-		echo "ERROR: failed to download cert-manager manifest"; rm -f "$$tmp"; exit 1; \
-	fi; \
+	attempt=1; \
+	until curl -fsSL --connect-timeout 10 --max-time $(MANIFEST_FETCH_MAX_TIME) -o "$$tmp" "$(CERT_MANAGER_MANIFEST)"; do \
+		if [ $$attempt -ge $(MANIFEST_FETCH_ATTEMPTS) ]; then \
+			echo "ERROR: failed to download cert-manager manifest after $(MANIFEST_FETCH_ATTEMPTS) attempts"; rm -f "$$tmp"; exit 1; \
+		fi; \
+		echo "WARN: cert-manager manifest download failed (attempt $$attempt/$(MANIFEST_FETCH_ATTEMPTS)), retrying in $(MANIFEST_FETCH_DELAY)s"; \
+		attempt=$$((attempt+1)); sleep $(MANIFEST_FETCH_DELAY); \
+	done; \
 	actual=$$( (command -v sha256sum >/dev/null 2>&1 && sha256sum "$$tmp" || shasum -a 256 "$$tmp") | cut -d' ' -f1 ); \
 	if [ "$$actual" != "$(CERT_MANAGER_MANIFEST_SHA256)" ]; then \
 		echo "ERROR: cert-manager manifest checksum mismatch (expected $(CERT_MANAGER_MANIFEST_SHA256), got $$actual)"; rm -f "$$tmp"; exit 1; \
@@ -273,9 +291,14 @@ uninstall-cert-manager: check-kubectl ## Uninstall cert-manager explicitly (clus
 install-authorino-operator: check-kubectl ## Install the Authorino operator (pinned, cluster-wide) - prerequisite for gateway ext_authz
 	@echo "Installing Authorino operator $(AUTHORINO_OPERATOR_VERSION)..."
 	@tmp=$$(mktemp) && \
-	if ! curl -fsSL $(MANIFEST_CURL_FLAGS) -o "$$tmp" "$(AUTHORINO_OPERATOR_MANIFEST)"; then \
-		echo "ERROR: failed to download Authorino operator manifest"; rm -f "$$tmp"; exit 1; \
-	fi; \
+	attempt=1; \
+	until curl -fsSL --connect-timeout 10 --max-time $(MANIFEST_FETCH_MAX_TIME) -o "$$tmp" "$(AUTHORINO_OPERATOR_MANIFEST)"; do \
+		if [ $$attempt -ge $(MANIFEST_FETCH_ATTEMPTS) ]; then \
+			echo "ERROR: failed to download Authorino operator manifest after $(MANIFEST_FETCH_ATTEMPTS) attempts"; rm -f "$$tmp"; exit 1; \
+		fi; \
+		echo "WARN: Authorino operator manifest download failed (attempt $$attempt/$(MANIFEST_FETCH_ATTEMPTS)), retrying in $(MANIFEST_FETCH_DELAY)s"; \
+		attempt=$$((attempt+1)); sleep $(MANIFEST_FETCH_DELAY); \
+	done; \
 	actual=$$( (command -v sha256sum >/dev/null 2>&1 && sha256sum "$$tmp" || shasum -a 256 "$$tmp") | cut -d' ' -f1 ); \
 	if [ "$$actual" != "$(AUTHORINO_OPERATOR_MANIFEST_SHA256)" ]; then \
 		echo "ERROR: Authorino operator manifest checksum mismatch (expected $(AUTHORINO_OPERATOR_MANIFEST_SHA256), got $$actual)"; rm -f "$$tmp"; exit 1; \
@@ -290,9 +313,14 @@ install-authorino-operator: check-kubectl ## Install the Authorino operator (pin
 uninstall-authorino-operator: check-kubectl ## Uninstall the Authorino operator
 	@echo "Uninstalling Authorino operator $(AUTHORINO_OPERATOR_VERSION)..."
 	@tmp=$$(mktemp) && \
-	if ! curl -fsSL $(MANIFEST_CURL_FLAGS) -o "$$tmp" "$(AUTHORINO_OPERATOR_MANIFEST)"; then \
-		echo "ERROR: failed to download Authorino operator manifest"; rm -f "$$tmp"; exit 1; \
-	fi; \
+	attempt=1; \
+	until curl -fsSL --connect-timeout 10 --max-time $(MANIFEST_FETCH_MAX_TIME) -o "$$tmp" "$(AUTHORINO_OPERATOR_MANIFEST)"; do \
+		if [ $$attempt -ge $(MANIFEST_FETCH_ATTEMPTS) ]; then \
+			echo "ERROR: failed to download Authorino operator manifest after $(MANIFEST_FETCH_ATTEMPTS) attempts"; rm -f "$$tmp"; exit 1; \
+		fi; \
+		echo "WARN: Authorino operator manifest download failed (attempt $$attempt/$(MANIFEST_FETCH_ATTEMPTS)), retrying in $(MANIFEST_FETCH_DELAY)s"; \
+		attempt=$$((attempt+1)); sleep $(MANIFEST_FETCH_DELAY); \
+	done; \
 	actual=$$( (command -v sha256sum >/dev/null 2>&1 && sha256sum "$$tmp" || shasum -a 256 "$$tmp") | cut -d' ' -f1 ); \
 	if [ "$$actual" != "$(AUTHORINO_OPERATOR_MANIFEST_SHA256)" ]; then \
 		echo "ERROR: Authorino operator manifest checksum mismatch (expected $(AUTHORINO_OPERATOR_MANIFEST_SHA256), got $$actual)"; rm -f "$$tmp"; exit 1; \
