@@ -1,0 +1,22 @@
+# Listener-scoped external authorization for the 1909 verification: the
+# SecurityPolicy targets the Gateway's HTTPS listener (sectionName), so every
+# route on 443 is authenticated by default without a route-level policy —
+# the fail-closed default ADR-0036 prescribes. gRPC to the POC Authorino.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: SecurityPolicy
+metadata:
+  name: hyperfleet-poc-auth
+  namespace: hyperfleet-oci-test
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: hyperfleet-poc
+    sectionName: https
+  extAuth:
+    grpc:
+      backendRef:
+        group: ""
+        kind: Service
+        name: hyperfleet-poc-authorino-authorization
+        port: 50051

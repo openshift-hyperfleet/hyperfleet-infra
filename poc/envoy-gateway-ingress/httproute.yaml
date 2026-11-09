@@ -1,5 +1,7 @@
-# Route the hostname on the 443 listener to the API Service. Returns 503 until
-# the chart rework widens the API NetworkPolicy selector — see README caveats.
+# Route the hostname on the 443 listener to the echo backend, which makes the
+# 1909 header checks observable (httpbin /headers shows what reached the
+# backend). This route carries no route-level policy: the listener-scoped
+# SecurityPolicy must authenticate it by default.
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
@@ -13,5 +15,5 @@ spec:
     - api.oci.hypershell.app
   rules:
     - backendRefs:
-        - name: hyperfleet-api
-          port: 8000
+        - name: echo-backend
+          port: 80

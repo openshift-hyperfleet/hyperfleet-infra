@@ -3,8 +3,11 @@
 Proves the decided entry path on OCI: Gateway API with Envoy Gateway, TLS
 terminated at the Gateway's 443 listener, and the gateway hostname's
 certificate issued by cert-manager HTTP-01 through the Gateway's port-80
-listener. This branch is a POC — nothing here merges into the charts. The
-chart-rework follow-up turns the proven shape into `helm/hyperfleet-gateway`.
+listener. The HYPERFLEET-1909 layer (steps 4-5) adds the auth mechanisms
+[ADR-0036](https://github.com/openshift-hyperfleet/architecture/blob/main/hyperfleet/adrs/0036-management-cluster-ingress-tls-termination.md) prescribes: listener-scoped SecurityPolicy, early header stripping,
+and port-80 confinement. This branch is a POC — nothing here merges into the
+charts. The chart-rework follow-up turns the proven shape into
+`helm/hyperfleet-gateway`.
 
 ## Cluster
 
@@ -22,8 +25,7 @@ OCI CLI session must be authenticated (`oci session authenticate`).
   make install-cert-manager
   ```
 
-- ExternalDNS with the 1573-verified recipe (instance principals, the
-  oci.hypershell.app zone):
+- ExternalDNS (instance principals, the `oci.hypershell.app` zone):
 
   ```bash
   helm upgrade --install external-dns helm/external-dns \
@@ -94,6 +96,70 @@ Note: Envoy Gateway's default deployment mode places the generated Envoy
 pods and the LoadBalancer Service in `envoy-gateway-system`, named
 `envoy-<namespace>-<gateway>-<hash>` — not in the Gateway's namespace.
 
+### 4. Add the auth verification layer (HYPERFLEET-1909)
+
+The Authorino operator is the repo's pinned install. The
+POC Authorino instance disables TLS on its listeners — internal-hop TLS is
+chart-owned hardening, not part of what this verifies:
+
+```bash
+make install-authorino-operator
+kubectl apply -f authorino-poc.yaml
+kubectl -n hyperfleet-oci-test wait --for=condition=Ready authorino/hyperfleet-poc --timeout=180s
+kubectl apply -f authconfig-poc.yaml -f echo-backend.yaml -f securitypolicy.yaml -f clienttrafficpolicy.yaml
+```
+
+### 5. Verify the auth mechanisms (HYPERFLEET-1909)
+
+```bash
+# Fail-closed: the SecurityPolicy targets the https listener, so a route with
+# no route-level policy is still authenticated — an unauthenticated request
+# never reaches the backend
+curl -sk -o /dev/null -w '%{http_code}\n' https://api.oci.hypershell.app/headers
+# expect: 401 or 403
+
+# Stripping before authorization: client-supplied identity headers never
+# arrive; Authorino's injected identity does
+TOKEN=$(kubectl create token poc-verifier -n hyperfleet-oci-test --audience=hyperfleet-poc)
+curl -sk https://api.oci.hypershell.app/headers \
+  -H "Authorization: ServiceAccount $TOKEN" \
+  -H "x-hyperfleet-identity: forged@example.com" \
+  -H "x-hyperfleet-system: forged"
+# expect: X-Hyperfleet-Identity: system:serviceaccount:hyperfleet-oci-test:poc-verifier
+#         X-Hyperfleet-System: true — no trace of the forged values
+
+# Renewal under confinement: the solver HTTPRoute must still attach to the
+# port-80 listener (allowedRoutes from Same) and the certificate reissue
+kubectl -n hyperfleet-oci-test delete secret api-oci-hypershell-app-tls
+kubectl -n hyperfleet-oci-test get httproute    # cm-acme-http-solver-* appears during the challenge
+kubectl -n hyperfleet-oci-test get certificate api-oci-hypershell-app -w
+# expect: back to Ready with a fresh staging certificate
+
+# Port-80 confinement: nothing but the solver answers
+curl -s -o /dev/null -w '%{http_code}\n' http://api.oci.hypershell.app/
+# expect: 404
+```
+
+**Results (11/9):** all four mechanisms hold.
+
+- **Fail-closed:** 401 unauthenticated — the listener-scoped SecurityPolicy
+  authenticates a route with no route-level policy
+- **Stripping:** forged `x-hyperfleet-*` values never reached the backend;
+  Authorino's injected identity did
+- **Renewal:** re-issued in ~5 s with the ACME challenge served through the
+  confined port-80 listener; the solver HTTPRoute is ephemeral — witness it
+  via the Certificate's events, not polling
+- **Port 80:** 404 outside the solver
+
+Notes for the rework:
+
+- The POC AuthConfig has no wristband, so the ServiceAccount credential is
+  forwarded upstream — the chart's full config replaces it
+- Envoy Gateway's `HTTPHeaderFilter` is flat (`set`/`add`/`remove`, not the
+  Gateway API `request:` wrapper)
+- The Authorino operator appends `-authorino-authorization` to the CR name —
+  name the CR without an `-authorino` suffix to get the chart's service names
+
 ## Verification
 
 ```bash
@@ -111,20 +177,16 @@ kubectl -n hyperfleet-oci-test get certificate api-oci-hypershell-app -w
 # Serving: the staging certificate terminates TLS on 443
 curl -kv https://api.oci.hypershell.app/
 # expect: subject CN=api.oci.hypershell.app,
-#         issuer "(STAGING) ... Let's Encrypt", HTTP/2, an Envoy response
-#         (500 on this cluster — no backend)
-
-# Port 80 answers (no route on it outside the solver)
-curl -v http://api.oci.hypershell.app/     # expect: Envoy 404
+#         issuer "(STAGING) ... Let's Encrypt", HTTP/2 — with the auth layer
+#         applied, an Envoy 401/403 (unauthenticated)
 ```
 
 ## Caveats
 
-- The 443 response is a 500 from Envoy: the httproute's backend
-  (`hyperfleet-api`) does not exist on this cluster. On the management
-  cluster the route exists but ADR-0020's NetworkPolicy confines the API to
-  the chart's Envoy pods, so it returns 503 until the rework widens the
-  selector. Either way the TLS-termination proof stands on the handshake.
+- The route targets the echo backend (httpbin), not the real API Service:
+  on the management cluster [ADR-0020](https://github.com/openshift-hyperfleet/architecture/blob/main/hyperfleet/adrs/0020-envoy-authorino-api-gateway.md)'s NetworkPolicy confines the API to the
+  chart's Envoy pods, so the real Service returns 503 until the rework widens
+  the selector. The echo backend keeps the header checks observable either way.
 - The staging certificate is untrusted by design; production switch happens
   last (prod allows five duplicate certificates per week).
 - `.app` is HSTS-preloaded, so browsers refuse plain `http://` — verify port
@@ -135,8 +197,10 @@ curl -v http://api.oci.hypershell.app/     # expect: Envoy 404
 ## Teardown
 
 ```bash
+kubectl delete -f securitypolicy.yaml -f clienttrafficpolicy.yaml -f echo-backend.yaml -f authconfig-poc.yaml -f authorino-poc.yaml
 kubectl delete -f httproute.yaml -f certificate.yaml -f issuer.yaml -f gateway.yaml -f gatewayclass.yaml
 helm uninstall eg -n envoy-gateway-system
+make uninstall-authorino-operator
 kubectl delete -f cert-manager-gatewayapi.yaml
 kubectl patch deployment cert-manager -n cert-manager --type=json \
   -p='[{"op":"remove","path":"/spec/template/spec/containers/0/volumeMounts"},{"op":"remove","path":"/spec/template/spec/volumes"}]'

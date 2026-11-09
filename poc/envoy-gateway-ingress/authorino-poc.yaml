@@ -1,0 +1,21 @@
+# Authorino instance for the 1909 verification, named to match the chart's
+# convention: the operator appends `-authorino-authorization` to the CR name,
+# so the gRPC authorization Service is hyperfleet-poc-authorino-authorization
+# on port 50051. TLS disabled on both listeners: the internal-hop TLS is
+# production hardening owned by the chart, not part of what this verification
+# proves. Watches AuthConfigs in this namespace only (clusterWide: false,
+# same explicit-scope rule as the chart's instance).
+apiVersion: operator.authorino.kuadrant.io/v1beta1
+kind: Authorino
+metadata:
+  name: hyperfleet-poc
+  namespace: hyperfleet-oci-test
+spec:
+  clusterWide: false
+  listener:
+    tls:
+      enabled: false
+  oidcServer:
+    tls:
+      enabled: false
+  logLevel: info

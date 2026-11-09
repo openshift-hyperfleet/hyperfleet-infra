@@ -1,7 +1,8 @@
 # POC Gateway for HYPERFLEET-1681
 # 443 terminates TLS with the cert-manager-issued certificate; 80 exists for
-# the ACME HTTP-01 solver (allowedRoutes from All so cert-manager's temporary
-# solver HTTPRoute can attach). The infrastructure annotations land on the
+# the ACME HTTP-01 solver, confined to same-namespace routes (cert-manager
+# creates the solver HTTPRoute in the Issuer's namespace, which is this one).
+# The infrastructure annotations land on the
 # Envoy Gateway-generated LoadBalancer Service: the ExternalDNS hostname, the
 # CCM security-rule-management mode (per ADR-0024 — without it the load
 # balancer falls back to the shared security list), and the flexible LB shape
@@ -19,7 +20,7 @@ spec:
       port: 80
       allowedRoutes:
         namespaces:
-          from: All
+          from: Same
     - name: https
       protocol: HTTPS
       port: 443

@@ -1,0 +1,51 @@
+# Minimal machine-identity AuthConfig for the 1909 verification, following
+# helm/hyperfleet-gateway's authconfig template shape: TokenReview under the
+# ServiceAccount scheme, an exact-subject allow-list, and the two response
+# headers the stripping check observes. The poc-verifier ServiceAccount holds
+# no permissions — its token is only the credential under test; mint one with:
+#   kubectl create token poc-verifier -n hyperfleet-oci-test --audience=hyperfleet-poc
+apiVersion: authorino.kuadrant.io/v1beta3
+kind: AuthConfig
+metadata:
+  name: hyperfleet-poc-policy
+  namespace: hyperfleet-oci-test
+spec:
+  hosts:
+    - api.oci.hypershell.app
+  authentication:
+    "hyperfleet-components":
+      kubernetesTokenReview:
+        audiences:
+          - hyperfleet-poc
+      credentials:
+        authorizationHeader:
+          prefix: ServiceAccount
+      overrides:
+        hf_system:
+          value: "true"
+  authorization:
+    "restrict-system-subjects":
+      when:
+        - selector: auth.identity.hf_system
+          operator: eq
+          value: "true"
+      patternMatching:
+        patterns:
+          - selector: auth.identity.user.username
+            operator: matches
+            value: "^system:serviceaccount:hyperfleet-oci-test:poc-verifier$"
+  response:
+    success:
+      headers:
+        x-hyperfleet-system:
+          plain:
+            selector: auth.identity.hf_system
+        x-hyperfleet-identity:
+          plain:
+            selector: auth.identity.user.username
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: poc-verifier
+  namespace: hyperfleet-oci-test

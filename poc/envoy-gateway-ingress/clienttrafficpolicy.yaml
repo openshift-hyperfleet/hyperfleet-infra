@@ -1,0 +1,22 @@
+# Early header stripping for the 1909 verification: ClientTrafficPolicy
+# earlyRequestHeaders rewrites headers before routing and before the
+# authorization filter runs, so client-supplied identity headers never reach
+# the backend — Authorino's injected values are the only ones that arrive.
+# HTTPRoute's RequestHeaderModifier would run after extAuth and delete the
+# injected headers instead. Scoped to the whole Gateway: port 80 carries no
+# routes outside the ACME solver, so stripping there is inert.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: ClientTrafficPolicy
+metadata:
+  name: hyperfleet-poc-strip-identity-headers
+  namespace: hyperfleet-oci-test
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: hyperfleet-poc
+  headers:
+    earlyRequestHeaders:
+      remove:
+        - x-hyperfleet-system
+        - x-hyperfleet-identity

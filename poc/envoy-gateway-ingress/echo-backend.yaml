@@ -1,0 +1,38 @@
+# Echo backend for the 1909 verification: httpbin's /headers endpoint shows
+# exactly which headers reached the backend — the observable for the
+# stripping-before-extAuth check. Fully-qualified image: OKE enforces
+# short-name resolution.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: echo-backend
+  namespace: hyperfleet-oci-test
+  labels:
+    app: echo-backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: echo-backend
+  template:
+    metadata:
+      labels:
+        app: echo-backend
+    spec:
+      containers:
+        - name: httpbin
+          image: docker.io/kennethreitz/httpbin:latest
+          ports:
+            - containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: echo-backend
+  namespace: hyperfleet-oci-test
+spec:
+  selector:
+    app: echo-backend
+  ports:
+    - port: 80
+      targetPort: 80
