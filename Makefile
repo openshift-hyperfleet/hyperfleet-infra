@@ -239,11 +239,12 @@ validate-helmfile-config: check-helmfile-env ## Validate Helmfile inputs before 
 # honors a Retry-After header, --max-time does not cover that wait, and the curl
 # 7.76.1 shipped with UBI 9 (the e2e runtime image) ignores --retry-max-time for
 # it, so a single 429/503 could stall setup for hours. The retry count is fixed,
-# so there is no retry setting to validate. Worst case is just over 8 minutes.
+# so there is no retry setting to validate. A fast failure is retried over about
+# a minute; the worst case, when attempts hang until --max-time, is five minutes.
 define fetch_manifest
 ok=; for i in 1 2 3 4; do \
-	if curl -fsSL --connect-timeout 10 --max-time 120 -o "$$tmp" "$(1)"; then ok=1; break; fi; \
-	echo "WARN: $(2) download failed (attempt $$i/4)"; sleep 5; \
+	if curl -fsSL --connect-timeout 10 --max-time 60 -o "$$tmp" "$(1)"; then ok=1; break; fi; \
+	[ "$$i" -eq 4 ] || { echo "WARN: $(2) download failed (attempt $$i/4), retrying in 20s"; sleep 20; }; \
 done; \
 [ -n "$$ok" ] || { echo "ERROR: failed to download $(2) after 4 attempts"; rm -f "$$tmp"; exit 1; }
 endef
