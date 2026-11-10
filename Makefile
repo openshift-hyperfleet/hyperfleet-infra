@@ -241,9 +241,11 @@ validate-helmfile-config: check-helmfile-env ## Validate Helmfile inputs before 
 # it, so a single 429/503 could stall setup for hours. The retry count is fixed,
 # so there is no retry setting to validate. A fast failure is retried over about
 # a minute; the worst case, when attempts hang until --max-time, is five minutes.
+# A 4xx other than 408/429 is permanent (wrong pin, no auth), so it fails at once.
 define fetch_manifest
 ok=; for i in 1 2 3 4; do \
-	if curl -fsSL --connect-timeout 10 --max-time 60 -o "$$tmp" "$(1)"; then ok=1; break; fi; \
+	code=$$(curl -fsSL --connect-timeout 10 --max-time 60 -o "$$tmp" -w '%{http_code}' "$(1)") && { ok=1; break; }; \
+	case "$$code" in 4??) [ "$$code" = 408 ] || [ "$$code" = 429 ] || { echo "ERROR: $(2) download returned HTTP $$code, not retrying"; rm -f "$$tmp"; exit 1; } ;; esac; \
 	[ "$$i" -eq 4 ] || { echo "WARN: $(2) download failed (attempt $$i/4), retrying in 20s"; sleep 20; }; \
 done; \
 [ -n "$$ok" ] || { echo "ERROR: failed to download $(2) after 4 attempts"; rm -f "$$tmp"; exit 1; }
