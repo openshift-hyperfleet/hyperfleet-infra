@@ -487,7 +487,9 @@ build-wristband-tools: check-container-tool ## Build the wristband tools image a
 	$(CONTAINER_TOOL) build --platform $(WRISTBAND_TOOLS_PLATFORM) --build-arg APP_VERSION='$(WRISTBAND_TOOLS_VERSION)' -t $(WRISTBAND_TOOLS_IMAGE) $(WRISTBAND_TOOLS_DIR)
 
 # test-wristband-tools repeats the provisioner's key operations as UID 1001 on a
-# read-only root filesystem with a tmpfs /tmp, matching the hook securityContext.
+# read-only root filesystem, with a tmpfs /tmp standing in for the chart Job's
+# HOME=/work emptyDir mount. The exact chart runtime is covered on kind by
+# test-wristband-hooks.
 .PHONY: test-wristband-tools
 test-wristband-tools: build-wristband-tools ## Build, then run the wristband hook key operations in the image
 	$(CONTAINER_TOOL) run --rm --platform $(WRISTBAND_TOOLS_PLATFORM) --user 1001:1001 \

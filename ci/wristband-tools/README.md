@@ -59,9 +59,13 @@ make test-wristband-tools    # build, then run the hook operations as UID 1001
 ```
 
 `test-wristband-tools` runs the image as UID 1001 with a read-only root
-filesystem and a tmpfs `/tmp`, matching the hook securityContext, and repeats
-the key generation, validation and Secret-rendering operations the provisioner
-performs. The Dockerfile also smoke-tests those operations at build time.
+filesystem, like the hook securityContext, but with a tmpfs `/tmp` standing in
+for the chart Job's `HOME=/work` `emptyDir` mount — it is an image-level check,
+not a chart-runtime one. It repeats the key generation, validation and
+Secret-rendering operations the provisioner performs; the Dockerfile also
+smoke-tests those operations at build time. The exact chart runtime (real
+securityContext, `/work` mount, RBAC and hook scripts) is exercised on kind by
+`scripts/test-wristband-hooks.sh`.
 
 ## Konflux
 

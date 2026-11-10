@@ -83,7 +83,7 @@ render() {
 # Extract the hook manifests by name suffix: picks the ServiceAccount, Role,
 # RoleBinding and Job whose metadata.name ends in -wristband-key-<hook>.
 hook_manifests() { # $1: provisioner|cleanup
-  render | yq "select(.metadata.name != null and (.metadata.name | test(\"-wristband-key-${1}\")))"
+  render | yq "select(.metadata.name != null and (.metadata.name | test(\"-wristband-key-${1}$\")))"
 }
 
 # Run one hook Job (RBAC first) and wait for it to finish. Prints "ok" when
