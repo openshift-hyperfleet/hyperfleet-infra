@@ -257,6 +257,9 @@ Every `e2e-<19 digits>` name in `hcm-hyperfleet` belongs to
 | `make ci-tf-env CI_ID=<id>` | Render `envs/gke/ci-<id>.tfvars` and `.tfbackend` for an ephemeral CI cluster from `ci.tfvars.template` and `ci.tfbackend.template` |
 | `make build-ci-tools` | Build the CI tools image (the Prow build root) from `ci/tools/` as `CI_TOOLS_IMAGE` (default `localhost/hyperfleet-infra-tools:dev`), with podman or docker (`CONTAINER_TOOL`) |
 | `make test-ci-tools` | `build-ci-tools`, then run `ci-dry-run` and a terraform init without network access in the image as an arbitrary UID. See [ci/tools/README.md](ci/tools/README.md) |
+| `make build-wristband-tools` | Build the wristband signing-key lifecycle image (the gateway chart's wristband hooks) from `ci/wristband-tools/` as `WRISTBAND_TOOLS_IMAGE` (default `localhost/hyperfleet-infra-wristband-tools:dev`) for `WRISTBAND_TOOLS_PLATFORM` (default: the host platform), versioned with `WRISTBAND_TOOLS_VERSION` (default: `git describe`), with podman or docker (`CONTAINER_TOOL`) |
+| `make test-wristband-tools` | `build-wristband-tools`, then run the hook key operations in the image as UID 1001 with a read-only root filesystem. See [ci/wristband-tools/README.md](ci/wristband-tools/README.md) |
+| `make test-wristband-hooks` | Run the four wristband hook scenarios (creation, preservation, rejection, cleanup) of the `hyperfleet-gateway` chart on the kind cluster of the current kubectl context, in `WRISTBAND_HOOK_TEST_NAMESPACE` (default `wristband-hooks-test`; only namespaces labeled by this script are reused). See [ci/wristband-tools/README.md](ci/wristband-tools/README.md) |
 
 ## Environment Variables
 
