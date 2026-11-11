@@ -86,6 +86,10 @@ hook_manifests() { # $1: provisioner|cleanup
   render | yq "select(.metadata.name != null and (.metadata.name | test(\"-wristband-key-${1}$\")))"
 }
 
+hook_job_name() { # $1: provisioner|cleanup
+  hook_manifests "$1" | yq 'select(.kind == "Job") | .metadata.name'
+}
+
 # Run one hook Job (RBAC first) and wait for it to finish. Prints "ok" when
 # the Job succeeded, "failed" when it failed and "timeout" when it did not
 # finish within 120s; callers map each value to a distinct failure message.
@@ -93,7 +97,7 @@ run_hook() { # $1: provisioner|cleanup
   local hook="$1" job
   kubectl -n "$NAMESPACE" delete jobs --all --ignore-not-found=true >/dev/null 2>&1
   hook_manifests "$hook" | kubectl -n "$NAMESPACE" apply -f - >/dev/null
-  job="$(hook_manifests "$hook" | yq 'select(.kind == "Job") | .metadata.name')"
+  job="$(hook_job_name "$hook")"
   for _ in $(seq 1 60); do
     if kubectl -n "$NAMESPACE" get job "$job" -o jsonpath='{.status.succeeded}' 2>/dev/null | grep -q 1; then
       echo "ok"; return 0
@@ -159,15 +163,35 @@ status="$(run_hook provisioner)"
 pass "existing valid Secret preserved untouched"
 
 # ─── Scenario 3: validation ─────────────────────────────────────────
+# Each case must fail its own check: garbage and PKCS#8 keys die at the
+# PKCS#1 header/parse check, a 2048-bit key passes it and dies at the bit
+# length check. Asserting on the pod log proves the right path rejected,
+# not just that the Job failed — the image's openssl build differs from
+# the legacy Bitnami one, and these are the paths that depend on it.
+reject_key() { # $1: case name, $2: base64 key.pem data, $3: expected log fragment
+  local name="$1" key_b64="$2" want="$3" status log
+  kubectl -n "$NAMESPACE" patch secret "$SECRET_NAME" \
+    --type merge -p "{\"data\":{\"key.pem\":\"${key_b64}\"}}" >/dev/null
+  status="$(run_hook provisioner)"
+  [[ "$status" == "failed" ]] || fail "provisioner did not reject the ${name} key (status: ${status}, want: failed)"
+  log="$(kubectl -n "$NAMESPACE" logs "job/$(hook_job_name provisioner)" 2>/dev/null || true)"
+  grep -qF "$want" <<<"$log" \
+    || fail "provisioner rejected the ${name} key but the pod log lacks the expected error (want: ${want})"
+  [[ "$(secret_key)" == "$key_b64" ]] || fail "invalid Secret was modified (${name} case)"
+  pass "${name} key rejected with the expected error and left unmodified"
+}
+
 echo ""
-echo "Scenario 3: provisioner rejects an invalid Secret without modifying it"
-garbage="$(printf 'not-a-key' | base64)"
-kubectl -n "$NAMESPACE" patch secret "$SECRET_NAME" \
-  --type merge -p "{\"data\":{\"key.pem\":\"${garbage}\"}}" >/dev/null
-status="$(run_hook provisioner)"
-[[ "$status" == "failed" ]] || fail "provisioner did not reject the invalid Secret (status: ${status}, want: failed)"
-[[ "$(secret_key)" == "$garbage" ]] || fail "invalid Secret was modified"
-pass "invalid Secret rejected and left unmodified"
+echo "Scenario 3: provisioner rejects invalid Secrets without modifying them"
+reject_key "garbage" \
+  "$(printf 'not-a-key' | base64 -w0)" \
+  "does not contain a valid PKCS#1 RSA private key"
+reject_key "PKCS#8" \
+  "$(openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 2>/dev/null | base64 -w0)" \
+  "does not contain a valid PKCS#1 RSA private key"
+reject_key "2048-bit" \
+  "$(openssl genrsa -traditional 2048 2>/dev/null | base64 -w0)" \
+  "does not contain a 3072-bit RSA private key"
 
 # ─── Scenario 4: cleanup ────────────────────────────────────────────
 echo ""

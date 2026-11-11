@@ -70,19 +70,21 @@ securityContext, `/work` mount, RBAC and hook scripts) is exercised on kind by
 ## Konflux
 
 The `hyperfleet-infra-wristband-tools` Konflux component builds this directory
-(PipelineRuns in `.tekton/`) for `linux/amd64` — single-platform, like every
-other HyperFleet component (the org's PipelineRuns use `buildah-oci-ta`
-without `build-platforms`) — publishing to
-`quay.io/redhat-user-workloads/hyperfleet-tenant/hyperfleet/hyperfleet-infra-wristband-tools`
+for `linux/amd64` — single-platform, like every other HyperFleet component (the
+org's build pipelines use `buildah-oci-ta` without `build-platforms`) —
+publishing to
+`quay.io/redhat-user-workloads/hyperfleet-tenant/hyperfleet-internal/hyperfleet-infra-wristband-tools`
 and promoting to
-`quay.io/redhat-services-prod/hyperfleet-tenant/hyperfleet/hyperfleet-infra-wristband-tools`
-on release.
+`quay.io/redhat-services-prod/hyperfleet-tenant/hyperfleet-internal/hyperfleet-infra-wristband-tools`
+on release. Konflux generates the PipelineRuns when the component is
+onboarded; they are not kept in this repo.
 
-The component belongs to its own `hyperfleet-infra` Application — not the
+The component belongs to the `hyperfleet-internal` Application — not the
 `hyperfleet` product Application of ADR-0014, whose single auto-release RPA is
-scoped to the service components. The precedent is `hyperfleet-charts`, the
-Application the org uses for chart artifacts. Consequence: promotion requires
-a ReleasePlan and ReleasePlanAdmission for `hyperfleet-infra` that do not
+scoped to the service components. `hyperfleet-internal` is the shared home for
+internal components (the precedent is `hyperfleet-charts`, the Application the
+org uses for chart artifacts). Consequence: promotion requires a ReleasePlan
+and ReleasePlanAdmission for `hyperfleet-internal` that do not
 exist yet and must be created by the Konflux owners when the component is
 registered; until then builds publish to `redhat-user-workloads` but nothing
 is released.
@@ -96,9 +98,14 @@ released.
 
 ## Full hook behavior
 
-Image-level tests cover key creation and validation. The full hook behavior —
-key creation, preservation on upgrade, rejection of invalid existing secrets,
-and cleanup on uninstall — is exercised on a local kind cluster by
-`scripts/test-wristband-hooks.sh`, which renders the gateway chart in
-`EDGE+API` mode with this image, applies the hook resources and checks all
-four scenarios.
+Image-level tests cover key creation and validation. The hook containers'
+behavior when run against a Secret — key creation, preservation of an
+existing valid key, rejection of invalid ones, and cleanup deletion — is
+exercised on a local kind cluster by `scripts/test-wristband-hooks.sh`, which
+renders the gateway chart in `EDGE+API` mode with this image and applies the
+hook resources with kubectl. The `helm.sh/hook` annotations are inert under
+kubectl: what is covered is the containers, RBAC and scripts as shipped, not
+the hook **event wiring** (`pre-install`/`pre-upgrade` for the provisioner,
+the mode-dependent `post-install,post-upgrade,pre-delete` set for the
+cleanup hook) — that only a real `helm install`/`upgrade`/`uninstall` of the
+chart exercises.
