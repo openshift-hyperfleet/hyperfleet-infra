@@ -105,6 +105,16 @@ OCI_SWEEP_DIR        ?= functions/oci-ci-sweep
 CI_TOOLS_DIR         ?= ci/tools
 CI_TOOLS_IMAGE       ?= localhost/hyperfleet-infra-tools:dev
 CI_TOOLS_PLATFORM    ?= linux/amd64
+
+# Wristband signing-key lifecycle image (Konflux-built; see ci/wristband-tools).
+WRISTBAND_TOOLS_DIR     ?= ci/wristband-tools
+WRISTBAND_TOOLS_IMAGE   ?= localhost/hyperfleet-infra-wristband-tools:dev
+# Native platform by default (kind nodes run the host architecture).
+WRISTBAND_TOOLS_PLATFORM ?= linux/$(shell uname -m | sed -e 's/x86_64/amd64/' -e 's/aarch64/arm64/')
+# Scoped name on purpose: a global APP_VERSION would leak through the bare
+# export below into scripts/kind-build-images.sh, which stamps the sibling
+# repos' dev images with it.
+WRISTBAND_TOOLS_VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "0.0.0-dev")
 CONTAINER_TOOL       ?= $(shell command -v podman 2>/dev/null || command -v docker 2>/dev/null)
 
 CLEANER_NAMESPACE    ?= $(NAMESPACE)
@@ -481,6 +491,40 @@ test-ci-tools: build-ci-tools ## Run ci-dry-run, then terraform init without net
 	git archive "$$tree" | $(CONTAINER_TOOL) run -i --rm --platform $(CI_TOOLS_PLATFORM) --user 12345:0 --network none \
 		$(CI_TOOLS_IMAGE) bash -euc 'mkdir /tmp/infra && tar -x -C /tmp/infra && cd /tmp/infra && for dir in $(TF_DIR) $(OCI_TF_DIR); do (cd "$$dir" && terraform init -backend=false && terraform validate); done'; \
 	echo "OK: $(CI_TOOLS_IMAGE) passed ci-dry-run and installed the providers without network access"
+
+# ==== Wristband Tools Image Targets ====
+.PHONY: build-wristband-tools
+build-wristband-tools: check-container-tool ## Build the wristband tools image as WRISTBAND_TOOLS_IMAGE
+	$(CONTAINER_TOOL) build --platform $(WRISTBAND_TOOLS_PLATFORM) --build-arg APP_VERSION='$(WRISTBAND_TOOLS_VERSION)' -t $(WRISTBAND_TOOLS_IMAGE) $(WRISTBAND_TOOLS_DIR)
+
+# test-wristband-tools repeats the provisioner's key operations as UID 1001 on a
+# read-only root filesystem, with a tmpfs /tmp standing in for the chart Job's
+# HOME=/work emptyDir mount. The exact chart runtime is covered on kind by
+# test-wristband-hooks.
+.PHONY: test-wristband-tools
+test-wristband-tools: build-wristband-tools ## Build, then run the wristband hook key operations in the image
+	$(CONTAINER_TOOL) run --rm --platform $(WRISTBAND_TOOLS_PLATFORM) --user 1001:1001 \
+		--read-only --tmpfs /tmp:rw,size=16m \
+		$(WRISTBAND_TOOLS_IMAGE) bash -ec '\
+			umask 077; \
+			key_file=$$(mktemp /tmp/wristband-key.XXXXXX); \
+			encoded_file=$$(mktemp /tmp/wristband-key-encoded.XXXXXX); \
+			trap "rm -f $$key_file $$encoded_file" EXIT HUP INT TERM; \
+			openssl genrsa -traditional -out "$$key_file" 3072 >/dev/null 2>&1; \
+			[[ $$(head -n 1 "$$key_file") == "-----BEGIN RSA PRIVATE KEY-----" ]] || { echo "FAIL: not PKCS#1" >&2; exit 1; }; \
+			base64 "$$key_file" > "$$encoded_file"; \
+			base64 --decode "$$encoded_file" | openssl rsa -check -noout >/dev/null || { echo "FAIL: base64 round-trip or invalid key" >&2; exit 1; }; \
+			key_bits=$$(openssl rsa -in "$$key_file" -noout -text 2>/dev/null | sed -n "s/^Private-Key: (\([0-9][0-9]*\) bit.*/\1/p"); \
+			[[ "$$key_bits" == "3072" ]] || { echo "FAIL: $$key_bits bits, want 3072" >&2; exit 1; }; \
+			kubectl create secret generic wristband-test-key --from-file=key.pem="$$key_file" --dry-run=client -o yaml | grep -q "key.pem: " || { echo "FAIL: secret render" >&2; exit 1; }; \
+			kubectl version --client >/dev/null; \
+			echo "OK: wristband key operations passed as UID 1001 on a read-only filesystem"'
+
+# test-wristband-hooks exercises the gateway chart's wristband hook Jobs on the
+# kind cluster of the current kubectl context (see scripts/test-wristband-hooks.sh).
+.PHONY: test-wristband-hooks
+test-wristband-hooks: check-kubectl-context check-helm check-container-tool ## Run the wristband hook scenarios on the kind cluster (current context)
+	@./scripts/test-wristband-hooks.sh
 
 # ==== Namespace Cleaner Targets ====
 .PHONY: install-cleaner
