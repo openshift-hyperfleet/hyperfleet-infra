@@ -170,10 +170,16 @@ auth:
   # the signing Secret in-cluster before the AuthConfig is installed. The Secret
   # contains key.pem, a traditional PKCS#1 RSA private key required by the
   # pinned Authorino version, and is separate from every TLS private key.
-  # HYPERFLEET-1523 owns any signing-key rotation design; this chart does not
-  # rotate an existing valid key.
+  # The AuthConfig lists the trusted keys and the first one signs. The label
+  # hyperfleet.io/wristband-signing-key only marks the Secrets the hooks may
+  # delete. make rotate-wristband-key manages the list.
   wristband:
+    # Name of the key created on a fresh install. Rotated keys get new names
+    # because the name is the JWT key ID.
     signingKeySecretName: hyperfleet-wristband-signing-key
+    # Set only by make rotate-wristband-key, signer first. Empty keeps the keys
+    # the AuthConfig already lists.
+    signingKeys: []
     audience: hyperfleet-api
     tokenDuration: 300
     lifecycle:

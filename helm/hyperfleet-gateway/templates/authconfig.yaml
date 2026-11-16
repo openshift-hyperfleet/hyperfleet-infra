@@ -137,8 +137,10 @@ spec:
             issuer: {{ include "hyperfleet-gateway.wristbandIssuer" . | quote }}
             tokenDuration: {{ .Values.auth.wristband.tokenDuration }}
             signingKeyRefs:
-              - name: {{ .Values.auth.wristband.signingKeySecretName }}
+              {{- range include "hyperfleet-gateway.wristbandSigningKeys" . | fromJsonArray }}
+              - name: {{ . | quote }}
                 algorithm: RS256
+              {{- end }}
             customClaims:
               aud:
                 value: {{ .Values.auth.wristband.audience | quote }}

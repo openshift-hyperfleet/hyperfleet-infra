@@ -104,6 +104,9 @@ With `EXT_AUTHZ_ENABLED=true`, the `hyperfleet-gateway` chart renders `Authorino
 
 **OIDC defaults to mock in E2E environments.** `e2e-gcp` and `e2e-kind` use the namespace-local mock issuer; `gcp` and `kind` default to an external issuer. Set `OIDC_ISSUER_URL` for authenticated external deployments. Set `OIDC_ISSUER_MODE` explicitly to override an environment default. Authenticated mock deployments emit a Helmfile warning; its in-memory signing keys are replaced on issuer rollout, invalidating minted tokens. **Never use mock mode in production.** Direct human OIDC with `AUTH_MODE=API` also needs `OIDC_JWKS_URL`.
 
+**Never change a wristband signing key in place.**
+The JWT key ID is the Secret name, and the API caches keys by key ID. `make rotate-wristband-key` creates a new Secret instead. The gateway chart renders `signingKeyRefs` from `auth.wristband.signingKeys` (set only by the make target), else with `lookup` from the live AuthConfig, so `helm template` always shows only the default key. The label `hyperfleet.io/wristband-signing-key` only marks the Secrets the cleanup hooks may delete.
+
 **Terraform state locking is always disabled.**
 `install-terraform` and `destroy-terraform` pass `-lock=false`. If an apply left a `terraform/errored.tfstate`, resolve it before re-running.
 

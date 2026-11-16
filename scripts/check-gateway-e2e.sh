@@ -36,13 +36,16 @@ owner_token=""
 owner_token_minted=0
 restore_onprem=false
 mint_log=""
+# The background wristband key rotation and its output file.
+rotation_pid=""
+rotation_output=""
 # The check running now, with a fix to print if it fails.
 current_check=""
 current_hint=""
 passed=0
 
 usage() {
-    echo "usage: $0 {human|current-model|full}" >&2
+    echo "usage: $0 {human|current-model|full|rotation}" >&2
 }
 
 error() {
@@ -122,11 +125,14 @@ configure_model() {
 
 validate_inputs() {
     case "$PHASE" in
-        human|current-model|full) ;;
+        human|current-model|full|rotation) ;;
         *) usage; exit 1 ;;
     esac
     if [[ "$PHASE" == "full" && "$HELMFILE_ENV" != "kind" ]]; then
         fail "full requires HELMFILE_ENV=kind because it verifies Cilium NetworkPolicy enforcement"
+    fi
+    if [[ "$PHASE" == "rotation" && "$AUTH_MODE" != "EDGE+API" ]]; then
+        fail "rotation requires AUTH_MODE=EDGE+API because only it issues wristbands"
     fi
     require_command kubectl
     require_command jq
@@ -306,6 +312,7 @@ cleanup_resources() {
     kubectl delete pod --namespace "$NAMESPACE" -l "$pod_labels" \
         --ignore-not-found --wait=false >/dev/null 2>&1 || rc=1
     rm -f "$mint_log"
+    [[ -z "$rotation_output" ]] || rm -f "$rotation_output"
     return "$rc"
 }
 
@@ -356,6 +363,16 @@ on_exit() {
     if (( rc != 0 )); then
         printf 'FAIL  %s  %s\n' "$TENANT_MODEL" "$current_check"
         [[ -z "$current_hint" ]] || printf '      Fix: %s\n' "$current_hint"
+    fi
+    # Stopping the rotation midway could leave the gateway release stuck in
+    # pending-upgrade, so let it finish instead of outliving the suite.
+    if [[ -n "$rotation_pid" ]]; then
+        echo "Waiting for the background wristband key rotation to finish..." >&2
+        wait "$rotation_pid" || {
+            cat "$rotation_output" >&2
+            error "wristband key rotation failed: rerun make rotate-wristband-key"
+            rc=1
+        }
     fi
     cleanup_resources || {
         error "cleanup failed: delete leftover hf-gateway-e2e-* pods and Clusters by hand"
@@ -536,6 +553,78 @@ run_full() {
     run_current_model
 }
 
+signing_keys() {
+    kubectl get authconfig hyperfleet-tenant-policy --namespace "$NAMESPACE" \
+        -o jsonpath='{.spec.response.success.dynamicMetadata.wristband.wristband.signingKeyRefs[*].name}'
+}
+
+jwks_key_ids() {
+    kubectl get --raw "/api/v1/namespaces/${NAMESPACE}/services/https:authorino-authorino-oidc:8083/proxy/${NAMESPACE}/hyperfleet-tenant-policy/wristband/.well-known/openid-connect/certs" \
+        | jq -r '[.keys[].kid] | join(" ")'
+}
+
+# Require that the rotation left exactly one key, a new one, that Authorino
+# publishes only it, and that every key it replaced is deleted.
+assert_rotated() {
+    local before="$1" after="$2" key
+    [[ -n "$after" && "$after" != *" "* ]] || fail "AuthConfig signs with '$after', expected one key"
+    [[ " $before " != *" $after "* ]] || fail "AuthConfig still signs with $after, a key from before the rotation"
+    [[ "$(jwks_key_ids)" == "$after" ]] || fail "Authorino publishes '$(jwks_key_ids)', expected only $after"
+    for key in $before; do
+        ! kubectl get secret "$key" --namespace "$NAMESPACE" >/dev/null 2>&1 \
+            || fail "replaced signing key Secret $key was not deleted"
+    done
+    [[ "$(kubectl get secret --namespace "$NAMESPACE" -l hyperfleet.io/wristband-signing-key -o name)" == "secret/$after" ]] \
+        || fail "signing key Secrets other than $after remain"
+}
+
+# A rotation without REVOKE must not fail a single request, so the requests
+# run one after another for as long as the rotation runs, including its wait
+# for old wristbands to expire.
+run_rotation() {
+    local before after output response status requests=0 failures=0 rotation_rc=0
+    set_owner "hf-gateway-e2e-rotation-${run_id}@example.com" "$tenant_a" ""
+
+    check "wristband signing key rotates without a failed request"
+    before=$(signing_keys)
+    rotation_output=$(mktemp)
+    make -C "$REPO_ROOT" --no-print-directory rotate-wristband-key REVOKE=false >"$rotation_output" 2>&1 &
+    rotation_pid=$!
+    while kill -0 "$rotation_pid" 2>/dev/null; do
+        refresh_owner_token || fail "could not mint a token during the rotation"
+        status="error"
+        response=$(api_request GET "${api_path}/clusters" Bearer "$owner_token") \
+            && status=$(response_status "$response")
+        requests=$((requests + 1))
+        [[ "$status" == "200" ]] || failures=$((failures + 1))
+    done
+    wait "$rotation_pid" || rotation_rc=$?
+    rotation_pid=""
+    (( rotation_rc == 0 )) || { cat "$rotation_output" >&2; fail "make rotate-wristband-key failed"; }
+    (( failures == 0 )) || fail "$failures of $requests requests failed during the rotation"
+    after=$(signing_keys)
+    assert_rotated "$before" "$after"
+    pass
+
+    # sync always upgrades, so the chart re-renders the keys from the live
+    # AuthConfig without the rotation's one-off value.
+    check "a gateway redeploy keeps the rotated key"
+    output=$(helmfile -f "$REPO_ROOT/helmfile/helmfile.yaml.gotmpl" -e "$HELMFILE_ENV" \
+        -l component=gateway sync 2>&1) || { printf '%s\n' "$output" >&2; fail "gateway sync failed"; }
+    [[ "$(signing_keys)" == "$after" ]] || fail "gateway redeploy changed the signing keys to '$(signing_keys)', expected $after"
+    pass
+
+    check "revoked wristband signing key is replaced at once and requests succeed"
+    before="$after"
+    output=$(make -C "$REPO_ROOT" --no-print-directory rotate-wristband-key REVOKE=true 2>&1) \
+        || { printf '%s\n' "$output" >&2; fail "make rotate-wristband-key REVOKE=true failed"; }
+    assert_rotated "$before" "$(signing_keys)"
+    refresh_owner_token || fail "could not mint a token after the revocation"
+    response=$(api_request GET "${api_path}/clusters" Bearer "$owner_token")
+    require_status "$response" 200 "request after the revocation"
+    pass
+}
+
 validate_inputs
 # mint-human-token.sh reads these from the environment.
 export NAMESPACE AUTH_MODE OIDC_ISSUER_MODE TENANT_MODEL
@@ -553,4 +642,5 @@ case "$PHASE" in
     human) run_human_phase ;;
     current-model) run_current_model ;;
     full) run_full ;;
+    rotation) run_rotation ;;
 esac

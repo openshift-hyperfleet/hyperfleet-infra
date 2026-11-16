@@ -91,6 +91,14 @@
           "additionalProperties": false,
           "properties": {
             "signingKeySecretName": { "type": "string", "minLength": 1 },
+            "signingKeys": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "maxLength": 253,
+                "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+              }
+            },
             "audience": { "type": "string", "minLength": 1 },
             "tokenDuration": { "type": "integer", "minimum": 1 },
             "lifecycle": {
