@@ -614,8 +614,10 @@ run_rotation() {
     [[ "$(signing_keys)" == "$after" ]] || fail "gateway redeploy changed the signing keys to '$(signing_keys)', expected $after"
     pass
 
-    check "revoked wristband signing key is replaced at once and requests succeed"
+    check "revoked unlabeled wristband signing key is replaced at once and requests succeed"
     before="$after"
+    # A key from a deployment before keys were labeled has no label.
+    kubectl label secret "$before" --namespace "$NAMESPACE" hyperfleet.io/wristband-signing-key- >/dev/null
     output=$(make -C "$REPO_ROOT" --no-print-directory rotate-wristband-key REVOKE=true 2>&1) \
         || { printf '%s\n' "$output" >&2; fail "make rotate-wristband-key REVOKE=true failed"; }
     assert_rotated "$before" "$(signing_keys)"

@@ -80,6 +80,13 @@ gateway_sync() {
 }
 
 echo "Rotating wristband signing key ${old_keys[*]} -> ${new_key} (REVOKE=${REVOKE})"
+# The sweep deletes by label and REVOKE=true never lists the old keys, so label
+# them here. A key from before keys were labeled has none; a rolled-back
+# AuthConfig can name a Secret that is gone.
+for key in "${old_keys[@]}"; do
+    [[ -z "$(kubectl get secret "$key" --namespace "$NAMESPACE" --ignore-not-found -o name)" ]] \
+        || kubectl label secret "$key" --namespace "$NAMESPACE" hyperfleet.io/wristband-signing-key=true --overwrite >/dev/null
+done
 if [[ "$REVOKE" == "false" ]]; then
     gateway_sync "$new_key" "${old_keys[@]}"
     wait_for_jwks "$new_key" "${old_keys[@]}"

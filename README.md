@@ -596,10 +596,8 @@ deletes any labeled Secret the AuthConfig does not list.
 
 `helm rollback` of the gateway release to a revision before a completed
 rotation is not supported. The restored AuthConfig names a deleted Secret, and
-the gateway denies every request. Run `make install-gateway` to render the
-current keys again. Rolling back to a previous key is not supported: a completed
-rotation deletes the old Secret. Rotating again issues a new key and revokes the
-current one.
+the gateway denies every request. Rolling back to a previous key is not supported: a completed
+rotation deletes the old Secret.
 
 #### Machine tokens and TokenReview smoke checks
 
