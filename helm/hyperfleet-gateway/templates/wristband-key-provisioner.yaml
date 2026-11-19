@@ -1,9 +1,10 @@
 {{- if eq .Values.auth.mode "EDGE+API" }}
 {{- $name := include "hyperfleet-gateway.wristbandProvisionerName" . }}
-{{- $secretName := .Values.auth.wristband.signingKeySecretName }}
+{{- $keys := include "hyperfleet-gateway.wristbandSigningKeys" . | fromJsonArray }}
 # This pre-install/upgrade hook completes before Helm installs or updates the
 # AuthConfig, so Authorino never receives the wristband configuration without
-# its signing key. All hook objects are deleted after a successful run.
+# its signing keys. It labels every key it creates or keeps, which is what the
+# sweep deletes by. All hook objects are deleted after a successful run.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -29,8 +30,8 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: ["secrets"]
-    resourceNames: [{{ $secretName | quote }}]
-    verbs: ["get"]
+    resourceNames: {{ toJson $keys }}
+    verbs: ["get", "patch"]
   # Kubernetes RBAC cannot restrict create by resourceName because the object
   # does not exist yet. This is the only unrestricted verb granted to the Job.
   - apiGroups: [""]
@@ -101,7 +102,7 @@ spec:
             - /bin/bash
             - -ec
             - |
-              secret_name={{ $secretName | quote }}
+              signer={{ first $keys | quote }}
               work_dir=/work
               umask 077
               key_file=$(mktemp "${work_dir}/wristband-key.XXXXXX")
@@ -136,33 +137,51 @@ spec:
                 fi
               }
 
-              if kubectl get secret "${secret_name}" >/dev/null 2>&1; then
-                validate_existing_secret
-                echo "OK: preserving valid wristband signing Secret ${secret_name}"
-                exit 0
-              fi
+              provision_key() {
+                if kubectl get secret "${secret_name}" >/dev/null 2>&1; then
+                  validate_existing_secret
+                  # Adopts a key created before keys were labeled.
+                  kubectl label secret "${secret_name}" hyperfleet.io/wristband-signing-key=true --overwrite >/dev/null
+                  echo "OK: preserving valid wristband signing Secret ${secret_name}"
+                  return
+                fi
 
-              openssl genrsa -traditional -out "${key_file}" 3072 >/dev/null 2>&1
-              if [[ $(head -n 1 "${key_file}") != "-----BEGIN RSA PRIVATE KEY-----" ]]; then
-                echo "ERROR: generated wristband key is not a PKCS#1 RSA private key" >&2
-                exit 1
-              fi
+                # The Secret name is the key ID, so only the new signer may be
+                # generated. Recreating an older key would reuse its key ID.
+                if [[ "${secret_name}" != "${signer}" ]]; then
+                  echo "ERROR: verification key Secret ${secret_name} is missing; it was not recreated" >&2
+                  return 1
+                fi
 
-              if kubectl create secret generic "${secret_name}" --from-file=key.pem="${key_file}"; then
-                validate_existing_secret
-                echo "OK: created wristband signing Secret ${secret_name}"
-                exit 0
-              fi
+                openssl genrsa -traditional -out "${key_file}" 3072 >/dev/null 2>&1
+                if [[ $(head -n 1 "${key_file}") != "-----BEGIN RSA PRIVATE KEY-----" ]]; then
+                  echo "ERROR: generated wristband key is not a PKCS#1 RSA private key" >&2
+                  return 1
+                fi
 
-              # A concurrent Helm release may have won the create race. Only
-              # accept that winner after validating it without modifying it.
-              if kubectl get secret "${secret_name}" >/dev/null 2>&1; then
-                validate_existing_secret
-                echo "OK: preserving concurrently created wristband signing Secret ${secret_name}"
-                exit 0
-              fi
-              echo "ERROR: failed to create wristband signing Secret ${secret_name}" >&2
-              exit 1
+                # Labeled at creation, so a stop cannot leave a key the sweep never finds.
+                if kubectl create secret generic "${secret_name}" --from-file=key.pem="${key_file}" --dry-run=client -o yaml \
+                    | kubectl label --local -f - hyperfleet.io/wristband-signing-key=true -o yaml \
+                    | kubectl create -f -; then
+                  validate_existing_secret
+                  echo "OK: created wristband signing Secret ${secret_name}"
+                  return
+                fi
+
+                # A concurrent Helm release may have won the create race. Only
+                # accept that winner after validating it without modifying it.
+                if kubectl get secret "${secret_name}" >/dev/null 2>&1; then
+                  validate_existing_secret
+                  echo "OK: preserving concurrently created wristband signing Secret ${secret_name}"
+                  return
+                fi
+                echo "ERROR: failed to create wristband signing Secret ${secret_name}" >&2
+                return 1
+              }
+
+              for secret_name in{{ range $keys }} {{ . | quote }}{{ end }}; do
+                provision_key
+              done
           resources:
             {{- toYaml .Values.auth.wristband.lifecycle.resources | nindent 12 }}
           volumeMounts:

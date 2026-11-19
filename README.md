@@ -137,10 +137,12 @@ Configuration precedence (highest to lowest):
 | `make install-authorino-operator` | Install the pinned Kuadrant Authorino operator (cluster-wide; prerequisite for gateway ext_authz) |
 | `make uninstall-authorino-operator` | Uninstall the Authorino operator |
 | `make switch-tenant-model` | Switch the active tenant model (`TENANT_MODEL=onprem\|oracle`); re-applies the gateway AuthConfig and API together |
+| `make rotate-wristband-key` | Rotate the `EDGE+API` wristband signing key; `REVOKE=true` drops the old key without the overlap wait |
 | `make mint-human-token` | Mint a test-only JWT from the mock issuer (API, EDGE, or EDGE+API) |
 | `make mint-machine-token` | Mint a short-lived ServiceAccount JWT for API or gateway authentication |
 | `make check-human-token` | Verify human JWT tenant propagation, audience enforcement, and missing-claim denial |
 | `make check-gateway-e2e` | Run the full kind gateway identity, lifecycle, tenant-isolation, and NetworkPolicy suite |
+| `make check-wristband-rotation` | Rotate and then revoke the wristband signing key while checking that requests keep working |
 
 When `AUTH_MODE=EDGE` or `AUTH_MODE=EDGE+API`, `make install-hyperfleet` installs the Authorino
 operator automatically before deploying, so `install-authorino-operator` only
@@ -553,6 +555,53 @@ wristband against Authorino's OIDC endpoint using the namespace-local gateway
 CA. The API never accepts the original human or ServiceAccount credentials in
 this mode.
 
+#### Rotate the wristband signing key
+
+Run the target with the same variables you deployed with, because it
+redeploys the gateway release:
+
+```bash
+HELMFILE_ENV=kind make rotate-wristband-key              # overlap, about 6 minutes
+HELMFILE_ENV=kind make rotate-wristband-key REVOKE=true  # compromised key
+```
+
+Authorino signs with the first key in the AuthConfig and publishes every key
+in its JWKS. The JWT key ID is the Secret name, so every rotation creates a new
+Secret, `hyperfleet-wristband-signing-key-<UTC timestamp>`, in-cluster through
+the gateway chart's provisioner hook.
+
+- Without `REVOKE`, the AuthConfig goes from `[old]` to `[new, old]`. The
+  target waits until Authorino publishes both keys, then the wristband
+  `tokenDuration` plus the API's 30-second leeway (330 seconds), then drops the
+  old key. No request fails: the API fetches the JWKS again when it sees an
+  unknown key ID.
+- With `REVOKE=true`, the AuthConfig goes from `[old]` to `[new]` at once.
+  Requests in flight with an old wristband can fail. The API stops trusting the
+  old key at its next JWKS refresh: the first request with the new key, or at
+  most 5 minutes later.
+
+The AuthConfig is the state: it lists the trusted keys and its first entry
+signs. The target passes the new key list to the gateway chart, and a plain
+`make install-gateway` keeps whatever the AuthConfig already lists. The chart's
+provisioner hook creates the new Secret, labeled
+`hyperfleet.io/wristband-signing-key=true`, before the AuthConfig changes. After
+an upgrade, a sweep hook deletes the labeled Secrets the AuthConfig no longer
+lists.
+
+If the target stops early, run it again. A rerun issues another key and ends
+with only that key. After a stop with `REVOKE=true`, requests with old
+wristbands can fail until a run completes. Any labeled Secret that a stopped
+run left behind is deleted by the next gateway deploy.
+
+The AuthConfig decides trust, so the right to edit it, like cluster-admin, is an
+authentication-boundary privilege. The label only scopes deletion: the sweep
+deletes any labeled Secret the AuthConfig does not list.
+
+`helm rollback` of the gateway release to a revision before a completed
+rotation is not supported. The restored AuthConfig names a deleted Secret, and
+the gateway denies every request. Rolling back to a previous key is not supported: a completed
+rotation deletes the old Secret.
+
 #### Machine tokens and TokenReview smoke checks
 
 `make mint-machine-token` requests a short-lived TokenRequest API JWT for a
@@ -595,6 +644,13 @@ the failing check with a suggested fix.
 
 `make check-human-token` runs only the human token checks.
 `GATEWAY_E2E_TIMEOUT` (default 300 seconds) bounds each wait.
+
+`make check-wristband-rotation` needs the same deployment with
+`AUTH_MODE=EDGE+API`, which is the default. It is not part of
+`check-gateway-e2e` because it takes about 8 minutes. It rotates the key while
+it sends one request after another and requires that none fails. It then
+redeploys the gateway and checks that the rotated key stays, and finally
+revokes the key.
 
 ### Desire delivery
 

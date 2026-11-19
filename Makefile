@@ -1,9 +1,10 @@
 
 .DEFAULT_GOAL := help
 
-# check-gateway-e2e only runs against a kind deployment with mock OIDC and
-# tenant isolation, so it defaults to that setup instead of gcp.
-ifeq ($(MAKECMDGOALS),check-gateway-e2e)
+# check-gateway-e2e and check-wristband-rotation only run against a kind
+# deployment with mock OIDC and tenant isolation, so they default to that setup
+# instead of gcp.
+ifneq ($(filter check-gateway-e2e check-wristband-rotation,$(MAKECMDGOALS)),)
 HELMFILE_ENV ?= kind
 OIDC_ISSUER_MODE ?= mock
 TENANT_ISOLATION_ENABLED ?= true
@@ -347,6 +348,10 @@ check-human-token: check-kubectl-context check-jq ## Check mock human JWT tenant
 check-gateway-e2e: check-kubectl-context check-jq ## Run the full kind gateway identity, lifecycle, tenant-isolation, and NetworkPolicy suite
 	@./scripts/check-gateway-e2e.sh full
 
+.PHONY: check-wristband-rotation
+check-wristband-rotation: check-kubectl-context check-jq ## Rotate and then revoke the wristband signing key while checking that requests keep working
+	@./scripts/check-gateway-e2e.sh rotation
+
 # ==== RabbitMQ Components ====
 .PHONY: generate-rabbitmq-values
 generate-rabbitmq-values: ## Generate Helm values for RabbitMQ deployments (HELMFILE_ENV=kind only)
@@ -395,6 +400,10 @@ switch-tenant-model: validate-helmfile-config maybe-install-authorino-operator #
 	helmfile -f helmfile/helmfile.yaml.gotmpl -e $(HELMFILE_ENV) -l component=gateway apply
 	helmfile -f helmfile/helmfile.yaml.gotmpl -e $(HELMFILE_ENV) -l component=api apply
 	@echo "OK: tenant model switched to '$(TENANT_MODEL)' (same AuthConfig name replaces the policy; old-model tokens are rejected at the gateway)"
+
+.PHONY: rotate-wristband-key
+rotate-wristband-key: validate-helmfile-config check-jq ## Rotate the EDGE+API wristband signing key; REVOKE=true drops the old key without waiting
+	@./scripts/rotate-wristband-key.sh
 
 .PHONY: install-api
 install-api: install-gateway ## Install HyperFleet API with its gateway prerequisite

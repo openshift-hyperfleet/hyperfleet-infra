@@ -22,7 +22,7 @@ render_gateway() {
         --set-string 'auth.identityProviders[0].audience=hyperfleet-api' \
         --set-string 'auth.identityProviders[1].name=partner' \
         --set-string 'auth.identityProviders[1].issuerUrl=https://partner-issuer.invalid/oidc' \
-        --set-string 'auth.identityProviders[1].audience=hyperfleet-partner-api' 2>&1
+        --set-string 'auth.identityProviders[1].audience=hyperfleet-partner-api' "${@:2}" 2>&1
 }
 
 assert_contains() {
@@ -191,6 +191,10 @@ for mode in NONE EDGE API EDGE+API; do
             'EDGE+API: uninstall signing-key cleanup hook missing'
         assert_not_contains "$out" '"helm.sh/hook": "post-install,post-upgrade,pre-delete"' \
             'EDGE+API: cleanup must not delete a still-required signing key during upgrade'
+        assert_contains "$out" "kubectl label secret \"\${secret_name}\" hyperfleet.io/wristband-signing-key=true --overwrite" \
+            'EDGE+API: provisioner must label an existing signing key it keeps'
+        assert_contains "$out" 'kubectl label --local -f - hyperfleet.io/wristband-signing-key=true' \
+            'EDGE+API: provisioner must label a new signing key when it creates it'
         assert_filter_order "$out" \
             'wristband Lua filter must be between ext_authz and router' \
             'name: envoy.filters.http.ext_authz' \
@@ -201,10 +205,36 @@ for mode in NONE EDGE API EDGE+API; do
             "($mode): wristband Lua unexpectedly rendered"
         assert_not_contains "$out" 'wristband-key-provisioner' \
             "($mode): wristband provisioner unexpectedly rendered"
-        assert_contains "$out" "kubectl delete secret \"\${secret_name}\" --ignore-not-found=true" \
-            "($mode): stale wristband signing-key cleanup missing"
+        assert_not_contains "$out" 'name: gw-hyperfleet-gateway-wristband-key-' \
+            "($mode): wristband key Jobs unexpectedly rendered without labeled keys"
     fi
 done
+
+# helm template has no cluster, so lookup finds no live AuthConfig and no
+# labeled keys: the cleanup sweep and the AuthConfig fallback need a cluster,
+# and make check-wristband-rotation covers them.
+old_key=hyperfleet-wristband-signing-key
+new_key=hyperfleet-wristband-signing-key-20990101000000
+if ! out=$(render_gateway EDGE+API --set "auth.wristband.signingKeys={$new_key,$old_key}"); then
+    echo "ERROR: render failed with wristband signing keys" >&2
+    echo "$out" >&2
+    exit 1
+fi
+signing_key_refs=$(awk '/signingKeyRefs:/ { refs = 1; next }
+    refs && /- name:/ { print $3 }
+    refs && /customClaims:/ { exit }' <<<"$out" | paste -sd ' ' -)
+[[ "$signing_key_refs" == "\"$new_key\" \"$old_key\"" ]] || {
+    echo "ERROR: EDGE+API: signingKeyRefs is [$signing_key_refs], expected [\"$new_key\" \"$old_key\"]" >&2
+    exit 1
+}
+assert_contains "$out" "signer=\"$new_key\"" \
+    'EDGE+API: provisioner must create the new wristband key'
+assert_contains "$out" "resourceNames: \[\"$new_key\",\"$old_key\"\]" \
+    'EDGE+API: signing-key RBAC must name both wristband keys'
+if render_gateway EDGE+API --set 'auth.wristband.signingKeys={Bad_Key}' >/dev/null 2>&1; then
+    echo "ERROR: invalid wristband signing key name was accepted" >&2
+    exit 1
+fi
 
 if helm template gw "$GATEWAY_CHART" --set-string auth.mode=INVALID >/dev/null 2>&1; then
     echo "ERROR: invalid AUTH_MODE was accepted" >&2

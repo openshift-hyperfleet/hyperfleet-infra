@@ -1,20 +1,26 @@
-{{- $name := include "hyperfleet-gateway.wristbandCleanupName" . }}
-{{- $secretName := .Values.auth.wristband.signingKeySecretName }}
-{{- $hookEvents := "pre-delete" }}
-{{- if ne .Values.auth.mode "EDGE+API" }}
-{{- $hookEvents = "post-install,post-upgrade,pre-delete" }}
+{{- $stale := include "hyperfleet-gateway.wristbandStaleKeys" . | fromJsonArray }}
+{{- $jobs := list }}
+{{- if $stale }}
+{{- $jobs = append $jobs (dict "name" (include "hyperfleet-gateway.wristbandSweepName" .) "events" "post-install,post-upgrade" "keys" $stale) }}
 {{- end }}
-# The post-install/upgrade events remove a key only after an EDGE+API AuthConfig
-# has been replaced or removed. pre-delete covers uninstall of a release whose
-# last mode was EDGE+API. This Job deliberately does not wait for Authorino.
+{{- if eq .Values.auth.mode "EDGE+API" }}
+{{- $jobs = append $jobs (dict "name" (include "hyperfleet-gateway.wristbandCleanupName" .) "events" "pre-delete" "keys" (concat (include "hyperfleet-gateway.wristbandSigningKeys" . | fromJsonArray) $stale | uniq)) }}
+{{- end }}
+# The sweep deletes the labeled keys the AuthConfig no longer lists, so it also
+# removes the keys of a deployment that left EDGE+API. The pre-delete Job covers
+# uninstall of an EDGE+API release. Neither waits for Authorino.
+{{- range $i, $job := $jobs }}
+{{- if $i }}
+---
+{{- end }}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: {{ $name }}
+  name: {{ $job.name }}
   labels:
-    {{- include "hyperfleet-gateway.labels" . | nindent 4 }}
+    {{- include "hyperfleet-gateway.labels" $ | nindent 4 }}
   annotations:
-    "helm.sh/hook": {{ $hookEvents | quote }}
+    "helm.sh/hook": {{ $job.events | quote }}
     "helm.sh/hook-weight": "-3"
     "helm.sh/hook-delete-policy": "before-hook-creation,hook-succeeded"
 automountServiceAccountToken: false
@@ -22,46 +28,46 @@ automountServiceAccountToken: false
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: {{ $name }}
+  name: {{ $job.name }}
   labels:
-    {{- include "hyperfleet-gateway.labels" . | nindent 4 }}
+    {{- include "hyperfleet-gateway.labels" $ | nindent 4 }}
   annotations:
-    "helm.sh/hook": {{ $hookEvents | quote }}
+    "helm.sh/hook": {{ $job.events | quote }}
     "helm.sh/hook-weight": "-2"
     "helm.sh/hook-delete-policy": "before-hook-creation,hook-succeeded"
 rules:
   - apiGroups: [""]
     resources: ["secrets"]
-    resourceNames: [{{ $secretName | quote }}]
+    resourceNames: {{ toJson $job.keys }}
     verbs: ["delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: {{ $name }}
+  name: {{ $job.name }}
   labels:
-    {{- include "hyperfleet-gateway.labels" . | nindent 4 }}
+    {{- include "hyperfleet-gateway.labels" $ | nindent 4 }}
   annotations:
-    "helm.sh/hook": {{ $hookEvents | quote }}
+    "helm.sh/hook": {{ $job.events | quote }}
     "helm.sh/hook-weight": "-1"
     "helm.sh/hook-delete-policy": "before-hook-creation,hook-succeeded"
 subjects:
   - kind: ServiceAccount
-    name: {{ $name }}
-    namespace: {{ .Release.Namespace }}
+    name: {{ $job.name }}
+    namespace: {{ $.Release.Namespace }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: {{ $name }}
+  name: {{ $job.name }}
 ---
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: {{ $name }}
+  name: {{ $job.name }}
   labels:
-    {{- include "hyperfleet-gateway.labels" . | nindent 4 }}
+    {{- include "hyperfleet-gateway.labels" $ | nindent 4 }}
   annotations:
-    "helm.sh/hook": {{ $hookEvents | quote }}
+    "helm.sh/hook": {{ $job.events | quote }}
     "helm.sh/hook-weight": "0"
     "helm.sh/hook-delete-policy": "before-hook-creation,hook-succeeded"
 spec:
@@ -71,9 +77,9 @@ spec:
   template:
     metadata:
       labels:
-        {{- include "hyperfleet-gateway.labels" . | nindent 8 }}
+        {{- include "hyperfleet-gateway.labels" $ | nindent 8 }}
     spec:
-      serviceAccountName: {{ $name }}
+      serviceAccountName: {{ $job.name }}
       automountServiceAccountToken: true
       restartPolicy: Never
       securityContext:
@@ -85,8 +91,8 @@ spec:
           type: RuntimeDefault
       containers:
         - name: cleanup-signing-key
-          image: {{ .Values.auth.wristband.lifecycle.image | quote }}
-          imagePullPolicy: {{ .Values.auth.wristband.lifecycle.pullPolicy }}
+          image: {{ $.Values.auth.wristband.lifecycle.image | quote }}
+          imagePullPolicy: {{ $.Values.auth.wristband.lifecycle.pullPolicy }}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -99,13 +105,13 @@ spec:
             - /bin/bash
             - -ec
             - |
-              secret_name={{ $secretName | quote }}
-              kubectl delete secret "${secret_name}" --ignore-not-found=true
+              kubectl delete secret{{ range $job.keys }} {{ . | quote }}{{ end }} --ignore-not-found=true
           resources:
-            {{- toYaml .Values.auth.wristband.lifecycle.resources | nindent 12 }}
+            {{- toYaml $.Values.auth.wristband.lifecycle.resources | nindent 12 }}
           volumeMounts:
             - name: work
               mountPath: /work
       volumes:
         - name: work
           emptyDir: {}
+{{- end }}

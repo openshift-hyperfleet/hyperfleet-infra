@@ -80,6 +80,46 @@ hyperfleet-gateway-ca-cert
 {{- printf "%s-wristband-key-cleanup" (include "hyperfleet-gateway.fullname" . | trunc 42) | trunc 63 | trimSuffix "-" -}}
 {{- end }}
 
+{{- define "hyperfleet-gateway.wristbandSweepName" -}}
+{{- printf "%s-wristband-key-sweep" (include "hyperfleet-gateway.fullname" . | trunc 45) | trunc 63 | trimSuffix "-" -}}
+{{- end }}
+
+{{/*
+JSON list of wristband signing Secret names, signer first. Authorino signs with
+the first key and publishes all of them. make rotate-wristband-key sets
+auth.wristband.signingKeys. Without it the list is what the live AuthConfig
+already has, so a plain deploy keeps a rotated key. A fresh install (or helm
+template, where lookup returns nothing) gets signingKeySecretName.
+*/}}
+{{- define "hyperfleet-gateway.wristbandSigningKeys" -}}
+{{- $keys := .Values.auth.wristband.signingKeys -}}
+{{- if not $keys -}}
+{{- $live := lookup "authorino.kuadrant.io/v1beta3" "AuthConfig" .Release.Namespace "hyperfleet-tenant-policy" -}}
+{{- range dig "spec" "response" "success" "dynamicMetadata" "wristband" "wristband" "signingKeyRefs" (list) $live -}}
+{{- $keys = append $keys .name -}}
+{{- end -}}
+{{- end -}}
+{{- if not $keys -}}
+{{- $keys = list .Values.auth.wristband.signingKeySecretName -}}
+{{- end -}}
+{{- toJson $keys -}}
+{{- end }}
+
+{{/* JSON list of labeled signing Secrets the AuthConfig will not list, which a hook may delete. */}}
+{{- define "hyperfleet-gateway.wristbandStaleKeys" -}}
+{{- $keep := list -}}
+{{- if eq .Values.auth.mode "EDGE+API" -}}
+{{- $keep = include "hyperfleet-gateway.wristbandSigningKeys" . | fromJsonArray -}}
+{{- end -}}
+{{- $stale := list -}}
+{{- range (lookup "v1" "Secret" .Release.Namespace "").items -}}
+{{- if and (hasKey (.metadata.labels | default dict) "hyperfleet.io/wristband-signing-key") (not (has .metadata.name $keep)) -}}
+{{- $stale = append $stale .metadata.name -}}
+{{- end -}}
+{{- end -}}
+{{- toJson $stale -}}
+{{- end }}
+
 {{/*
 Create the name of the ServiceAccount to use.
 */}}
