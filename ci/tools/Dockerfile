@@ -12,8 +12,8 @@ SHELL ["/bin/bash", "-o", "errexit", "-o", "nounset", "-o", "pipefail", "-c"]
 RUN dnf install -y git make jq diffutils unzip xz \
     && dnf clean all && rm -rf /var/cache/dnf
 
-ARG TERRAFORM_VERSION=1.9.8
-ARG TERRAFORM_SHA256=186e0145f5e5f2eb97cbd785bc78f21bae4ef15119349f6ad4fa535b83b10df8
+ARG TERRAFORM_VERSION=1.17.2
+ARG TERRAFORM_SHA256=e6f16b2f0b137ee5729caa8c4e79a3bae4ee261acd198a1fcfa8584a6296605b
 ARG KUBECTL_VERSION=v1.37.1
 ARG KUBECTL_SHA256=65691ff77eb6fa44c908b77a1082c9f092c3b9733b5cefabec0d1104890e21a8
 ARG HELM_VERSION=v3.22.1

@@ -12,7 +12,7 @@ cd hyperfleet-infra
 # 2. Install prerequisites
 #    - helm + helm-git plugin + helmfile
 #    - kubectl
-#    - terraform 1.13.1 via asdf (GCP only)
+#    - terraform 1.17.2 via asdf (GCP only)
 #    - Google Cloud SDK + gke-gcloud-auth-plugin (GCP only)
 
 # 3. Verify prerequisites

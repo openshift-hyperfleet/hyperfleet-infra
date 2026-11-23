@@ -38,7 +38,7 @@ helm plugin install https://github.com/databus23/helm-diff --verify=false
 
 ### GCP only
 
-- `terraform 1.13.1` (pinned via `.tool-versions`; use [asdf](https://asdf-vm.com/))
+- `terraform 1.17.2` (pinned via `.tool-versions`; use [asdf](https://asdf-vm.com/))
 - [Google Cloud SDK](https://cloud.google.com/sdk/docs/install) (`gcloud`) + `gke-gcloud-auth-plugin`
 - Access to the `hcm-hyperfleet` GCP project
 
