@@ -65,7 +65,7 @@ Every environment delivers through API → Sentinel → remote adapter → Redis
 
 ## Terraform
 
-- Pinned CLI: `terraform 1.13.1` (`.tool-versions`). `.terraform.lock.hcl` is gitignored, so never commit it.
+- Pinned CLI: `terraform 1.17.2` (`.tool-versions`). `.terraform.lock.hcl` is gitignored, so never commit it.
 - Format from `terraform/`: `terraform fmt -recursive`. The check is `terraform fmt -check -recursive -diff`.
 - Per-developer GKE setup (one time): copy `terraform/envs/gke/dev.tfvars.example` and `dev.tfbackend.example` to `dev-<username>.*`, then set `developer_name` and the state `prefix`. These files are gitignored, so never commit them. Remote state lives in the GCS bucket `hyperfleet-terraform-state`.
 - `terraform/oci/` is a separate stack for the OCI CI compartment (quota, budget, sweep function). See `terraform/oci/README.md`.

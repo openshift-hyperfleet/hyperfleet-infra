@@ -30,7 +30,7 @@ Terraform configuration for creating personal HyperFleet development clusters.
 
 ## Prerequisites
 
-- [Terraform](https://developer.hashicorp.com/terraform/downloads) >= 1.7 (local pin: 1.13.1 in `.tool-versions`; CI tools pin: 1.9.8 in [ci/tools/Dockerfile](../ci/tools/Dockerfile))
+- [Terraform](https://developer.hashicorp.com/terraform/downloads) >= 1.7 (local pin: 1.17.2 in `.tool-versions`; CI tools pin: 1.17.2 in [ci/tools/Dockerfile](../ci/tools/Dockerfile))
 - [Google Cloud SDK](https://cloud.google.com/sdk/docs/install) (`gcloud`)
 - [gke-gcloud-auth-plugin](https://cloud.google.com/kubernetes-engine/docs/how-to/cluster-access-for-kubectl#install_plugin) (for kubectl access)
 - `kubectl`
@@ -356,7 +356,7 @@ cover all three modes, staged opt-out, migration guards, invalid input, and the
 safe null default, plus rejection of enforcement/addon opt-out at the HyperFleet
 root, and run as part of `make ci-dry-run`. Plan checks cover known
 configuration values; mocked applies cover API-computed datapath values without
-creating real resources. These tests are compatible with Prow's pinned 1.9.8:
+creating real resources. These tests are compatible with Prow's pinned 1.17.2:
 
 ```bash
 make test-terraform-network-policy
