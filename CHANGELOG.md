@@ -9,6 +9,12 @@ are deployed directly from `main`. See [CONTRIBUTING.md](CONTRIBUTING.md#release
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING:** the `hyperfleet-gateway` chart now renders Envoy Gateway and Gateway API resources (`Gateway`, `EnvoyProxy`, `HTTPRoute`, policies) instead of a hand-written Envoy Deployment, ConfigMap and Services (HYPERFLEET-1910, ADR-0036). `make install-envoy-gateway` (pinned, patched upstream manifest plus the shared `hyperfleet` GatewayClass) is a new prerequisite of `install-hyperfleet` and `install-gateway`. In-place upgrades are not supported: redeploy the environment.
+- The gateway chart derives the authentication mode from `authorino.enabled` and `authorino.policy.wristband.enabled` instead of `authorino.mode`; the wristband hook image is `authorino.wristbandHookImage`; the identity header list is extended with `headers.stripOverride`; only `GET`, `HEAD`, `PUT` and `DELETE` are retried.
+- Wristband signing-key Secrets are labelled `hyperfleet.io/wristband-signing-key=<release>`, and the sweep only deletes the keys of its own release.
+
 ### Added
 
 - CONTRIBUTING.md with development setup and common tasks

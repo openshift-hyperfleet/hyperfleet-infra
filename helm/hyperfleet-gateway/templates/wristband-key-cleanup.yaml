@@ -3,7 +3,8 @@
 {{- if $stale }}
 {{- $jobs = append $jobs (dict "name" (include "hyperfleet-gateway.wristbandSweepName" .) "events" "post-install,post-upgrade" "keys" $stale) }}
 {{- end }}
-{{- if eq .Values.auth.mode "EDGE+API" }}
+{{- if include "hyperfleet-gateway.wristbandEnabled" . }}
+{{- include "hyperfleet-gateway.validate" . }}
 {{- $jobs = append $jobs (dict "name" (include "hyperfleet-gateway.wristbandCleanupName" .) "events" "pre-delete" "keys" (concat (include "hyperfleet-gateway.wristbandSigningKeys" . | fromJsonArray) $stale | uniq)) }}
 {{- end }}
 # The sweep deletes the labeled keys the AuthConfig no longer lists, so it also
@@ -91,8 +92,8 @@ spec:
           type: RuntimeDefault
       containers:
         - name: cleanup-signing-key
-          image: {{ $.Values.auth.wristband.lifecycle.image | quote }}
-          imagePullPolicy: {{ $.Values.auth.wristband.lifecycle.pullPolicy }}
+          image: {{ $.Values.authorino.wristbandHookImage | quote }}
+          imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -107,7 +108,12 @@ spec:
             - |
               kubectl delete secret{{ range $job.keys }} {{ . | quote }}{{ end }} --ignore-not-found=true
           resources:
-            {{- toYaml $.Values.auth.wristband.lifecycle.resources | nindent 12 }}
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
           volumeMounts:
             - name: work
               mountPath: /work

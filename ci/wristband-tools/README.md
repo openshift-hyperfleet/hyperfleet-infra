@@ -90,7 +90,7 @@ registered; until then builds publish to `redhat-user-workloads` but nothing
 is released.
 
 The chart pins the promoted image **by digest** in
-`helm/hyperfleet-gateway/values.yaml` (`auth.wristband.lifecycle.image`). Until
+`helm/hyperfleet-gateway/values.yaml` (`authorino.wristbandHookImage`). Until
 the cutover change of HYPERFLEET-1761 lands, that pin still points at the
 legacy `bitnami/kubectl` image; switching it to the first promoted digest of
 this image is the follow-up to this work. Bump the pin whenever a new image is

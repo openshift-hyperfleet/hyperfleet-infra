@@ -74,10 +74,11 @@ fi
 render() {
   helm template "$RELEASE" "$CHART_DIR" \
     --namespace "$NAMESPACE" \
-    --set auth.mode=EDGE+API \
-    --set "auth.wristband.lifecycle.image=${IMAGE}" \
-    --set "auth.wristband.signingKeySecretName=${SECRET_NAME}" \
-    --set-json 'auth.identityProviders=[{"name":"human-jwt","issuerUrl":"https://idp.example.com","audience":"hyperfleet-api","identityClaim":"sub"}]'
+    --set authorino.enabled=true \
+    --set authorino.policy.wristband.enabled=true \
+    --set "authorino.wristbandHookImage=${IMAGE}" \
+    --set "authorino.policy.wristband.signingKeySecretName=${SECRET_NAME}" \
+    --set-json 'authorino.policy.identityProviders=[{"name":"human-jwt","issuerUrl":"https://idp.example.com","audience":"hyperfleet-api","identityClaim":"sub"}]'
 }
 
 # Extract the hook manifests by name suffix: picks the ServiceAccount, Role,

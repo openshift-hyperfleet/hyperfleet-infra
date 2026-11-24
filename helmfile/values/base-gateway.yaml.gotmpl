@@ -4,81 +4,75 @@
 
 {{ if eq (env "OBSERVABILITY_ENABLED" | default "false") "true" }}
 monitoring:
-  serviceMonitor:
+  podMonitor:
     enabled: true
 {{ end }}
 
-service:
-  type: {{ .Values.gatewayServiceType }}
-  {{- if env "EXTERNAL_DNS_HOSTNAME" }}
-  annotations:
-    external-dns.kubernetes.io/hostname: {{ env "EXTERNAL_DNS_HOSTNAME" | quote }}
-  {{- end }}
+envoyProxy:
+  logLevel: {{ env "ENVOY_LOG_LEVEL" | default "info" }}
+  service:
+    type: {{ .Values.gatewayServiceType }}
+    {{- if env "EXTERNAL_DNS_HOSTNAME" }}
+    annotations:
+      external-dns.kubernetes.io/hostname: {{ env "EXTERNAL_DNS_HOSTNAME" | quote }}
+    {{- end }}
 
-tls:
-  hyperfleetApiTLSSecretName: hyperfleet-api-server-cert
-  authorinoAuthorizationTLSSecretName: authorino-server-cert
-  authorinoOIDCTLSSecretName: authorino-oidc-server-cert
-
-envoy:
-  logging:
-    level: {{ env "ENVOY_LOG_LEVEL" | default "info" }}
-
-# Active tenant model for the rendered AuthConfig (onprem|oracle). Must stay in
-# lockstep with config.server.tenant.dimensions in base-api values when wired.
-tenant:
-  model: {{ env "TENANT_MODEL" | default "onprem" }}
-
-auth:
+authorino:
   # External authorization (Authorino). When enabled, Envoy authenticates every
   # request through Authorino and injects trusted tenant headers; the Authorino
   # instance and the active AuthConfig are deployed by the gateway chart too.
-  mode: {{ .Values.authMode | quote }}
-  identityProviders:
+  enabled: {{ $edgeAuth }}
+  logLevel: {{ env "AUTHORINO_LOG_LEVEL" | default "info" }}
   {{- if and $edgeAuth $mockIssuer }}
-    - name: human-jwt
-      issuerUrl: {{ printf "https://hyperfleet-mock-oidc.%s.svc.cluster.local:8443/default" .Values.namespace | quote }}
-      audience: hyperfleet-api
-      identityClaim: email
-  {{- else if and $edgeAuth (env "OIDC_ISSUER_URL") }}
-    - name: human-jwt
-      issuerUrl: {{ env "OIDC_ISSUER_URL" | quote }}
-      audience: hyperfleet-api
-      identityClaim: email
-  {{- else }}
-    []
+  mockIssuerCASecretName: hyperfleet-mock-oidc-tls
+  {{- end }}
+  {{/*
+    Authorino matches the AuthConfig against the request authority. The chart
+    defaults to the in-cluster gateway Service DNS + localhost; set AUTHORINO_HOSTS
+    (comma-separated) to add external hostnames (e.g. the gcp LoadBalancer host)
+    so external callers are matched rather than denied by fail-closed host matching.
+  */}}
+  {{- if env "AUTHORINO_HOSTS" }}
+  hosts:
+    {{- range (env "AUTHORINO_HOSTS" | splitList ",") }}
+    - {{ . | trim | quote }}
+    {{- end }}
   {{- end }}
 
-  machineIdentity:
-    audience: {{ .Values.machineIdentityAudience | quote }}
-    # Exact SA allow-list, derived from declared sentinels/adapters and any
-    # environment-specific machine callers. See helm/hyperfleet-gateway/values.yaml.
-    allowedServiceAccounts:
-      {{- range .Values.sentinels }}
-      - {{ printf "%s-hyperfleet-sentinel" .name | quote }}
-      {{- end }}
-      {{- range .Values.adapters }}
-      - {{ printf "%s-hyperfleet-adapter" .name | quote }}
-      {{- end }}
-      {{- range .Values.additionalMachineServiceAccounts }}
-      - {{ . | quote }}
-      {{- end }}
+  policy:
+    wristband:
+      enabled: {{ eq .Values.authMode "EDGE+API" }}
+    # Active tenant model for the rendered AuthConfig (onprem|oracle). Must stay in
+    # lockstep with config.server.tenant.dimensions in base-api values when wired.
+    tenant:
+      model: {{ env "TENANT_MODEL" | default "onprem" }}
 
-  authorino:
+    identityProviders:
     {{- if and $edgeAuth $mockIssuer }}
-    mockIssuerCASecretName: hyperfleet-mock-oidc-tls
+      - name: human-jwt
+        issuerUrl: {{ printf "https://hyperfleet-mock-oidc.%s.svc.cluster.local:8443/default" .Values.namespace | quote }}
+        audience: hyperfleet-api
+        identityClaim: email
+    {{- else if and $edgeAuth (env "OIDC_ISSUER_URL") }}
+      - name: human-jwt
+        issuerUrl: {{ env "OIDC_ISSUER_URL" | quote }}
+        audience: hyperfleet-api
+        identityClaim: email
+    {{- else }}
+      []
     {{- end }}
-    {{/*
-      Authorino matches the AuthConfig against the request authority. The chart
-      defaults to the in-cluster gateway Service DNS + localhost; set AUTHORINO_HOSTS
-      (comma-separated) to add external hostnames (e.g. the gcp LoadBalancer host)
-      so external callers are matched rather than denied by fail-closed host matching.
-    */}}
-    {{- if env "AUTHORINO_HOSTS" }}
-    hosts:
-      {{- range (env "AUTHORINO_HOSTS" | splitList ",") }}
-      - {{ . | trim | quote }}
-      {{- end }}
-    {{- end }}
-    logging:
-      level: {{ env "AUTHORINO_LOG_LEVEL" | default "info" }}
+
+    machineIdentity:
+      audience: {{ .Values.machineIdentityAudience | quote }}
+      # Exact SA allow-list, derived from declared sentinels/adapters and any
+      # environment-specific machine callers. See helm/hyperfleet-gateway/values.yaml.
+      allowedServiceAccounts:
+        {{- range .Values.sentinels }}
+        - {{ printf "%s-hyperfleet-sentinel" .name | quote }}
+        {{- end }}
+        {{- range .Values.adapters }}
+        - {{ printf "%s-hyperfleet-adapter" .name | quote }}
+        {{- end }}
+        {{- range .Values.additionalMachineServiceAccounts }}
+        - {{ . | quote }}
+        {{- end }}

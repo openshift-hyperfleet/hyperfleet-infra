@@ -21,6 +21,7 @@ replicaCount: 2
 */}}
 {{ $kubernetesOIDC = (exec "../../scripts/discover-kubernetes-oidc.sh" (list .Release.Namespace) | fromYaml) }}
 {{ end }}
+{{/* "authorino" (the Authorino instance) and "hyperfleet-tenant-policy" (the AuthConfig) are fixed by the gateway chart. */}}
 {{ $wristbandIssuer := printf "https://authorino-authorino-oidc.%s.svc:8083/%s/hyperfleet-tenant-policy/wristband" .Release.Namespace .Release.Namespace }}
 {{ $wristbandJWKS := printf "%s/.well-known/openid-connect/certs" $wristbandIssuer }}
 {{ if or $obs $tracing }}
@@ -125,8 +126,8 @@ config:
       # validated token and ignores the (forgeable) headers.
       claims_enabled: {{ $wristbandMode }}
       system_header: x-hyperfleet-system
-      # Per-model claim/header pairs mirror the gateway's tenant.models
-      # (helm/hyperfleet-gateway values.yaml) — keep in sync.
+      # Per-model claim/header pairs mirror the gateway's tenant models
+      # (helm/hyperfleet-gateway templates/authconfig.yaml) — keep in sync.
       dimensions:
       {{ if eq $tenantModel "onprem" }}
         - header: x-tenant-org

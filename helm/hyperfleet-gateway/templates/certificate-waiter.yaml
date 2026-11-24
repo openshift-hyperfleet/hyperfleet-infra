@@ -1,5 +1,5 @@
-{{- if .Values.tls.certificateWaiter.enabled }}
-{{- $certificateNames := list "hyperfleet-api" (printf "%s-ca" (include "hyperfleet-gateway.fullname" .)) }}
+{{- if .Values.certificateWaiter.enabled }}
+{{- $certificateNames := list .Values.upstream.host (printf "%s-ca" (include "hyperfleet-gateway.fullname" .)) }}
 {{- if include "hyperfleet-gateway.edgeAuthEnabled" . }}
 {{- $certificateNames = append $certificateNames (printf "%s-authorino-authorization" (include "hyperfleet-gateway.authorinoName" .)) }}
 {{- $certificateNames = append $certificateNames (printf "%s-authorino-oidc" (include "hyperfleet-gateway.authorinoName" .)) }}
@@ -57,7 +57,7 @@ metadata:
     "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
 spec:
   backoffLimit: 0
-  activeDeadlineSeconds: {{ int .Values.tls.certificateWaiter.timeoutSeconds }}
+  activeDeadlineSeconds: {{ int .Values.certificateWaiter.timeoutSeconds }}
   template:
     metadata:
       labels:
@@ -72,8 +72,8 @@ spec:
         fsGroup: 65532
       containers:
         - name: wait-for-certificates
-          image: {{ .Values.tls.certificateWaiter.image.repository | quote }}
-          imagePullPolicy: {{ .Values.tls.certificateWaiter.image.pullPolicy }}
+          image: {{ .Values.certificateWaiter.image.repository | quote }}
+          imagePullPolicy: {{ .Values.certificateWaiter.image.pullPolicy }}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -90,10 +90,10 @@ spec:
             - -ec
             - |
               {{- range $certificateNames }}
-              kubectl wait --for=condition=Ready certificate/{{ . }} --timeout={{ printf "%ds" (int $.Values.tls.certificateWaiter.timeoutSeconds) }}
+              kubectl wait --for=condition=Ready certificate/{{ . }} --timeout={{ printf "%ds" (int $.Values.certificateWaiter.timeoutSeconds) }}
               {{- end }}
           resources:
-            {{- toYaml .Values.tls.certificateWaiter.resources | nindent 12 }}
+            {{- toYaml .Values.certificateWaiter.resources | nindent 12 }}
           volumeMounts:
             - name: tmp
               mountPath: /tmp

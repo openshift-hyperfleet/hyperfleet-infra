@@ -1,0 +1,34 @@
+{{- if include "hyperfleet-gateway.wristbandEnabled" . }}
+# The wristband comes only from ext_authz dynamic metadata, never from a
+# client-supplied HTTP header. Fail closed if Authorino returns OK without
+# producing a wristband. Envoy Gateway v1.9 names the filter per SecurityPolicy
+# but stores its dynamic metadata under the plain "envoy.filters.http.ext_authz"
+# namespace (checked on a live proxy); if a future version moves it, the lookup
+# finds nothing and every request is denied, not forwarded unauthenticated.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyExtensionPolicy
+metadata:
+  name: {{ include "hyperfleet-gateway.fullname" . }}
+  labels:
+    {{- include "hyperfleet-gateway.labels" . | nindent 4 }}
+spec:
+  targetRefs:
+    {{- range fromJsonArray (include "hyperfleet-gateway.authenticatedListeners" .) }}
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: {{ include "hyperfleet-gateway.gatewayName" $ }}
+      sectionName: {{ . }}
+    {{- end }}
+  lua:
+    - type: Inline
+      inline: |
+        function envoy_on_request(handle)
+          local metadata = handle:streamInfo():dynamicMetadata():get("envoy.filters.http.ext_authz")
+          local token = metadata and metadata["wristband"]
+          if type(token) ~= "string" or token == "" then
+            handle:respond({[":status"] = "403"}, "missing gateway wristband")
+            return
+          end
+          handle:headers():replace("authorization", "Bearer " .. token)
+        end
+{{- end }}

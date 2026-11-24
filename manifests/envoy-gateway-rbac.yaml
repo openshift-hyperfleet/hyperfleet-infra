@@ -1,0 +1,97 @@
+# Cluster-wide infrastructure rights for the Envoy Gateway controller.
+#
+# `make install-envoy-gateway` runs the controller in GatewayNamespace mode, so each
+# Gateway's Envoy Deployment, Service, ServiceAccount, ConfigMap, HPA and PDB are
+# created in the Gateway's own namespace. The upstream install.yaml only grants
+# those rights in a namespaced Role inside envoy-gateway-system (the default mode,
+# where proxies run beside the controller); without this ClusterRole the controller
+# cannot watch or create them elsewhere and never becomes ready.
+#
+# This is a copy of the ClusterRole and ClusterRoleBinding the upstream Helm chart
+# renders in this mode (`helm template` the gateway-helm chart with
+# `config.envoyGateway.provider.kubernetes.deploy.type=GatewayNamespace`), so bump it
+# together with ENVOY_GATEWAY_VERSION.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: eg-gateway-helm-cluster-infra-manager
+rules:
+- apiGroups:
+  - ''
+  resources:
+  - serviceaccounts
+  - services
+  - configmaps
+  verbs:
+  - create
+  - get
+  - list
+  - delete
+  - deletecollection
+  - patch
+  - watch
+- apiGroups:
+  - apps
+  resources:
+  - deployments
+  - daemonsets
+  verbs:
+  - create
+  - get
+  - list
+  - delete
+  - deletecollection
+  - patch
+  - watch
+- apiGroups:
+  - autoscaling
+  resources:
+  - horizontalpodautoscalers
+  verbs:
+  - create
+  - get
+  - list
+  - delete
+  - deletecollection
+  - patch
+  - watch
+- apiGroups:
+  - policy
+  resources:
+  - poddisruptionbudgets
+  verbs:
+  - create
+  - get
+  - list
+  - delete
+  - deletecollection
+  - patch
+  - watch
+- apiGroups:
+  - certificates.k8s.io
+  resources:
+  - clustertrustbundles
+  verbs:
+  - list
+  - get
+  - watch
+- apiGroups:
+  - authentication.k8s.io
+  resources:
+  - tokenreviews
+  verbs:
+  - create
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: eg-gateway-helm-cluster-infra-manager
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: eg-gateway-helm-cluster-infra-manager
+subjects:
+- kind: ServiceAccount
+  name: envoy-gateway
+  namespace: envoy-gateway-system

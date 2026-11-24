@@ -83,5 +83,5 @@
 {{- if $e2e -}}
   {{- $accounts = concat $accounts .Values.e2eMachineServiceAccounts -}}
 {{- end -}}
-{{- include "assertEqual" (list (sortAlpha $accounts) (sortAlpha $gateway.auth.machineIdentity.allowedServiceAccounts) "gateway service accounts") -}}
+{{- include "assertEqual" (list (sortAlpha $accounts) (sortAlpha $gateway.authorino.policy.machineIdentity.allowedServiceAccounts) "gateway service accounts") -}}
 {{- end -}}

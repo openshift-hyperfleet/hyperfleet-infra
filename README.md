@@ -119,7 +119,7 @@ Configuration precedence (highest to lowest):
 | Target | Description |
 | -------- | ------------- |
 | `make install-hyperfleet` | Install all HyperFleet components |
-| `make install-gateway` | Install or update HyperFleet gateway, Authorino, and AuthConfig only |
+| `make install-gateway` | Install or update HyperFleet gateway (Gateway API resources), Authorino, and AuthConfig only |
 | `make install-api` | Install HyperFleet API only |
 | `make install-sentinels` | Install Sentinels only |
 | `make install-adapters` | Install Adapters only |
@@ -129,6 +129,13 @@ Configuration precedence (highest to lowest):
 | `make uninstall-sentinels` | Uninstall Sentinels only |
 | `make uninstall-adapters` | Uninstall Adapters only |
 | `make uninstall-desire-delivery` | Uninstall the desire delivery stack only (Redis + the applier) |
+
+### Gateway (Envoy Gateway)
+
+| Target | Description |
+| -------- | ------------- |
+| `make install-envoy-gateway` | Install Envoy Gateway (cluster-wide): the pinned upstream manifest, checksum-verified and patched, plus the shared GatewayClass; a prerequisite of `install-hyperfleet` and `install-gateway` |
+| `make uninstall-envoy-gateway` | Uninstall Envoy Gateway, its GatewayClass and its namespace. This deletes the CRDs, and with them every Gateway, route and policy, so uninstall the gateway release first |
 
 ### Gateway Authentication (Authorino)
 
@@ -315,6 +322,83 @@ and supports one optional direct human OIDC provider. Set `OIDC_ISSUER_URL` and
 `OIDC_JWKS_URL` to enable that human provider. All supported JWTs use the
 `hyperfleet-api` audience and `sub` identity claim.
 
+### Gateway (Envoy Gateway)
+
+The API entry point is an Envoy fleet managed by [Envoy Gateway](https://gateway.envoyproxy.io/)
+and configured through Gateway API resources, as decided in ADR-0036. The
+`helm/hyperfleet-gateway` chart no longer ships a hand-written Envoy: it renders
+these namespaced resources, and Envoy Gateway turns them into the proxy
+Deployment and Service.
+
+| Resource | Purpose |
+| -------- | ------- |
+| `EnvoyProxy` | Proxy infrastructure: replicas, resources, PodDisruptionBudget, the generated Service (type, name, annotations), access log format |
+| `Gateway` | The entry point; its listeners come from `gateway.listeners` (plaintext `:8000` for now) |
+| `HTTPRoute` | Routes `/` to the API; the retried methods get their own rule |
+| `BackendTLSPolicy` | Verifies the API's and Authorino's internal-CA certificates |
+| `ClientTrafficPolicy` | Strips client-supplied identity and tenant headers (`headers.stripOverride` adds to a fixed list) before authorization |
+| `BackendTrafficPolicy` | Request timeout and retries |
+| `SecurityPolicy` | Authorino ext_authz on the whole serving listener (`EDGE` and `EDGE+API` only) |
+| `EnvoyExtensionPolicy` | Copies the wristband into `Authorization` (`EDGE+API` only) |
+
+Envoy Gateway is installed once per cluster by `make install-envoy-gateway`, like
+cert-manager and the Authorino operator: the pinned upstream `install.yaml`,
+checksum-verified, applied with `kubectl`. There is no Helm release, so parallel jobs
+on a shared cluster cannot lock each other out. `scripts/patch-envoy-gateway.sh`
+changes three things in it: the controller runs in `GatewayNamespace` mode, so each
+Gateway's Envoy runs in its own namespace next to Authorino and the API; Lua
+`EnvoyExtensionPolicy` support is enabled, which the `EDGE+API` wristband policy needs
+(without it Envoy Gateway rejects the policy and answers every request on the Gateway
+with a 500); and the topology-injector webhook covers all namespaces. The
+cluster-wide RBAC that mode needs is `manifests/envoy-gateway-rbac.yaml`.
+
+The one GatewayClass, `hyperfleet`, is `manifests/envoy-gateway-gatewayclass.yaml`,
+applied by the same target. It is cluster-scoped and identical for every release, so
+the chart does not render it: the Gateway names it with the `gatewayClassName` value.
+When you bump `ENVOY_GATEWAY_VERSION`, update `ENVOY_GATEWAY_MANIFEST_SHA256`, then
+check by hand that `scripts/patch-envoy-gateway.sh` still applies (it fails if an
+upstream edit no longer matches) and that `manifests/envoy-gateway-rbac.yaml` still
+matches the ClusterRole the upstream `gateway-helm` chart renders in this mode.
+
+**Upgrading from the hand-written Envoy chart is a breaking change, and an in-place
+upgrade is not supported.** Redeploy the environment instead. The proxy Deployment
+and its pod labels change (so the API's NetworkPolicy selector changes, and
+`make install-gateway` does not apply that policy), the generated Service is
+recreated (on GKE the LoadBalancer IP changes), and Envoy Gateway and the Gateway API
+CRDs become cluster-wide prerequisites. A fresh `make install-hyperfleet` creates
+everything in the right order.
+
+Names to know:
+
+| Name | Value | Why |
+| ---- | ----- | --- |
+| Service | `hyperfleet-gateway` | What Sentinel and the adapters call (`http://hyperfleet-gateway:8000`); the generated Service is named after the release |
+| Gateway, Envoy Deployment and pods | `hyperfleet-gateway` | The release name; the NetworkPolicy admits the API's traffic only from pods labelled `gateway.envoyproxy.io/owning-gateway-name` with this name |
+
+**Values.** Only what differs between environments or gateways is a value; the
+rest (timeouts, retry counts, the security contexts, the PodDisruptionBudget, the
+ext_authz port) is written into the templates. `values.yaml` has these blocks:
+
+| Block | What it sets |
+| ----- | ------------ |
+| `gatewayClassName` | The shared GatewayClass the Gateway uses (default `hyperfleet`, created by `make install-envoy-gateway`) |
+| `gateway` | The Gateway `listeners` (port, protocol, optional `hostname` and `tls`). Routes and authentication attach to every listener except one marked `authenticated: false`, such as the ACME solver listener |
+| `upstream` | The backend Service (`host`, `port`) and, optionally, the Secret with its serving certificate |
+| `envoyProxy` | Replicas, resources, log level, and the Service type and annotations |
+| `monitoring.podMonitor.enabled` | Renders a PodMonitor that scrapes the proxy pods; Helmfile sets it when `OBSERVABILITY_ENABLED=true` |
+| `headers.stripOverride`, `traffic.retry` | Extra headers removed before authorization (the identity and tenant headers are always removed), and the triggers that are retried (only `GET`, `HEAD`, `PUT` and `DELETE` are, fixed in the route) |
+| `authorino` | Everything Authorino: `enabled` (off: no Authorino and no SecurityPolicy, which is `NONE`; on: `EDGE`), the instance (`name`, `image`, `hosts`, `authConfigLabelSelectors`), `wristbandHookImage` (the image of the signing-key hook Jobs, read in every state) and its `policy` |
+| `authorino.policy` | The AuthConfig this chart renders: identity providers, machine identity, tenant model and the wristband (`policy.wristband.enabled` is `EDGE+API`; it needs `authorino.enabled`). Set `policy: null` for a gateway whose AuthConfigs come from elsewhere, so none is rendered |
+
+The certificate Secrets are not values: they are named `<upstream.host>-server-cert`,
+`<authorino.name>-server-cert` and `<authorino.name>-oidc-server-cert`.
+
+A second gateway, such as the Desire Store's, is a second release of the same
+chart with its own `fullnameOverride`, `upstream`,
+`authorino.name` and `authorino.authConfigLabelSelectors`, and `authorino.policy:
+null` when its AuthConfigs come from elsewhere; `make validate-authorino` renders
+two releases side by side and fails if their objects collide.
+
 ### Gateway Authentication (Authorino)
 
 Enable gateway authentication when you want every API request to have a valid
@@ -461,6 +545,9 @@ it while another HyperFleet namespace is using gateway authentication.
 | `AUTHORINO_HOSTS` | unset | Add comma-separated external gateway hostnames if users access the gateway through them |
 | `AUTHORINO_LOG_LEVEL` | `info` | Increase only when diagnosing authentication problems |
 | `ENVOY_LOG_LEVEL` | `info` | Increase only when diagnosing gateway problems |
+| `ENVOY_GATEWAY_VERSION` | `v1.9.4` | Pinned Envoy Gateway release; update `ENVOY_GATEWAY_MANIFEST_SHA256` with it and recheck the patches and the RBAC file |
+| `ENVOY_GATEWAY_MANIFEST` | the release's `install.yaml` | Point at a mirror for disconnected installs |
+| `ENVOY_GATEWAY_MANIFEST_SHA256` | pinned | Checksum of the manifest; the install fails if it does not match |
 
 Internal gateway DNS names and `localhost` work without `AUTHORINO_HOSTS`. If
 requests through a LoadBalancer or custom DNS name are denied while local
@@ -584,9 +671,9 @@ The AuthConfig is the state: it lists the trusted keys and its first entry
 signs. The target passes the new key list to the gateway chart, and a plain
 `make install-gateway` keeps whatever the AuthConfig already lists. The chart's
 provisioner hook creates the new Secret, labeled
-`hyperfleet.io/wristband-signing-key=true`, before the AuthConfig changes. After
-an upgrade, a sweep hook deletes the labeled Secrets the AuthConfig no longer
-lists.
+`hyperfleet.io/wristband-signing-key=<release>`, before the AuthConfig changes.
+After an upgrade, a sweep hook deletes the Secrets labeled for this release that
+the AuthConfig no longer lists, so it never touches another release's keys.
 
 If the target stops early, run it again. A rerun issues another key and ends
 with only that key. After a stop with `REVOKE=true`, requests with old

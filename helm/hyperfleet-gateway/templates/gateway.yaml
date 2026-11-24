@@ -1,0 +1,42 @@
+{{- $listenerNames := dict }}
+{{- range .Values.gateway.listeners }}
+{{- if hasKey $listenerNames .name }}
+{{- fail (printf "Duplicate gateway listener name %q" .name) }}
+{{- end }}
+{{- $_ := set $listenerNames .name true }}
+{{- end }}
+{{- if not (fromJsonArray (include "hyperfleet-gateway.authenticatedListeners" .)) }}
+{{- fail "gateway.listeners needs at least one listener that is not marked authenticated: false" }}
+{{- end }}
+{{- include "hyperfleet-gateway.validate" . }}
+# One Gateway is one Envoy fleet. Envoy Gateway turns it into the proxy
+# Deployment and Service described by the EnvoyProxy below.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: {{ include "hyperfleet-gateway.gatewayName" . }}
+  labels:
+    {{- include "hyperfleet-gateway.labels" . | nindent 4 }}
+spec:
+  gatewayClassName: {{ .Values.gatewayClassName }}
+  infrastructure:
+    parametersRef:
+      group: gateway.envoyproxy.io
+      kind: EnvoyProxy
+      name: {{ include "hyperfleet-gateway.gatewayName" . }}
+  listeners:
+    {{- range .Values.gateway.listeners }}
+    - name: {{ .name }}
+      port: {{ .port }}
+      protocol: {{ .protocol }}
+      {{- with .hostname }}
+      hostname: {{ . | quote }}
+      {{- end }}
+      {{- with .tls }}
+      tls:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      allowedRoutes:
+        namespaces:
+          from: Same
+    {{- end }}

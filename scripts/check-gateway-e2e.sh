@@ -14,6 +14,9 @@ AUTH_MODE="${AUTH_MODE:-NONE}"
 TENANT_ISOLATION_ENABLED="${TENANT_ISOLATION_ENABLED:-false}"
 TENANT_MODEL="${TENANT_MODEL:-onprem}"
 GATEWAY_SERVICE="${GATEWAY_SERVICE:-hyperfleet-gateway}"
+# Name of the Gateway, which is also the Service name (both are the release name);
+# Envoy Gateway labels its proxy pods with it.
+GATEWAY_NAME="${GATEWAY_NAME:-$GATEWAY_SERVICE}"
 API_SERVICE="${API_SERVICE:-hyperfleet-api}"
 CURL_IMAGE="${CURL_IMAGE:-curlimages/curl:8.22.0@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777}"
 GATEWAY_E2E_TIMEOUT="${GATEWAY_E2E_TIMEOUT:-300}"
@@ -240,7 +243,7 @@ expect_denied_at_gateway() {
     while (( SECONDS < deadline )); do
         # Envoy writes access log lines asynchronously, and a pod that cannot
         # serve logs yet is read again on the next poll.
-        entry=$(kubectl logs --namespace "$NAMESPACE" -l app.kubernetes.io/name=hyperfleet-gateway \
+        entry=$(kubectl logs --namespace "$NAMESPACE" -l "gateway.envoyproxy.io/owning-gateway-name=${GATEWAY_NAME}" \
             --container envoy --since=10m --tail=-1 2>/dev/null | grep -F -- " ${path} " || true)
         if [[ -n "$entry" ]]; then
             [[ "$entry" == *" UAEX "* && "$entry" == *'"-"' ]] \
@@ -634,8 +637,13 @@ mint_log=$(mktemp)
 trap on_exit EXIT
 check "HyperFleet stack is deployed and ready" \
     "bring it up with: HELMFILE_ENV=kind OIDC_ISSUER_MODE=mock TENANT_ISOLATION_ENABLED=true make local-up-kind"
+kubectl wait --for=condition=Programmed "gateway/${GATEWAY_NAME}" --namespace "$NAMESPACE" \
+    --timeout="${GATEWAY_E2E_TIMEOUT}s" >/dev/null
 kubectl wait --for=condition=Available deployment --namespace "$NAMESPACE" \
-    -l 'app.kubernetes.io/name in (mock-oidc,hyperfleet-gateway,hyperfleet-api,hyperfleet-sentinel,hyperfleet-adapter)' \
+    -l "gateway.envoyproxy.io/owning-gateway-name=${GATEWAY_NAME}" \
+    --timeout="${GATEWAY_E2E_TIMEOUT}s" >/dev/null
+kubectl wait --for=condition=Available deployment --namespace "$NAMESPACE" \
+    -l 'app.kubernetes.io/name in (mock-oidc,hyperfleet-api,hyperfleet-sentinel,hyperfleet-adapter)' \
     --timeout="${GATEWAY_E2E_TIMEOUT}s" >/dev/null
 kubectl wait --for=condition=Ready authconfig/hyperfleet-tenant-policy \
     --namespace "$NAMESPACE" --timeout="${GATEWAY_E2E_TIMEOUT}s" >/dev/null

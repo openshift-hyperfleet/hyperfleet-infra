@@ -76,16 +76,17 @@ wait_for_jwks() {
 gateway_sync() {
     local IFS=,
     helmfile -f "$REPO_ROOT/helmfile/helmfile.yaml.gotmpl" -e "$HELMFILE_ENV" \
-        -l component=gateway sync --set "auth.wristband.signingKeys={$*}"
+        -l component=gateway sync --set "authorino.policy.wristband.signingKeys={$*}"
 }
 
 echo "Rotating wristband signing key ${old_keys[*]} -> ${new_key} (REVOKE=${REVOKE})"
-# The sweep deletes by label and REVOKE=true never lists the old keys, so label
-# them here. A key from before keys were labeled has none; a rolled-back
+# The sweep deletes by label (whose value is the release name) and REVOKE=true
+# never lists the old keys, so label them here. A key from before keys were
+# labeled has none; a rolled-back
 # AuthConfig can name a Secret that is gone.
 for key in "${old_keys[@]}"; do
     [[ -z "$(kubectl get secret "$key" --namespace "$NAMESPACE" --ignore-not-found -o name)" ]] \
-        || kubectl label secret "$key" --namespace "$NAMESPACE" hyperfleet.io/wristband-signing-key=true --overwrite >/dev/null
+        || kubectl label secret "$key" --namespace "$NAMESPACE" hyperfleet.io/wristband-signing-key=hyperfleet-gateway --overwrite >/dev/null
 done
 if [[ "$REVOKE" == "false" ]]; then
     gateway_sync "$new_key" "${old_keys[@]}"

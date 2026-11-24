@@ -1,4 +1,5 @@
-{{- if eq .Values.auth.mode "EDGE+API" }}
+{{- if include "hyperfleet-gateway.wristbandEnabled" . }}
+{{- include "hyperfleet-gateway.validate" . }}
 {{- $name := include "hyperfleet-gateway.wristbandProvisionerName" . }}
 {{- $keys := include "hyperfleet-gateway.wristbandSigningKeys" . | fromJsonArray }}
 # This pre-install/upgrade hook completes before Helm installs or updates the
@@ -88,8 +89,8 @@ spec:
           type: RuntimeDefault
       containers:
         - name: provision-signing-key
-          image: {{ .Values.auth.wristband.lifecycle.image | quote }}
-          imagePullPolicy: {{ .Values.auth.wristband.lifecycle.pullPolicy }}
+          image: {{ .Values.authorino.wristbandHookImage | quote }}
+          imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -140,8 +141,9 @@ spec:
               provision_key() {
                 if kubectl get secret "${secret_name}" >/dev/null 2>&1; then
                   validate_existing_secret
-                  # Adopts a key created before keys were labeled.
-                  kubectl label secret "${secret_name}" hyperfleet.io/wristband-signing-key=true --overwrite >/dev/null
+                  # Adopts a key created before keys were labeled, or labeled with
+                  # a value other than the release name.
+                  kubectl label secret "${secret_name}" hyperfleet.io/wristband-signing-key={{ $.Release.Name }} --overwrite >/dev/null
                   echo "OK: preserving valid wristband signing Secret ${secret_name}"
                   return
                 fi
@@ -161,7 +163,7 @@ spec:
 
                 # Labeled at creation, so a stop cannot leave a key the sweep never finds.
                 if kubectl create secret generic "${secret_name}" --from-file=key.pem="${key_file}" --dry-run=client -o yaml \
-                    | kubectl label --local -f - hyperfleet.io/wristband-signing-key=true -o yaml \
+                    | kubectl label --local -f - hyperfleet.io/wristband-signing-key={{ $.Release.Name }} -o yaml \
                     | kubectl create -f -; then
                   validate_existing_secret
                   echo "OK: created wristband signing Secret ${secret_name}"
@@ -183,7 +185,12 @@ spec:
                 provision_key
               done
           resources:
-            {{- toYaml .Values.auth.wristband.lifecycle.resources | nindent 12 }}
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
           volumeMounts:
             - name: work
               mountPath: /work

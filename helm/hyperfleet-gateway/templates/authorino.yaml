@@ -1,5 +1,5 @@
 {{- if include "hyperfleet-gateway.edgeAuthEnabled" . }}
-# Authorino instance for Envoy ext_authz. Watches AuthConfigs in this namespace.
+# Authorino instance for the Gateway's ext_authz SecurityPolicy. Watches AuthConfigs in this namespace.
 apiVersion: operator.authorino.kuadrant.io/v1beta1
 kind: Authorino
 metadata:
@@ -10,21 +10,25 @@ spec:
   # Keep this Authorino instance's default namespace scope explicit. Shared E2E
   # clusters can conflict if an instance is changed to cluster-wide watching.
   clusterWide: false
-  {{- if .Values.auth.authorino.image }}
+  {{- if .Values.authorino.image }}
   # Pin image; operator default may be unpublished on quay.
-  image: {{ .Values.auth.authorino.image | quote }}
+  image: {{ .Values.authorino.image | quote }}
+  {{- end }}
+  {{- if .Values.authorino.authConfigLabelSelectors }}
+  # Reconcile only matching AuthConfigs so two Authorino instances stay disjoint.
+  authConfigLabelSelectors: {{ .Values.authorino.authConfigLabelSelectors | quote }}
   {{- end }}
   listener:
     tls:
       enabled: true
       certSecretRef:
-        name: {{ .Values.tls.authorinoAuthorizationTLSSecretName }}
+        name: {{ include "hyperfleet-gateway.authorinoAuthorizationTLSSecretName" . }}
   oidcServer:
     tls:
       enabled: true
       certSecretRef:
-        name: {{ .Values.tls.authorinoOIDCTLSSecretName }}
-  {{- if .Values.auth.authorino.mockIssuerCASecretName }}
+        name: {{ include "hyperfleet-gateway.authorinoOIDCTLSSecretName" . }}
+  {{- if .Values.authorino.mockIssuerCASecretName }}
   # The test-only mock issuer is self-signed. Authorino uses Go's system trust
   # pool for OIDC discovery/JWKS retrieval. The Authorino image is RHEL-based,
   # so replace its CA bundle only in this test-mode path rather than disabling
@@ -34,10 +38,10 @@ spec:
       - name: mock-oidc-ca
         mountPath: /etc/pki/ca-trust/extracted/pem
         secrets:
-          - {{ .Values.auth.authorino.mockIssuerCASecretName }}
+          - {{ .Values.authorino.mockIssuerCASecretName }}
         items:
           - key: tls.crt
             path: tls-ca-bundle.pem
   {{- end }}
-  logLevel: {{ .Values.auth.authorino.logging.level }}
+  logLevel: {{ .Values.authorino.logLevel }}
 {{- end }}

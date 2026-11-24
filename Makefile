@@ -98,6 +98,24 @@ CERT_MANAGER_NAMESPACE       ?= cert-manager
 CERT_MANAGER_MANIFEST        ?= https://github.com/cert-manager/cert-manager/releases/download/$(CERT_MANAGER_VERSION)/cert-manager.yaml
 CERT_MANAGER_MANIFEST_SHA256 ?= e03b668ec8675214af6b0a671699d088f2601fa3878e0dbe1b41d3feafd1879f
 
+# Envoy Gateway (control plane + Gateway API CRDs). Cluster-singleton prerequisite
+# for the hyperfleet-gateway chart (ADR-0036), installed like cert-manager and the
+# Authorino operator: the pinned upstream install.yaml, checksum-verified, applied
+# with kubectl, so there is no Helm release to lock. Bumping ENVOY_GATEWAY_VERSION
+# requires updating ENVOY_GATEWAY_MANIFEST_SHA256 with it, and checking that the
+# patches and manifests/envoy-gateway-rbac.yaml still match the upstream release.
+# The manifest is patched (scripts/patch-envoy-gateway.sh) so each Gateway's Envoy
+# runs in the Gateway's own namespace, next to Authorino and the API, and so Lua
+# EnvoyExtensionPolicies work: the EDGE+API wristband hand-off is one, and without
+# Lua enabled Envoy Gateway rejects it and answers every request with a 500. The
+# cluster-wide RBAC that mode needs is manifests/envoy-gateway-rbac.yaml. The
+# shared GatewayClass is manifests/envoy-gateway-gatewayclass.yaml. The controller
+# namespace, envoy-gateway-system, is fixed by the manifest and the RBAC file, so it
+# is not a variable.
+ENVOY_GATEWAY_VERSION         ?= v1.9.4
+ENVOY_GATEWAY_MANIFEST        ?= https://github.com/envoyproxy/gateway/releases/download/$(ENVOY_GATEWAY_VERSION)/install.yaml
+ENVOY_GATEWAY_MANIFEST_SHA256 ?= 0581247f7c182db57365b1585f84f4b370c06db0088cf612e41e96788452051d
+
 LIFECYCLE_DIR        ?= functions/lifecycle-enforcer
 OCI_SWEEP_DIR        ?= functions/oci-ci-sweep
 
@@ -290,6 +308,39 @@ uninstall-cert-manager: check-kubectl ## Uninstall cert-manager explicitly (clus
 	rc=$$?; rm -f "$$tmp"; exit $$rc
 	@echo "OK: cert-manager uninstalled"
 
+.PHONY: install-envoy-gateway
+install-envoy-gateway: check-kubectl ## Install Envoy Gateway (pinned, patched, cluster-wide) and the shared GatewayClass - prerequisite for the gateway chart
+	@echo "Installing Envoy Gateway $$ENVOY_GATEWAY_VERSION..."
+	@kubectl apply -f "$$MANIFESTS_DIR/envoy-gateway-rbac.yaml"
+	@tmp=$$(mktemp) && \
+	$(call fetch_manifest,$$ENVOY_GATEWAY_MANIFEST,Envoy Gateway manifest); \
+	actual=$$( (command -v sha256sum >/dev/null 2>&1 && sha256sum "$$tmp" || shasum -a 256 "$$tmp") | cut -d' ' -f1 ); \
+	if [ "$$actual" != "$$ENVOY_GATEWAY_MANIFEST_SHA256" ]; then \
+		echo "ERROR: Envoy Gateway manifest checksum mismatch (expected $$ENVOY_GATEWAY_MANIFEST_SHA256, got $$actual)"; rm -f "$$tmp"; exit 1; \
+	fi; \
+	./scripts/patch-envoy-gateway.sh < "$$tmp" > "$$tmp.patched" || { rm -f "$$tmp" "$$tmp.patched"; exit 1; }; \
+	kubectl apply --server-side --force-conflicts -f "$$tmp.patched"; \
+	rc=$$?; rm -f "$$tmp" "$$tmp.patched"; exit $$rc
+	@kubectl wait --for=condition=Available deployment/envoy-gateway --namespace envoy-gateway-system --timeout=180s
+	@kubectl apply -f "$$MANIFESTS_DIR/envoy-gateway-gatewayclass.yaml"
+	@kubectl wait --for=condition=Accepted gatewayclass/hyperfleet --timeout=60s
+	@echo "OK: Envoy Gateway installed"
+
+.PHONY: uninstall-envoy-gateway
+uninstall-envoy-gateway: check-kubectl ## Uninstall Envoy Gateway, its GatewayClass and namespace; deletes the CRDs, and with them every Gateway, route and policy, so uninstall the gateway release first
+	@echo "Uninstalling Envoy Gateway $$ENVOY_GATEWAY_VERSION..."
+	@kubectl delete -f "$$MANIFESTS_DIR/envoy-gateway-gatewayclass.yaml" --ignore-not-found
+	@tmp=$$(mktemp) && \
+	$(call fetch_manifest,$$ENVOY_GATEWAY_MANIFEST,Envoy Gateway manifest); \
+	actual=$$( (command -v sha256sum >/dev/null 2>&1 && sha256sum "$$tmp" || shasum -a 256 "$$tmp") | cut -d' ' -f1 ); \
+	if [ "$$actual" != "$$ENVOY_GATEWAY_MANIFEST_SHA256" ]; then \
+		echo "ERROR: Envoy Gateway manifest checksum mismatch (expected $$ENVOY_GATEWAY_MANIFEST_SHA256, got $$actual)"; rm -f "$$tmp"; exit 1; \
+	fi; \
+	kubectl delete -f "$$tmp" --ignore-not-found; \
+	rc=$$?; rm -f "$$tmp"; exit $$rc
+	@kubectl delete -f "$$MANIFESTS_DIR/envoy-gateway-rbac.yaml" --ignore-not-found
+	@echo "OK: Envoy Gateway uninstalled"
+
 .PHONY: install-authorino-operator
 install-authorino-operator: check-kubectl ## Install the Authorino operator (pinned, cluster-wide) - prerequisite for gateway ext_authz
 	@echo "Installing Authorino operator $(AUTHORINO_OPERATOR_VERSION)..."
@@ -380,11 +431,11 @@ install-repos: check-helmfile-env ## Add all hyperfleet helm repos
 	$(call add-helm-repo,adapter,$(ADAPTER_CHART_REF))
 
 .PHONY: install-hyperfleet
-install-hyperfleet: validate-helmfile-config check-hyperfleet-namespace maybe-install-authorino-operator install-cert-manager ensure-kubernetes-oidc-discovery ## Install all HyperFleet components with mandatory request-path TLS
+install-hyperfleet: validate-helmfile-config check-hyperfleet-namespace maybe-install-authorino-operator install-cert-manager install-envoy-gateway ensure-kubernetes-oidc-discovery ## Install all HyperFleet components with mandatory request-path TLS
 	helmfile -f helmfile/helmfile.yaml.gotmpl -e $(HELMFILE_ENV) apply
 
 .PHONY: install-gateway
-install-gateway: validate-helmfile-config check-hyperfleet-namespace maybe-install-authorino-operator install-cert-manager ensure-kubernetes-oidc-discovery ## Install or update HyperFleet gateway, Authorino, and AuthConfig only
+install-gateway: validate-helmfile-config check-hyperfleet-namespace maybe-install-authorino-operator install-cert-manager install-envoy-gateway ensure-kubernetes-oidc-discovery ## Install or update HyperFleet gateway, Authorino, and AuthConfig only
 	helmfile -f helmfile/helmfile.yaml.gotmpl -e $(HELMFILE_ENV) -l component=gateway apply --include-needs
 
 .PHONY: switch-tenant-model

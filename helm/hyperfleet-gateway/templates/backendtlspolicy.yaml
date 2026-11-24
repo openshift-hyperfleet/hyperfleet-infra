@@ -1,0 +1,41 @@
+{{- $caSecret := include "hyperfleet-gateway.rootCASecretName" . }}
+# Envoy verifies the API's serving certificate against the internal CA and
+# checks its Service DNS name, as the hand-written cluster did.
+apiVersion: gateway.networking.k8s.io/v1
+kind: BackendTLSPolicy
+metadata:
+  name: {{ include "hyperfleet-gateway.suffixedName" (dict "root" . "suffix" "upstream") }}
+  labels:
+    {{- include "hyperfleet-gateway.labels" . | nindent 4 }}
+spec:
+  targetRefs:
+    - group: ""
+      kind: Service
+      name: {{ .Values.upstream.host }}
+  validation:
+    hostname: {{ printf "%s.%s.svc" .Values.upstream.host .Release.Namespace }}
+    caCertificateRefs:
+      - group: ""
+        kind: Secret
+        name: {{ $caSecret }}
+{{- if include "hyperfleet-gateway.edgeAuthEnabled" . }}
+---
+# The same verification for the gRPC call to Authorino's authorization listener.
+apiVersion: gateway.networking.k8s.io/v1
+kind: BackendTLSPolicy
+metadata:
+  name: {{ include "hyperfleet-gateway.suffixedName" (dict "root" . "suffix" "authorino") }}
+  labels:
+    {{- include "hyperfleet-gateway.labels" . | nindent 4 }}
+spec:
+  targetRefs:
+    - group: ""
+      kind: Service
+      name: {{ include "hyperfleet-gateway.authorinoAuthorizationService" . }}
+  validation:
+    hostname: {{ printf "%s.%s.svc" (include "hyperfleet-gateway.authorinoAuthorizationService" .) .Release.Namespace }}
+    caCertificateRefs:
+      - group: ""
+        kind: Secret
+        name: {{ $caSecret }}
+{{- end }}
