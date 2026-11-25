@@ -1,4 +1,3 @@
-{{- if include "hyperfleet-gateway.edgeAuthEnabled" . }}
 # Authorino instance for the Gateway's ext_authz SecurityPolicy. Watches AuthConfigs in this namespace.
 apiVersion: operator.authorino.kuadrant.io/v1beta1
 kind: Authorino
@@ -44,4 +43,3 @@ spec:
             path: tls-ca-bundle.pem
   {{- end }}
   logLevel: {{ .Values.authorino.logLevel }}
-{{- end }}

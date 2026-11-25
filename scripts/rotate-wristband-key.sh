@@ -16,7 +16,6 @@ set -euo pipefail
 
 NAMESPACE="${NAMESPACE:-}"
 HELMFILE_ENV="${HELMFILE_ENV:-}"
-AUTH_MODE="${AUTH_MODE:-}"
 REVOKE="${REVOKE:-false}"
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "$0")" && pwd)
@@ -32,7 +31,6 @@ fail() {
     exit 1
 }
 
-[[ "$AUTH_MODE" == "EDGE+API" ]] || fail "rotate-wristband-key requires AUTH_MODE=EDGE+API (got '$AUTH_MODE')"
 case "$REVOKE" in
     true|false) ;;
     *) fail "REVOKE must be true or false (got '$REVOKE')" ;;
@@ -45,7 +43,7 @@ done
 
 read -r -a old_keys <<<"$(kubectl get authconfig "$authconfig" --namespace "$NAMESPACE" \
     -o jsonpath="${wristband_path}.signingKeyRefs[*].name}")"
-(( ${#old_keys[@]} > 0 )) || fail "AuthConfig $authconfig has no wristband signing keys; deploy the gateway with AUTH_MODE=EDGE+API first"
+(( ${#old_keys[@]} > 0 )) || fail "AuthConfig $authconfig has no wristband signing keys; deploy the gateway first"
 token_duration=$(kubectl get authconfig "$authconfig" --namespace "$NAMESPACE" \
     -o jsonpath="${wristband_path}.tokenDuration}")
 [[ "$token_duration" =~ ^[0-9]+$ ]] || fail "AuthConfig $authconfig has no wristband tokenDuration"

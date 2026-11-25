@@ -1,4 +1,3 @@
-{{- if include "hyperfleet-gateway.edgeAuthEnabled" . }}
 # Authorino authenticates every request on the authenticated listeners before it
 # is routed, so a route added there without a policy of its own is still
 # authenticated. Fail-closed and not configurable: this is the authentication
@@ -25,4 +24,3 @@ spec:
       backendRefs:
         - name: {{ include "hyperfleet-gateway.authorinoAuthorizationService" . }}
           port: 50051
-{{- end }}

@@ -76,10 +76,14 @@ pods by it, so it is not a value.
 The headers removed from every client request before authorization runs. The
 tenant headers of both models and the two Authorino-set headers are always
 stripped, so a values override cannot leave a trusted header forgeable:
-headers.stripOverride only adds to this list.
+headers.stripOverride only adds to this list. A custom authorino.wristbandHeader is
+added too: only Authorino may set it.
 */}}
 {{- define "hyperfleet-gateway.stripHeaders" -}}
 {{- $fixed := list "x-tenant-org" "x-tenant-project" "x-tenant-tenancy-ocid" "x-tenant-compartment" "x-hyperfleet-system" "x-hyperfleet-identity" -}}
+{{- if include "hyperfleet-gateway.customWristbandHeader" . -}}
+{{- $fixed = append $fixed .Values.authorino.wristbandHeader -}}
+{{- end -}}
 {{- toJson (concat $fixed .Values.headers.stripOverride | uniq) -}}
 {{- end }}
 
@@ -146,15 +150,17 @@ templates in reverse alphabetical order, so every template that reads the policy
 must include this before it does.
 */}}
 {{- define "hyperfleet-gateway.validate" -}}
-{{- $wristband := (.Values.authorino.policy | default dict).wristband | default dict -}}
-{{- if and $wristband.enabled (not .Values.authorino.enabled) -}}
-{{- fail "authorino.policy.wristband.enabled needs authorino.enabled: the wristband is issued by Authorino" -}}
+{{- if has "authorization" .Values.headers.stripOverride -}}
+{{- fail "headers.stripOverride must not contain authorization: it is removed before authorization, so Authorino would never see the caller's credential and every request would be denied; use authorino.wristbandHeader to remove it after authorization" -}}
 {{- end -}}
 {{- end }}
 
-{{/* The AuthConfig this chart owns: only in the edge modes, and only with a policy. */}}
+{{/*
+The AuthConfig this chart owns, with its wristband and the signing-key hooks: only with a
+policy. A release whose AuthConfigs come from elsewhere sets authorino.policy: null.
+*/}}
 {{- define "hyperfleet-gateway.authConfigEnabled" -}}
-{{- if and (include "hyperfleet-gateway.edgeAuthEnabled" .) .Values.authorino.policy -}}true{{- end -}}
+{{- if .Values.authorino.policy -}}true{{- end -}}
 {{- end }}
 
 {{/* This is also the OIDC realm used by the API's Helmfile values. */}}
@@ -162,14 +168,12 @@ must include this before it does.
 {{- printf "https://%s-authorino-oidc.%s.svc:8083/%s/%s/wristband" (include "hyperfleet-gateway.authorinoName" .) .Release.Namespace .Release.Namespace (include "hyperfleet-gateway.authConfigName" .) -}}
 {{- end }}
 
-{{- define "hyperfleet-gateway.edgeAuthEnabled" -}}
-{{- if .Values.authorino.enabled -}}true{{- end -}}
-{{- end }}
-
-{{/* Authorino issues a wristband (ADR-0034 EDGE+API): needs Authorino and its policy. */}}
-{{- define "hyperfleet-gateway.wristbandEnabled" -}}
-{{- $wristband := (.Values.authorino.policy | default dict).wristband | default dict -}}
-{{- if and .Values.authorino.enabled $wristband.enabled -}}true{{- end -}}
+{{/*
+The wristband leaves in a header other than authorization: it carries the raw token and
+the caller's authorization header is removed after authorization.
+*/}}
+{{- define "hyperfleet-gateway.customWristbandHeader" -}}
+{{- if ne .Values.authorino.wristbandHeader "authorization" -}}true{{- end -}}
 {{- end }}
 
 {{- define "hyperfleet-gateway.rootCASecretName" -}}
@@ -218,7 +222,7 @@ never sweeps the keys of another release in the same namespace.
 */}}
 {{- define "hyperfleet-gateway.wristbandStaleKeys" -}}
 {{- $keep := list -}}
-{{- if include "hyperfleet-gateway.wristbandEnabled" . -}}
+{{- if include "hyperfleet-gateway.authConfigEnabled" . -}}
 {{- $keep = include "hyperfleet-gateway.wristbandSigningKeys" . | fromJsonArray -}}
 {{- end -}}
 {{- $stale := list -}}

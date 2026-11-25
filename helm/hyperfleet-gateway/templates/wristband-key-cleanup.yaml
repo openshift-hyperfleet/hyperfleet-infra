@@ -3,7 +3,7 @@
 {{- if $stale }}
 {{- $jobs = append $jobs (dict "name" (include "hyperfleet-gateway.wristbandSweepName" .) "events" "post-install,post-upgrade" "keys" $stale) }}
 {{- end }}
-{{- if include "hyperfleet-gateway.wristbandEnabled" . }}
+{{- if include "hyperfleet-gateway.authConfigEnabled" . }}
 {{- include "hyperfleet-gateway.validate" . }}
 {{- $jobs = append $jobs (dict "name" (include "hyperfleet-gateway.wristbandCleanupName" .) "events" "pre-delete" "keys" (concat (include "hyperfleet-gateway.wristbandSigningKeys" . | fromJsonArray) $stale | uniq)) }}
 {{- end }}

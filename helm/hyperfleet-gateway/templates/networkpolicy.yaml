@@ -1,0 +1,25 @@
+{{- include "hyperfleet-gateway.validate" . }}
+# Admits this gateway's Envoy pods, and only them through this policy, to the pods
+# behind the upstream, on the upstream port. NetworkPolicies add up, so this sits next
+# to the policies in helm/network-policies. The upstream pods are isolated by it: they
+# accept only what some policy allows.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "hyperfleet-gateway.suffixedName" (dict "root" . "suffix" "to-upstream") }}
+  labels:
+    {{- include "hyperfleet-gateway.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- toYaml .Values.upstream.podSelector | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "hyperfleet-gateway.proxyPodLabels" . | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.upstream.port }}

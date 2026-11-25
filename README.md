@@ -144,16 +144,16 @@ Configuration precedence (highest to lowest):
 | `make install-authorino-operator` | Install the pinned Kuadrant Authorino operator (cluster-wide; prerequisite for gateway ext_authz) |
 | `make uninstall-authorino-operator` | Uninstall the Authorino operator |
 | `make switch-tenant-model` | Switch the active tenant model (`TENANT_MODEL=onprem\|oracle`); re-applies the gateway AuthConfig and API together |
-| `make rotate-wristband-key` | Rotate the `EDGE+API` wristband signing key; `REVOKE=true` drops the old key without the overlap wait |
-| `make mint-human-token` | Mint a test-only JWT from the mock issuer (API, EDGE, or EDGE+API) |
+| `make rotate-wristband-key` | Rotate the wristband signing key; `REVOKE=true` drops the old key without the overlap wait |
+| `make mint-human-token` | Mint a test-only JWT from the mock issuer |
 | `make mint-machine-token` | Mint a short-lived ServiceAccount JWT for API or gateway authentication |
 | `make check-human-token` | Verify human JWT tenant propagation, audience enforcement, and missing-claim denial |
 | `make check-gateway-e2e` | Run the full kind gateway identity, lifecycle, tenant-isolation, and NetworkPolicy suite |
 | `make check-wristband-rotation` | Rotate and then revoke the wristband signing key while checking that requests keep working |
 
-When `AUTH_MODE=EDGE` or `AUTH_MODE=EDGE+API`, `make install-hyperfleet` installs the Authorino
-operator automatically before deploying, so `install-authorino-operator` only
-needs to be run explicitly for a standalone/one-off install.
+`make install-hyperfleet` installs the Authorino operator automatically before
+deploying, so `install-authorino-operator` only needs to be run explicitly for a
+standalone/one-off install.
 
 ### Terraform
 
@@ -304,23 +304,22 @@ Every `e2e-<19 digits>` name in `hcm-hyperfleet` belongs to
 | `OBSERVABILITY_ENABLED` | `false` | `false` | Set to `true` to deploy kube-prometheus-stack (Prometheus + Grafana) and enable ServiceMonitors |
 | `TRACING_ENABLED` | `false` | `false` | Set to `true` to deploy Tempo + OpenTelemetry Collector and enable OTLP tracing (requires `OBSERVABILITY_ENABLED=true`) |
 | `MONITORING_NAMESPACE` | `monitoring` | `monitoring` | Namespace for the observability helmfile releases |
-| `TENANT_ISOLATION_ENABLED` | `false` | `false` | Enforce API data isolation from trusted gateway tenant headers; requires `AUTH_MODE=EDGE` or `EDGE+API` |
+| `TENANT_ISOLATION_ENABLED` | `false` | `false` | Enforce API data isolation from the tenant claims in the gateway wristband |
 
-### Authentication modes
+### Authentication
 
-`AUTH_MODE` is the only authentication-placement control:
+There is one authentication model. Authorino, behind the gateway, validates the caller and
+mints a wristband; the API validates only that wristband. The earlier `AUTH_MODE` choices
+(`NONE`, `EDGE`, `API`) no longer exist.
 
-| Mode | Gateway | API | Machine credential | Human credential |
-| ---- | ------- | --- | ------------------ | ---------------- |
-| `NONE` | No authentication | No JWT validation | None | None |
-| `EDGE` | Authorino validates callers | Trusts gateway headers | `ServiceAccount <projected JWT>` | `Bearer <OIDC JWT>` |
-| `API` | No authentication | Directly validates JWTs | `Bearer <projected JWT>` | `Bearer <OIDC JWT>` |
-| `EDGE+API` | Authorino validates callers and mints a wristband | Validates only the gateway wristband | `ServiceAccount <projected JWT>` to the gateway | `Bearer <OIDC JWT>` to the gateway |
+| Caller | Credential sent to the gateway |
+| ------ | ------------------------------ |
+| Machine (Sentinels, adapters) | `ServiceAccount <projected JWT>` |
+| Human | `Bearer <OIDC JWT>` from the configured issuer |
 
-`API` mode configures the Kubernetes issuer for projected ServiceAccount tokens
-and supports one optional direct human OIDC provider. Set `OIDC_ISSUER_URL` and
-`OIDC_JWKS_URL` to enable that human provider. All supported JWTs use the
-`hyperfleet-api` audience and `sub` identity claim.
+All JWTs use the `hyperfleet-api` audience and the `sub` identity claim. A human issuer is
+required: an external `https://` URL (`OIDC_ISSUER_URL`), or the development-only mock
+issuer (`OIDC_ISSUER_MODE=mock`).
 
 ### Gateway (Envoy Gateway)
 
@@ -338,8 +337,9 @@ Deployment and Service.
 | `BackendTLSPolicy` | Verifies the API's and Authorino's internal-CA certificates |
 | `ClientTrafficPolicy` | Strips client-supplied identity and tenant headers (`headers.stripOverride` adds to a fixed list) before authorization |
 | `BackendTrafficPolicy` | Request timeout and retries |
-| `SecurityPolicy` | Authorino ext_authz on the whole serving listener (`EDGE` and `EDGE+API` only) |
-| `EnvoyExtensionPolicy` | Copies the wristband into `Authorization` (`EDGE+API` only) |
+| `NetworkPolicy` | Admits this gateway's Envoy pods to the pods behind the upstream (`upstream.podSelector`) on `upstream.port`; the API's other policies stay in `helm/network-policies` |
+| `SecurityPolicy` | Authorino ext_authz on the whole serving listener |
+| `EnvoyExtensionPolicy` | Hands the wristband to the upstream: by default it copies it into `Authorization` |
 
 Envoy Gateway is installed once per cluster by `make install-envoy-gateway`, like
 cert-manager and the Authorino operator: the pinned upstream `install.yaml`,
@@ -347,7 +347,7 @@ checksum-verified, applied with `kubectl`. There is no Helm release, so parallel
 on a shared cluster cannot lock each other out. `scripts/patch-envoy-gateway.sh`
 changes three things in it: the controller runs in `GatewayNamespace` mode, so each
 Gateway's Envoy runs in its own namespace next to Authorino and the API; Lua
-`EnvoyExtensionPolicy` support is enabled, which the `EDGE+API` wristband policy needs
+`EnvoyExtensionPolicy` support is enabled, which the wristband hand-off needs
 (without it Envoy Gateway rejects the policy and answers every request on the Gateway
 with a 500); and the topology-injector webhook covers all namespaces. The
 cluster-wide RBAC that mode needs is `manifests/envoy-gateway-rbac.yaml`.
@@ -362,9 +362,10 @@ matches the ClusterRole the upstream `gateway-helm` chart renders in this mode.
 
 **Upgrading from the hand-written Envoy chart is a breaking change, and an in-place
 upgrade is not supported.** Redeploy the environment instead. The proxy Deployment
-and its pod labels change (so the API's NetworkPolicy selector changes, and
-`make install-gateway` does not apply that policy), the generated Service is
-recreated (on GKE the LoadBalancer IP changes), and Envoy Gateway and the Gateway API
+and its pod labels change (the gateway release now renders the NetworkPolicy that
+admits its Envoy pods to the API, so `make install-gateway` applies it; the older API
+policy in `network-policies` keeps its old gateway selector until the next full
+install, which is harmless), the generated Service is recreated (on GKE the LoadBalancer IP changes), and Envoy Gateway and the Gateway API
 CRDs become cluster-wide prerequisites. A fresh `make install-hyperfleet` creates
 everything in the right order.
 
@@ -373,7 +374,7 @@ Names to know:
 | Name | Value | Why |
 | ---- | ----- | --- |
 | Service | `hyperfleet-gateway` | What Sentinel and the adapters call (`http://hyperfleet-gateway:8000`); the generated Service is named after the release |
-| Gateway, Envoy Deployment and pods | `hyperfleet-gateway` | The release name; the NetworkPolicy admits the API's traffic only from pods labelled `gateway.envoyproxy.io/owning-gateway-name` with this name |
+| Gateway, Envoy Deployment and pods | `hyperfleet-gateway` | The release name; the gateway's own NetworkPolicy admits traffic to the API only from pods labelled `gateway.envoyproxy.io/owning-gateway-name` with this name |
 
 **Values.** Only what differs between environments or gateways is a value; the
 rest (timeouts, retry counts, the security contexts, the PodDisruptionBudget, the
@@ -383,21 +384,41 @@ ext_authz port) is written into the templates. `values.yaml` has these blocks:
 | ----- | ------------ |
 | `gatewayClassName` | The shared GatewayClass the Gateway uses (default `hyperfleet`, created by `make install-envoy-gateway`) |
 | `gateway` | The Gateway `listeners` (port, protocol, optional `hostname` and `tls`). Routes and authentication attach to every listener except one marked `authenticated: false`, such as the ACME solver listener |
-| `upstream` | The backend Service (`host`, `port`) and, optionally, the Secret with its serving certificate |
+| `upstream` | The backend Service (`host`, `port`), the labels of the pods behind it (`podSelector`, required and with no default, which the NetworkPolicy selects; Helmfile sets the API's labels, and a release with another `host` sets its own) and, optionally, the Secret with its serving certificate |
 | `envoyProxy` | Replicas, resources, log level, and the Service type and annotations |
 | `monitoring.podMonitor.enabled` | Renders a PodMonitor that scrapes the proxy pods; Helmfile sets it when `OBSERVABILITY_ENABLED=true` |
 | `headers.stripOverride`, `traffic.retry` | Extra headers removed before authorization (the identity and tenant headers are always removed), and the triggers that are retried (only `GET`, `HEAD`, `PUT` and `DELETE` are, fixed in the route) |
-| `authorino` | Everything Authorino: `enabled` (off: no Authorino and no SecurityPolicy, which is `NONE`; on: `EDGE`), the instance (`name`, `image`, `hosts`, `authConfigLabelSelectors`), `wristbandHookImage` (the image of the signing-key hook Jobs, read in every state) and its `policy` |
-| `authorino.policy` | The AuthConfig this chart renders: identity providers, machine identity, tenant model and the wristband (`policy.wristband.enabled` is `EDGE+API`; it needs `authorino.enabled`). Set `policy: null` for a gateway whose AuthConfigs come from elsewhere, so none is rendered |
+| `authorino` | Everything Authorino: the instance (`name`, `image`, `logLevel`, `hosts`, `authConfigLabelSelectors`, `mockIssuerCASecretName`), `wristbandHookImage` (the image of the signing-key hook Jobs, read in every state), `wristbandHeader` (the header the wristband leaves in: the default `authorization` writes `Bearer <wristband>` over the caller's credential; any other name, such as `x-wristband`, carries the raw token and the caller's `authorization` header is deleted after authorization; see below) and its `policy` |
+| `authorino.policy` | The AuthConfig this chart renders: identity providers, machine identity, tenant model and the wristband. Set `policy: null` for a gateway whose AuthConfigs come from elsewhere: no AuthConfig and no signing-key hooks are rendered |
 
 The certificate Secrets are not values: they are named `<upstream.host>-server-cert`,
 `<authorino.name>-server-cert` and `<authorino.name>-oidc-server-cert`.
 
+**The wristband header.** The caller's credential always arrives in `Authorization`. By
+default the gateway writes the wristband back there as `Bearer <wristband>`, replacing it.
+With `authorino.wristbandHeader: x-wristband` the raw token leaves in that header instead,
+and the caller's `Authorization` header is deleted, so the upstream receives the wristband in
+one header and nothing else. The token comes from Authorino's ext_authz metadata or, for a
+custom name, from the header Authorino set itself; a request with neither is denied (403).
+A custom name is removed from client requests before authorization, so only Authorino can
+have set it. It works for a release whose AuthConfigs come from elsewhere (`policy: null`),
+which is how the Desire Store's gateway is configured. `authorization` is rejected in
+`headers.stripOverride`, because removing it before authorization would deny every request.
+
 A second gateway, such as the Desire Store's, is a second release of the same
-chart with its own `fullnameOverride`, `upstream`,
+chart with its own `fullnameOverride`, `upstream` (including the required `upstream.podSelector`),
 `authorino.name` and `authorino.authConfigLabelSelectors`, and `authorino.policy:
 null` when its AuthConfigs come from elsewhere; `make validate-authorino` renders
 two releases side by side and fails if their objects collide.
+
+**Which AuthConfigs an Authorino loads.** Each Authorino loads only the AuthConfigs whose
+labels match its `authorino.authConfigLabelSelectors`, so two instances in one namespace stay
+disjoint. The AuthConfig this chart renders carries `hyperfleet.io/gateway: general`, and the
+default selector is `hyperfleet.io/gateway=general`. A release whose AuthConfigs come from
+elsewhere, such as the Desire Store's (labelled `hyperfleet.io/desire-store`), sets its own
+selector. The selector may use only `key`, `!key`, `key=value` and `key!=value` terms separated
+by commas, and it cannot be empty: Authorino treats a selector it cannot parse as matching
+everything, so the schema rejects anything else.
 
 ### Gateway Authentication (Authorino)
 
@@ -406,10 +427,10 @@ identity before it reaches HyperFleet. Once an OIDC issuer is configured, turn
 it on with:
 
 ```bash
-AUTH_MODE=EDGE make install-hyperfleet
+OIDC_ISSUER_URL=https://issuer.example.com make install-hyperfleet
 ```
 
-With this setting enabled:
+Authentication is always on. It means that:
 
 - human users must send `Authorization: Bearer <token>` from the configured
   OIDC issuer;
@@ -453,11 +474,9 @@ keeps the TLS issuer behind a ClusterIP Service, allows ingress only from Author
 and the labeled token helper, and uses in-memory signing keys. A mock issuer
 restart invalidates previously minted tokens, so mint a fresh token after every
 rollout. E2E environments select mock mode by default; set it explicitly for other test deployments.
-External mode requires a reachable `https://` `OIDC_ISSUER_URL` in `EDGE` or
-`EDGE+API` mode when human authentication is enabled. In mock mode,
+External mode requires a reachable `https://` `OIDC_ISSUER_URL`. In mock mode,
 `OIDC_ISSUER_URL` must be unset because Helmfile derives the mock Service URL.
-The mock is installed only when an authenticated deployment uses mock mode, and
-it is ordered before the gateway.
+The mock is installed only in mock mode, and it is ordered before the gateway.
 Helmfile retains the disabled release in state so an `install-hyperfleet` mode
 change or `uninstall-hyperfleet` removes a previously installed mock issuer.
 
@@ -487,9 +506,8 @@ may be omitted.
 
 > [!IMPORTANT]
 > Gateway authentication alone verifies identity and extracts tenant
-> information, but does not enable API data isolation. Set both
-> `AUTH_MODE=EDGE` (or `EDGE+API`) and `TENANT_ISOLATION_ENABLED=true` when tenant
-> separation must be enforced.
+> information, but does not enable API data isolation. Set
+> `TENANT_ISOLATION_ENABLED=true` when tenant separation must be enforced.
 
 #### Deploy
 
@@ -500,7 +518,7 @@ Without them, Terraform does not generate the broker values required by
 
 ```bash
 make install-terraform
-AUTH_MODE=EDGE TENANT_ISOLATION_ENABLED=true \
+TENANT_ISOLATION_ENABLED=true \
   OIDC_ISSUER_URL=https://issuer.example.com \
   make install-hyperfleet
 ```
@@ -509,11 +527,11 @@ For a local Kind test deployment, select the development-only mock issuer explic
 
 ```bash
 HELMFILE_ENV=kind OIDC_ISSUER_MODE=mock \
-  AUTH_MODE=EDGE TENANT_ISOLATION_ENABLED=true \
+  TENANT_ISOLATION_ENABLED=true \
   make install-hyperfleet
 
 HELMFILE_ENV=e2e-gcp NAMESPACE=<your-namespace> \
-  AUTH_MODE=EDGE TENANT_ISOLATION_ENABLED=true \
+  TENANT_ISOLATION_ENABLED=true \
   make install-hyperfleet
 ```
 
@@ -522,7 +540,7 @@ To use a real issuer in an e2e environment, override the mode explicitly:
 ```bash
 HELMFILE_ENV=e2e-gcp NAMESPACE=<your-namespace> \
   OIDC_ISSUER_MODE=external \
-  AUTH_MODE=EDGE TENANT_ISOLATION_ENABLED=true \
+  TENANT_ISOLATION_ENABLED=true \
   OIDC_ISSUER_URL=https://issuer.example.com \
   TENANT_MODEL=oracle \
   make install-hyperfleet
@@ -536,11 +554,9 @@ it while another HyperFleet namespace is using gateway authentication.
 
 | Variable | Default | When to set it |
 | -------- | ------- | -------------- |
-| `AUTH_MODE` | `EDGE+API` | One of `NONE`, `EDGE`, `API`, or `EDGE+API` |
-| `TENANT_ISOLATION_ENABLED` | `false` | Scope API data using trusted gateway headers; requires `AUTH_MODE=EDGE` or `EDGE+API` |
+| `TENANT_ISOLATION_ENABLED` | `false` | Scope API data using the tenant claims in the gateway wristband |
 | `OIDC_ISSUER_MODE` | `mock` in `e2e-gcp` and `e2e-kind`; `external` otherwise | Set explicitly to override the environment default |
-| `OIDC_ISSUER_URL` | unset | HTTPS human issuer; API mode also requires `OIDC_JWKS_URL` |
-| `OIDC_JWKS_URL` | unset | Explicit human-provider JWKS URL for API mode |
+| `OIDC_ISSUER_URL` | unset | HTTPS human issuer; required unless `OIDC_ISSUER_MODE=mock` |
 | `TENANT_MODEL` | `onprem` | Set to `oracle` when tokens use OCI tenancy claims |
 | `AUTHORINO_HOSTS` | unset | Add comma-separated external gateway hostnames if users access the gateway through them |
 | `AUTHORINO_LOG_LEVEL` | `info` | Increase only when diagnosing authentication problems |
@@ -556,7 +572,6 @@ requests work, add the external hostname, for example:
 ```bash
 AUTHORINO_HOSTS=api.example.com,api-alt.example.com \
   OIDC_ISSUER_MODE=external \
-  AUTH_MODE=EDGE \
   OIDC_ISSUER_URL=https://issuer.example.com \
   make install-hyperfleet
 ```
@@ -566,7 +581,7 @@ AUTHORINO_HOSTS=api.example.com,api-alt.example.com \
 Reapply the deployment with the new model:
 
 ```bash
-AUTH_MODE=EDGE TENANT_ISOLATION_ENABLED=true \
+TENANT_ISOLATION_ENABLED=true \
   OIDC_ISSUER_MODE=external \
   OIDC_ISSUER_URL=https://issuer.example.com \
   make switch-tenant-model TENANT_MODEL=oracle
@@ -626,7 +641,7 @@ they mutate the cluster:
 
 ```bash
 HELMFILE_ENV=kind OIDC_ISSUER_MODE=mock \
-  AUTH_MODE=EDGE TENANT_ISOLATION_ENABLED=true \
+  TENANT_ISOLATION_ENABLED=true \
   TENANT_MODEL=onprem TOKEN_TENANT=org-acme TOKEN_SUBTENANT=project-blue \
   make check-human-token
 ```
@@ -636,11 +651,10 @@ The helper checks the fixed explicit headers (`x-tenant-org` /
 not create a JSON tenancy-context header or support arbitrary future tenant
 dimensions. Those require a coordinated gateway AuthConfig and API change.
 
-`EDGE+API` is the defense-in-depth mode: Envoy replaces the validated original
-credential with a short-lived Authorino wristband, and the API validates that
-wristband against Authorino's OIDC endpoint using the namespace-local gateway
-CA. The API never accepts the original human or ServiceAccount credentials in
-this mode.
+Envoy replaces the validated original credential with a short-lived Authorino
+wristband, and the API validates that wristband against Authorino's OIDC endpoint
+using the namespace-local gateway CA. The API never accepts the original human or
+ServiceAccount credentials.
 
 #### Rotate the wristband signing key
 
@@ -700,7 +714,7 @@ server minimum—and prints only the JWT to stdout. Override
 `MACHINE_TOKEN_DURATION` as needed.
 
 ```bash
-token=$(HELMFILE_ENV=kind AUTH_MODE=EDGE \
+token=$(HELMFILE_ENV=kind \
   make mint-machine-token)
 
 curl -i -H "Authorization: ServiceAccount $token" \
@@ -732,8 +746,7 @@ the failing check with a suggested fix.
 `make check-human-token` runs only the human token checks.
 `GATEWAY_E2E_TIMEOUT` (default 300 seconds) bounds each wait.
 
-`make check-wristband-rotation` needs the same deployment with
-`AUTH_MODE=EDGE+API`, which is the default. It is not part of
+`make check-wristband-rotation` needs the same deployment. It is not part of
 `check-gateway-e2e` because it takes about 8 minutes. It rotates the key while
 it sends one request after another and requires that none fails. It then
 redeploys the gateway and checks that the rotated key stays, and finally

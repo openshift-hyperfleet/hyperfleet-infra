@@ -1,4 +1,4 @@
-{{- if include "hyperfleet-gateway.wristbandEnabled" . }}
+{{- if include "hyperfleet-gateway.authConfigEnabled" . }}
 {{- include "hyperfleet-gateway.validate" . }}
 {{- $name := include "hyperfleet-gateway.wristbandProvisionerName" . }}
 {{- $keys := include "hyperfleet-gateway.wristbandSigningKeys" . | fromJsonArray }}

@@ -1,0 +1,14 @@
+# Values `make lint-helm` lints the chart with: the chart has no default for
+# upstream.podSelector, so a release always sets it (Helmfile does, for the API).
+upstream:
+  podSelector:
+    app.kubernetes.io/name: hyperfleet-api
+    app.kubernetes.io/instance: hyperfleet-api
+    app.kubernetes.io/component: api
+authorino:
+  policy:
+    identityProviders:
+      - name: human-jwt
+        issuerUrl: https://issuer.example.com
+        audience: hyperfleet-api
+        identityClaim: email

@@ -39,6 +39,9 @@ metadata:
   name: {{ include "hyperfleet-gateway.authConfigName" . }}
   labels:
     {{- include "hyperfleet-gateway.labels" . | nindent 4 }}
+    # The shard label: the general gateway's Authorino selects it (authorino.authConfigLabelSelectors),
+    # and the Desire Store's dedicated Authorino does not, so the two never load the same AuthConfig.
+    hyperfleet.io/gateway: general
 spec:
   # Matched request authority: always the gateway Service DNS + localhost,
   # plus any extra hostnames configured via authorino.hosts (AUTHORINO_HOSTS).
@@ -139,7 +142,6 @@ spec:
             value: ""
   response:
     success:
-      {{- if include "hyperfleet-gateway.wristbandEnabled" . }}
       dynamicMetadata:
         wristband:
           wristband:
@@ -163,7 +165,6 @@ spec:
                 expression: {{ printf "%s in auth.identity ? auth.identity[%s] : ''" ($cfg.required.claim | toJson) ($cfg.required.claim | toJson) | quote }}
               {{ $cfg.optional.claim | quote }}:
                 expression: {{ printf "%s in auth.identity ? auth.identity[%s] : ''" ($cfg.optional.claim | toJson) ($cfg.optional.claim | toJson) | quote }}
-      {{- end }}
       headers:
         # "true" for machine callers (hyperfleet-components), "false" for humans.
         x-hyperfleet-system:

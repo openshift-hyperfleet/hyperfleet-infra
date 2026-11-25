@@ -1,7 +1,13 @@
-{{- if include "hyperfleet-gateway.wristbandEnabled" . }}
-# The wristband comes only from ext_authz dynamic metadata, never from a
-# client-supplied HTTP header. Fail closed if Authorino returns OK without
-# producing a wristband. Envoy Gateway v1.9 names the filter per SecurityPolicy
+{{- include "hyperfleet-gateway.validate" . }}
+{{- $custom := include "hyperfleet-gateway.customWristbandHeader" . }}
+# Hands the wristband to the upstream after Authorino has authorized the request.
+# With the default header the wristband comes only from ext_authz dynamic metadata, never
+# from a client-supplied header, and replaces the caller's authorization header as
+# "Bearer <wristband>". With a custom header the raw token leaves in that header, taken
+# from the metadata or from the header Authorino set (the name is removed from client
+# requests before authorization, so only Authorino can have set it), and the caller's
+# authorization header is deleted. Either way, a request without a wristband is denied.
+# Envoy Gateway v1.9 names the filter per SecurityPolicy
 # but stores its dynamic metadata under the plain "envoy.filters.http.ext_authz"
 # namespace (checked on a live proxy); if a future version moves it, the lookup
 # finds nothing and every request is denied, not forwarded unauthenticated.
@@ -25,10 +31,19 @@ spec:
         function envoy_on_request(handle)
           local metadata = handle:streamInfo():dynamicMetadata():get("envoy.filters.http.ext_authz")
           local token = metadata and metadata["wristband"]
+          {{- if $custom }}
+          if type(token) ~= "string" or token == "" then
+            token = handle:headers():get({{ .Values.authorino.wristbandHeader | quote }})
+          end
+          {{- end }}
           if type(token) ~= "string" or token == "" then
             handle:respond({[":status"] = "403"}, "missing gateway wristband")
             return
           end
+          {{- if $custom }}
+          handle:headers():replace({{ .Values.authorino.wristbandHeader | quote }}, token)
+          handle:headers():remove("authorization")
+          {{- else }}
           handle:headers():replace("authorization", "Bearer " .. token)
+          {{- end }}
         end
-{{- end }}

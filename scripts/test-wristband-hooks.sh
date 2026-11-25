@@ -74,8 +74,7 @@ fi
 render() {
   helm template "$RELEASE" "$CHART_DIR" \
     --namespace "$NAMESPACE" \
-    --set authorino.enabled=true \
-    --set authorino.policy.wristband.enabled=true \
+    --set-json 'upstream.podSelector={"app.kubernetes.io/name":"hyperfleet-api","app.kubernetes.io/instance":"hyperfleet-api","app.kubernetes.io/component":"api"}' \
     --set "authorino.wristbandHookImage=${IMAGE}" \
     --set "authorino.policy.wristband.signingKeySecretName=${SECRET_NAME}" \
     --set-json 'authorino.policy.identityProviders=[{"name":"human-jwt","issuerUrl":"https://idp.example.com","audience":"hyperfleet-api","identityClaim":"sub"}]'

@@ -10,7 +10,6 @@ PHASE="${1:-}"
 NAMESPACE="${NAMESPACE:-}"
 HELMFILE_ENV="${HELMFILE_ENV:-}"
 OIDC_ISSUER_MODE="${OIDC_ISSUER_MODE:-}"
-AUTH_MODE="${AUTH_MODE:-NONE}"
 TENANT_ISOLATION_ENABLED="${TENANT_ISOLATION_ENABLED:-false}"
 TENANT_MODEL="${TENANT_MODEL:-onprem}"
 GATEWAY_SERVICE="${GATEWAY_SERVICE:-hyperfleet-gateway}"
@@ -134,14 +133,10 @@ validate_inputs() {
     if [[ "$PHASE" == "full" && "$HELMFILE_ENV" != "kind" ]]; then
         fail "full requires HELMFILE_ENV=kind because it verifies Cilium NetworkPolicy enforcement"
     fi
-    if [[ "$PHASE" == "rotation" && "$AUTH_MODE" != "EDGE+API" ]]; then
-        fail "rotation requires AUTH_MODE=EDGE+API because only it issues wristbands"
-    fi
     require_command kubectl
     require_command jq
     [[ -n "$NAMESPACE" ]] || fail "NAMESPACE is required"
     [[ "$OIDC_ISSUER_MODE" == "mock" ]] || fail "$PHASE requires OIDC_ISSUER_MODE=mock"
-    [[ "$AUTH_MODE" == "EDGE" || "$AUTH_MODE" == "EDGE+API" ]] || fail "$PHASE requires AUTH_MODE=EDGE or EDGE+API"
     [[ "$TENANT_ISOLATION_ENABLED" == "true" ]] || fail "$PHASE requires TENANT_ISOLATION_ENABLED=true"
     configure_model
 }
@@ -384,7 +379,7 @@ on_exit() {
     if [[ "$restore_onprem" == "true" ]]; then
         echo "Restoring tenant model to onprem..." >&2
         switch_model onprem || {
-            error "tenant model NOT restored. Run: HELMFILE_ENV=$HELMFILE_ENV AUTH_MODE=$AUTH_MODE OIDC_ISSUER_MODE=mock TENANT_ISOLATION_ENABLED=true make switch-tenant-model TENANT_MODEL=onprem"
+            error "tenant model NOT restored. Run: HELMFILE_ENV=$HELMFILE_ENV OIDC_ISSUER_MODE=mock TENANT_ISOLATION_ENABLED=true make switch-tenant-model TENANT_MODEL=onprem"
             rc=1
         }
     fi
@@ -465,12 +460,9 @@ run_current_model() {
     current_cluster_id=$(printf '%s' "$body" | jq -er '.id | select(type == "string" and length > 0)') \
         || fail "forged-header cluster response did not contain a cluster id"
     assert_tenancy "$body" "$tenant_a" ""
-    # Only EDGE+API gives the API a caller identity, the gateway wristband
-    # subject. In EDGE mode the API records its system default instead.
-    if [[ "$AUTH_MODE" == "EDGE+API" ]]; then
-        body_matches "$body" --arg subject "$subject_a" '.created_by == $subject' \
-            || fail "API did not record the gateway-derived identity $subject_a as created_by"
-    fi
+    # The wristband gives the API a caller identity, its subject.
+    body_matches "$body" --arg subject "$subject_a" '.created_by == $subject' \
+        || fail "API did not record the gateway-derived identity $subject_a as created_by"
     pass
 
     # The namespace's default ServiceAccount is never on the gateway allow-list.
@@ -632,7 +624,7 @@ run_rotation() {
 
 validate_inputs
 # mint-human-token.sh reads these from the environment.
-export NAMESPACE AUTH_MODE OIDC_ISSUER_MODE TENANT_MODEL
+export NAMESPACE OIDC_ISSUER_MODE TENANT_MODEL
 mint_log=$(mktemp)
 trap on_exit EXIT
 check "HyperFleet stack is deployed and ready" \

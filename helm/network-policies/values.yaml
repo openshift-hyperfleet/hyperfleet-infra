@@ -10,11 +10,6 @@ monitoringNamespace: monitoring
 # if it is installed under a different name or release instance.
 apiNameLabel: hyperfleet-api
 apiInstanceLabel: hyperfleet-api
-# Name of the Gateway whose Envoy pods may reach the API. Envoy Gateway labels
-# its proxy pods `gateway.envoyproxy.io/owning-gateway-name`, and the
-# hyperfleet-gateway chart names its Gateway after the release, so this must equal
-# the gateway release name.
-gatewayName: hyperfleet-gateway
 
 # Add or edit policies here — this is the only file that needs to change.
 # `podSelector` and `ingress` are passed through `tpl`, so they can reference
@@ -26,18 +21,10 @@ networkPolicies:
       app.kubernetes.io/instance: "{{ .Values.apiInstanceLabel }}"
       app.kubernetes.io/component: api
     ingress:
-      # Sole ingress source for the API's app port: the gateway. No
-      # sentinel/adapter exception — they reach the API through the gateway
-      # (baseUrl defaults to http://hyperfleet-gateway:8000, the Service Envoy
-      # Gateway generates for the Gateway).
-      - from:
-          - podSelector:
-              matchLabels:
-                gateway.envoyproxy.io/owning-gateway-name: "{{ .Values.gatewayName }}"
-                gateway.envoyproxy.io/owning-gateway-namespace: "{{ .Values.namespace }}"
-        ports:
-          - protocol: TCP
-            port: 8000
+      # The API's app port is admitted by the NetworkPolicy the hyperfleet-gateway
+      # chart renders for its upstream (`<release>-to-upstream`): the gateway is the
+      # sole source, and there is no sentinel/adapter exception, because they reach
+      # the API through the gateway (baseUrl defaults to http://hyperfleet-gateway:8000).
       # Prometheus metrics-only exception: the actual Prometheus pods
       # (not the whole monitoring namespace), scrape :9090 only.
       - from:

@@ -44,10 +44,6 @@ DRY_RUN_FLAG      := $(if $(filter $(TRUTHY_VALUES),$(strip $(DRY_RUN))),--dry-r
 AUTO_APPROVE_FLAG := $(if $(filter $(TRUTHY_VALUES),$(strip $(AUTO_APPROVE))),-auto-approve)
 BUILD_IMAGES_ENABLED := $(if $(filter $(TRUTHY_VALUES),$(strip $(BUILD_IMAGES))),1,)
 
-# Authentication has one public control.
-AUTH_MODE ?= EDGE+API
-EDGE_AUTH_ENABLED := $(if $(filter EDGE EDGE+API,$(strip $(AUTH_MODE))),1,)
-
 
 # Default Dirs
 MANIFESTS_DIR    ?= manifests
@@ -83,8 +79,7 @@ MACHINE_TOKEN_AUDIENCE ?= hyperfleet-api
 MACHINE_TOKEN_DURATION ?= 10m
 
 # Authorino operator (Kuadrant). Cluster-singleton prerequisite for the gateway
-# ext_authz auth boundary; installs AuthConfig / Authorino CRDs when AUTH_MODE
-# is EDGE or EDGE+API. Pinned by commit (not the mutable version tag) and
+# ext_authz auth boundary; installs the AuthConfig / Authorino CRDs. Pinned by commit (not the mutable version tag) and
 # checksum-verified before being applied. Bumping AUTHORINO_OPERATOR_VERSION
 # requires updating COMMIT and SHA256 together.
 AUTHORINO_OPERATOR_VERSION        ?= v0.27.0
@@ -369,25 +364,13 @@ uninstall-authorino-operator: check-kubectl ## Uninstall the Authorino operator
 	rc=$$?; rm -f "$$tmp"; exit $$rc
 	@echo "OK: Authorino operator uninstalled"
 
-.PHONY: maybe-install-authorino-operator
-maybe-install-authorino-operator: ## Install the Authorino operator only for AUTH_MODE=EDGE or EDGE+API
-ifneq ($(EDGE_AUTH_ENABLED),)
-	$(MAKE) install-authorino-operator
-else
-	@echo "[NOTE: Skipping Authorino operator install (AUTH_MODE=$(AUTH_MODE))]"
-endif
-
-.PHONY: ensure-kubernetes-oidc-discovery
-ensure-kubernetes-oidc-discovery: check-kubectl check-kubectl-context ## Allow API-mode JWKS discovery on Kind before deployment
-	@./scripts/ensure-kubernetes-oidc-discovery.sh
-
 .PHONY: mint-human-token
 mint-human-token: ## Mint a test-only mock human JWT
 	@$(MAKE) --no-print-directory check-kubectl-context check-jq >&2
 	@./scripts/mint-human-token.sh
 
 .PHONY: mint-machine-token
-mint-machine-token: ## Mint a projected ServiceAccount JWT for API or gateway authentication
+mint-machine-token: ## Mint a projected ServiceAccount JWT for gateway authentication
 	@$(MAKE) --no-print-directory check-kubectl-context >&2
 	@./scripts/mint-machine-token.sh
 
@@ -431,18 +414,15 @@ install-repos: check-helmfile-env ## Add all hyperfleet helm repos
 	$(call add-helm-repo,adapter,$(ADAPTER_CHART_REF))
 
 .PHONY: install-hyperfleet
-install-hyperfleet: validate-helmfile-config check-hyperfleet-namespace maybe-install-authorino-operator install-cert-manager install-envoy-gateway ensure-kubernetes-oidc-discovery ## Install all HyperFleet components with mandatory request-path TLS
+install-hyperfleet: validate-helmfile-config check-hyperfleet-namespace install-authorino-operator install-cert-manager install-envoy-gateway ## Install all HyperFleet components with mandatory request-path TLS
 	helmfile -f helmfile/helmfile.yaml.gotmpl -e $(HELMFILE_ENV) apply
 
 .PHONY: install-gateway
-install-gateway: validate-helmfile-config check-hyperfleet-namespace maybe-install-authorino-operator install-cert-manager install-envoy-gateway ensure-kubernetes-oidc-discovery ## Install or update HyperFleet gateway, Authorino, and AuthConfig only
+install-gateway: validate-helmfile-config check-hyperfleet-namespace install-authorino-operator install-cert-manager install-envoy-gateway ## Install or update HyperFleet gateway, Authorino, and AuthConfig only
 	helmfile -f helmfile/helmfile.yaml.gotmpl -e $(HELMFILE_ENV) -l component=gateway apply --include-needs
 
 .PHONY: switch-tenant-model
-switch-tenant-model: validate-helmfile-config maybe-install-authorino-operator ## Switch the active tenant model; requires AUTH_MODE=EDGE or EDGE+API
-	@if [ -z "$(EDGE_AUTH_ENABLED)" ]; then \
-		echo "ERROR: switch-tenant-model requires AUTH_MODE=EDGE or EDGE+API"; exit 1; \
-	fi
+switch-tenant-model: validate-helmfile-config install-authorino-operator ## Switch the active tenant model
 	@case "$(TENANT_MODEL)" in \
 		onprem|oracle) ;; \
 		*) echo "ERROR: TENANT_MODEL='$(TENANT_MODEL)' must be 'onprem' or 'oracle'"; exit 1 ;; \
@@ -875,7 +855,9 @@ test-network-policy-enforcement: check-kubectl ## Check default-deny enforcement
 lint-helm: check-helm helm-deps ## Lint all Helm charts
 	@for chart in $(HELM_DIR)/*/; do \
 		echo "Linting $$chart..."; \
-		helm lint "$$chart" || exit 1; \
+		values=""; \
+		if [ -f "$$chart/ci/lint-values.yaml" ]; then values="-f $$chart/ci/lint-values.yaml"; fi; \
+		helm lint $$values "$$chart" || exit 1; \
 	done
 
 .PHONY: lint-shellcheck
@@ -888,7 +870,7 @@ lint-shellcheck: ## Validate shell scripts with shellcheck
 		echo "WARN: shellcheck not installed, skipping"; \
 	fi
 .PHONY: validate-authorino
-validate-authorino: check-helm ## Validate internal TLS and all gateway AUTH_MODE templates
+validate-authorino: check-helm ## Validate internal TLS and the gateway templates
 	@./scripts/validate-authorino.sh
 
 .PHONY: validate-network-policies
@@ -899,7 +881,12 @@ validate-network-policies: check-helm ## Validate network-policies Helm chart re
 	echo "$$out" | grep -q "name: hyperfleet-api-ingress" \
 		|| { echo "ERROR: hyperfleet-api-ingress NetworkPolicy not rendered"; exit 1; }; \
 	echo "$$out" | grep -q "name: hyperfleet-api-postgres-ingress" \
-		|| { echo "ERROR: hyperfleet-api-postgres-ingress NetworkPolicy not rendered"; exit 1; }
+		|| { echo "ERROR: hyperfleet-api-postgres-ingress NetworkPolicy not rendered"; exit 1; }; \
+	if echo "$$out" | grep -q "gateway.envoyproxy.io"; then \
+		echo "ERROR: network-policies must not name the gateway: the hyperfleet-gateway chart renders the gateway-to-upstream policy"; exit 1; \
+	fi; \
+	echo "$$out" | grep -q "port: 9090" \
+		|| { echo "ERROR: the Prometheus rule of hyperfleet-api-ingress is missing"; exit 1; }
 	@echo "OK: network-policies chart rendered successfully"
 
 .PHONY: validate-namespace-cleaner
@@ -1017,7 +1004,7 @@ validate-tenant-claims: check-helm check-helmfile ## Validate that tenant claims
 	@set -eu; \
 	ns=hf-validate-claims; \
 	export NAMESPACE=$$ns RUN_ID=$$ns OIDC_ISSUER_MODE=mock OIDC_ISSUER_URL= OIDC_JWKS_URL=; \
-	export TENANT_ISOLATION_ENABLED=true AUTH_MODE=EDGE+API TENANT_MODEL=onprem; \
+	export TENANT_ISOLATION_ENABLED=true TENANT_MODEL=onprem; \
 	helmfile -f helmfile/helmfile.yaml.gotmpl -e e2e-kind repos >/dev/null \
 		|| { echo "ERROR: Helmfile repository setup failed"; exit 1; }; \
 	out=$$(helmfile -f helmfile/helmfile.yaml.gotmpl -e e2e-kind -l component=api template --skip-deps) \

@@ -53,7 +53,6 @@ metadata:
 spec:
   ca:
     secretName: {{ $rootCASecretName }}
-{{- if include "hyperfleet-gateway.edgeAuthEnabled" . }}
 ---
 apiVersion: cert-manager.io/v1
 kind: Certificate
@@ -96,7 +95,6 @@ spec:
     - {{ $authorinoOIDCServiceName }}
     - {{ printf "%s.%s.svc" $authorinoOIDCServiceName .Release.Namespace }}
     - {{ printf "%s.%s.svc.cluster.local" $authorinoOIDCServiceName .Release.Namespace }}
-{{- end }}
 ---
 apiVersion: cert-manager.io/v1
 kind: Certificate

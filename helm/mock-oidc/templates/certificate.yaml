@@ -26,7 +26,7 @@ metadata:
     {{- include "mock-oidc.labels" . | nindent 4 }}
 spec:
   secretName: {{ .Values.tls.secretName }}
-  # Dev-only issuer: keep its certificate stable for local and E2E API-mode
+  # Dev-only issuer: keep its certificate stable for local and E2E
   # testing. HYPERFLEET-1523 owns any future certificate-rotation decision.
   duration: 876000h # 100 years; X.509 certificates cannot literally never expire.
   renewal:

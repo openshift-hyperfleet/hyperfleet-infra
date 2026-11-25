@@ -33,11 +33,16 @@
     "upstream": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["host", "port"],
+      "required": ["host", "port", "podSelector"],
       "properties": {
         "host": { "type": "string", "minLength": 1 },
         "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
-        "tlsSecretName": { "type": "string" }
+        "tlsSecretName": { "type": "string" },
+        "podSelector": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": { "type": "string", "minLength": 1 }
+        }
       }
     },
     "envoyProxy": {
@@ -114,7 +119,6 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "enabled": { "type": "boolean" },
         "image": {
           "type": "object",
           "additionalProperties": false,
@@ -131,14 +135,17 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "enabled": { "type": "boolean" },
         "name": { "type": "string", "minLength": 1, "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" },
         "image": { "type": "string" },
         "logLevel": { "type": "string", "minLength": 1 },
         "hosts": { "type": "array", "items": { "type": "string", "minLength": 1 } },
-        "authConfigLabelSelectors": { "type": "string" },
+        "authConfigLabelSelectors": {
+          "type": "string",
+          "pattern": "^!?[A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?(/[A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?)?((=|!=)[A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?)?(,!?[A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?(/[A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?)?((=|!=)[A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?)?)*$"
+        },
         "mockIssuerCASecretName": { "type": "string" },
         "wristbandHookImage": { "type": "string", "minLength": 1 },
+        "wristbandHeader": { "type": "string", "pattern": "^[a-z0-9-]+$" },
         "policy": {
           "type": ["object", "null"],
           "additionalProperties": false,
@@ -186,7 +193,6 @@
               "type": "object",
               "additionalProperties": false,
               "properties": {
-                "enabled": { "type": "boolean" },
                 "audience": { "type": "string", "minLength": 1 },
                 "signingKeySecretName": { "type": "string", "minLength": 1 },
                 "signingKeys": {
@@ -201,8 +207,8 @@
       "allOf": [
         {
           "if": {
-            "properties": { "enabled": { "const": true }, "policy": { "type": "object" } },
-            "required": ["enabled", "policy"]
+            "properties": { "policy": { "type": "object" } },
+            "required": ["policy"]
           },
           "then": {
             "properties": {

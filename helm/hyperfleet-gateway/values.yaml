@@ -39,6 +39,12 @@ upstream:
   port: 8000
   # Secret holding the upstream's serving certificate. Default: "<host>-server-cert".
   # tlsSecretName: ""
+  # Labels of the pods behind `host`. Required: there is no default, because Helm merges
+  # maps, so a default would leak its labels into whatever a release sets. The
+  # NetworkPolicy this chart renders admits this gateway's Envoy pods to these pods on
+  # `port`. Helmfile sets the API's labels for the API gateway; a release with another
+  # upstream (the Desire Store) sets its own.
+  podSelector: {}
 
 envoyProxy:
   replicas: 2
@@ -85,7 +91,6 @@ monitoring:
 # post-install/upgrade Job blocks dependent Helmfile releases until the Secrets
 # consumed by Envoy, Authorino, and the upstream are issued.
 certificateWaiter:
-  enabled: true
   image:
     repository: alpine/k8s@sha256:15cfdf84d6de3559bc54d7479eb4e8aadbf71f6d7f08782cb1e91f3446f4b2d8
     pullPolicy: IfNotPresent
@@ -102,11 +107,6 @@ certificateWaiter:
 # Authorino: the ext_authz service, its instance, and the policy it enforces
 # -----------------------------------------------------------------------------
 authorino:
-  # Deploys Authorino, its certificates and the SecurityPolicy that makes Envoy
-  # authenticate every request through it. Off: the gateway authenticates nothing
-  # (the API may still validate JWTs itself). Authorino with
-  # policy.wristband.enabled is what ADR-0034 calls EDGE+API; without it, EDGE.
-  enabled: false
   # Name of the Authorino instance. The operator derives its Services and
   # ServiceAccount from it, and so do the certificate Secrets
   # ("<name>-server-cert", "<name>-oidc-server-cert"): a second gateway in the
@@ -120,22 +120,36 @@ authorino:
   # names and localhost (see authconfig.yaml).
   hosts: []
   # Label selector (Authorino syntax) restricting which AuthConfigs this instance
-  # loads, so two Authorino instances stay disjoint. Empty selects every
-  # AuthConfig in the namespace.
-  authConfigLabelSelectors: ""
+  # loads, so two Authorino instances stay disjoint. The AuthConfig this chart renders
+  # carries hyperfleet.io/gateway=general, so the default selects exactly that and
+  # nothing else in the namespace; a release whose AuthConfigs come from elsewhere (the
+  # Desire Store: hyperfleet.io/desire-store) sets its own. Empty would select every
+  # AuthConfig in the namespace. Only key, !key, key=value and key!=value terms,
+  # separated by commas, are accepted: Authorino treats a selector it cannot parse as
+  # matching everything, so a typo would silently load every AuthConfig.
+  authConfigLabelSelectors: hyperfleet.io/gateway=general
   # Test-only CA mounted into Authorino's Go system trust directory when Helmfile
   # selects the self-signed mock issuer over HTTPS.
   mockIssuerCASecretName: ""
   # Image of the Jobs that create and delete the wristband signing-key Secrets
   # (kubectl and openssl). Pinned by digest. It is read whenever a hook renders,
-  # including the sweep of keys left behind after wristbands are turned off, so
-  # it is set whether or not Authorino or the wristband is enabled.
+  # including the sweep of keys a release with `policy: null` leaves behind, so it
+  # is set whether or not the release has a policy.
   wristbandHookImage: bitnami/kubectl:1.33.4-debian-12-r0@sha256:ed0b31a0508da84ee655c5c6e01bd3897fc56ad6cf69debb27fa1893a06d2246
+  # The header the wristband leaves in, toward the upstream. The caller's credential
+  # always arrives in `authorization`. The default, `authorization`, writes
+  # "Bearer <wristband>" over it. Any other name (x-wristband) carries the raw token,
+  # and the caller's `authorization` header is deleted after authorization: the
+  # upstream receives the wristband in that one header and nothing else. A custom name
+  # is also removed from client requests before authorization, so it cannot be forged.
+  # The token comes from ext_authz metadata or, for a custom name, from the header
+  # Authorino itself set; with neither the request is denied.
+  wristbandHeader: authorization
 
   # The AuthConfig this chart renders. Set `policy: null` for a gateway whose
   # AuthConfigs come from elsewhere (an operator): no AuthConfig is rendered then.
   policy:
-    # Required in EDGE and EDGE+API modes. Helmfile supplies the human provider.
+    # At least one is required. Helmfile supplies the human provider.
     identityProviders: []
     # - name: human-jwt
     #   issuerUrl: https://idp.example.com/realms/hyperfleet
@@ -164,7 +178,7 @@ authorino:
     tenant:
       model: onprem
 
-    # Festival Wristband settings, used when wristband.enabled. A chart hook creates the
+    # Festival Wristband settings. A chart hook creates the
     # signing Secret in-cluster before the AuthConfig is installed. The Secret
     # contains key.pem, a traditional PKCS#1 RSA private key required by the
     # pinned Authorino version, and is separate from every TLS private key.
@@ -172,9 +186,6 @@ authorino:
     # hyperfleet.io/wristband-signing-key only marks the Secrets the hooks may
     # delete. make rotate-wristband-key manages the list.
     wristband:
-      # Authorino exchanges the external credential for an API-only wristband
-      # (EDGE+API). Needs authorino.enabled.
-      enabled: false
       # Audience the API validates; it must match the API chart's configuration.
       audience: hyperfleet-api
       # Name of the key created on a fresh install. Rotated keys get new names

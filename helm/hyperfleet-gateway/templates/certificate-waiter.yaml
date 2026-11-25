@@ -1,9 +1,6 @@
-{{- if .Values.certificateWaiter.enabled }}
 {{- $certificateNames := list .Values.upstream.host (printf "%s-ca" (include "hyperfleet-gateway.fullname" .)) }}
-{{- if include "hyperfleet-gateway.edgeAuthEnabled" . }}
 {{- $certificateNames = append $certificateNames (printf "%s-authorino-authorization" (include "hyperfleet-gateway.authorinoName" .)) }}
 {{- $certificateNames = append $certificateNames (printf "%s-authorino-oidc" (include "hyperfleet-gateway.authorinoName" .)) }}
-{{- end }}
 {{- $waiterName := printf "%s-certificate-waiter" (include "hyperfleet-gateway.fullname" .) }}
 # Helm --wait does not wait for cert-manager Certificate custom resources.
 # This hook runs after native gateway resources are ready and prevents Helmfile
@@ -100,4 +97,3 @@ spec:
       volumes:
         - name: tmp
           emptyDir: {}
-{{- end }}
