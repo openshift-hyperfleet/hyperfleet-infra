@@ -3,3 +3,11 @@
 # root LICENSE into the image. Keep the git history out of that context; it is
 # not referenced by any Dockerfile.
 .git
+
+# Terraform state, provider caches and personal/CI env files (see .gitignore)
+# can hold credentials and are never referenced by a Dockerfile.
+**/.terraform/
+**/*.tfstate
+**/*.tfstate.*
+**/*.tfvars
+**/*.tfbackend
