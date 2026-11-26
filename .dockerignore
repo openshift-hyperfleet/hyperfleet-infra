@@ -1,0 +1,5 @@
+# The wristband-tools build uses the repository root as its context (matching
+# the Konflux PipelineRun's path-context), because the Dockerfile copies the
+# root LICENSE into the image. Keep the git history out of that context; it is
+# not referenced by any Dockerfile.
+.git
