@@ -504,7 +504,7 @@ test-ci-tools: build-ci-tools ## Run ci-dry-run, then terraform init without net
 # ==== Wristband Tools Image Targets ====
 .PHONY: build-wristband-tools
 build-wristband-tools: check-container-tool ## Build the wristband tools image as WRISTBAND_TOOLS_IMAGE
-	$(CONTAINER_TOOL) build --platform $(WRISTBAND_TOOLS_PLATFORM) --build-arg APP_VERSION='$(WRISTBAND_TOOLS_VERSION)' -t $(WRISTBAND_TOOLS_IMAGE) $(WRISTBAND_TOOLS_DIR)
+	$(CONTAINER_TOOL) build --platform $(WRISTBAND_TOOLS_PLATFORM) --build-arg APP_VERSION='$(WRISTBAND_TOOLS_VERSION)' -t $(WRISTBAND_TOOLS_IMAGE) -f $(WRISTBAND_TOOLS_DIR)/Dockerfile .
 
 # test-wristband-tools repeats the provisioner's key operations as UID 1001 on a
 # read-only root filesystem, with a tmpfs /tmp standing in for the chart Job's

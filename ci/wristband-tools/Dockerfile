@@ -66,6 +66,9 @@ RUN work_dir="$(mktemp -d)" \
 
 # Metadata last so an APP_VERSION bump only rebuilds the label layer, not the
 # microdnf, kubectl and smoke-test layers.
+# License in /licenses is required by the Konflux ecosystem-cert-preflight
+# HasLicense check; RPM licenses under /usr/share/licenses do not count.
+COPY LICENSE /licenses/
 ARG APP_VERSION="0.0.0-dev"
 LABEL name="hyperfleet-infra-wristband-tools" \
       vendor="Red Hat, Inc." \
