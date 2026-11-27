@@ -73,9 +73,9 @@ The `hyperfleet-infra-wristband-tools` Konflux component builds this directory
 for `linux/amd64` — single-platform, like every other HyperFleet component (the
 org's build pipelines use `buildah-oci-ta` without `build-platforms`) —
 publishing to
-`quay.io/redhat-user-workloads/hyperfleet-tenant/hyperfleet-internal/hyperfleet-infra-wristband-tools`
+`quay.io/redhat-user-workloads/hyperfleet-tenant/hyperfleet/hyperfleet-infra-wristband-tools`
 and promoting to
-`quay.io/redhat-services-prod/hyperfleet-tenant/hyperfleet-internal/hyperfleet-infra-wristband-tools`
+`quay.io/redhat-services-prod/hyperfleet-tenant/hyperfleet/hyperfleet-infra-wristband-tools`
 on release. Konflux generates the PipelineRuns when the component is
 onboarded; they are not kept in this repo.
 
