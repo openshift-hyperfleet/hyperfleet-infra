@@ -1,14 +1,7 @@
-# Default values for hyperfleet-gateway
-#
-# The chart renders Gateway API resources for Envoy Gateway (ADR-0036) and, when
-# authentication is on, the Authorino instance and AuthConfig that go with them.
-# The Envoy Gateway controller is a cluster prerequisite installed by
-# `make install-envoy-gateway`. Everything is named from the release, so a
-# second gateway is a second release of this chart.
-#
-# Only what differs between environments or gateways is a value. Policy that
-# does not (timeouts, retry counts, the security contexts, the PodDisruptionBudget,
-# the ext_authz port) is written into the templates.
+# Default values for hyperfleet-gateway. The Envoy Gateway controller is a
+# cluster prerequisite (`make install-envoy-gateway`); everything is named from
+# the release, so a second gateway is a second release of this chart. Only what
+# differs between environments or gateways is a value; the rest is in the templates.
 
 nameOverride: ""
 fullnameOverride: ""
@@ -16,12 +9,9 @@ fullnameOverride: ""
 # -----------------------------------------------------------------------------
 # The gateway: Envoy Gateway resources
 # -----------------------------------------------------------------------------
-# The GatewayClass the Gateway uses. It is cluster-scoped and shared, so the chart
-# does not render it: `make install-envoy-gateway` creates it with the controller.
+# Cluster-scoped and shared; created by `make install-envoy-gateway`, not this chart.
 gatewayClassName: hyperfleet
 
-# The Gateway, its EnvoyProxy and the Envoy Deployment and pods are named after the
-# release.
 gateway:
   listeners:
     - name: http
@@ -33,17 +23,13 @@ gateway:
       # `authenticated: false` (the ACME HTTP-01 solver listener, HYPERFLEET-1912).
       # authenticated: true
 
-# Backend the HTTPRoute sends to. The API serves TLS from the internal CA.
+# Backend the HTTPRoute sends to; every field is required with no default.
 upstream:
-  host: hyperfleet-api
-  port: 8000
   # Secret holding the upstream's serving certificate. Default: "<host>-server-cert".
   # tlsSecretName: ""
-  # Labels of the pods behind `host`. Required: there is no default, because Helm merges
-  # maps, so a default would leak its labels into whatever a release sets. The
-  # NetworkPolicy this chart renders admits this gateway's Envoy pods to these pods on
-  # `port`. Helmfile sets the API's labels for the API gateway; a release with another
-  # upstream (the Desire Store) sets its own.
+  # Labels of the pods behind `host`; the NetworkPolicy admits this gateway's Envoy
+  # pods to them. No default: Helm merges maps, so one would leak into a release's
+  # own selector.
   podSelector: {}
 
 envoyProxy:
@@ -57,25 +43,18 @@ envoyProxy:
       memory: 512Mi
   # trace | debug | info | warn | error | critical | off
   logLevel: info
-  # The generated Service is what in-cluster callers reach (Sentinel, adapters).
-  # It is named after the release, so the default stays hyperfleet-gateway:8000.
   service:
     type: ClusterIP
     annotations: {}
 
-# Client-supplied headers are removed before authorization runs, because they carry
-# identity and tenant claims. The tenant headers of both models, x-hyperfleet-system
-# and x-hyperfleet-identity are always removed and cannot be taken off the list;
-# stripOverride adds more headers to it.
+# Extra client-supplied headers to strip before authorization; the identity and
+# tenant headers are always stripped.
 headers:
   stripOverride: []
 
 traffic:
-  # Only GET, HEAD, PUT and DELETE are retried (fixed in the HTTPRoute): they are
-  # safe to duplicate on the backend. POST (create) is excluded so a retried
-  # request can't surface as a spurious 409, and so is PATCH: a patch that
-  # includes "references" bumps the resource generation even when the references
-  # are unchanged, so retrying it isn't a no-op.
+  # Only idempotent methods are retried; POST would surface a spurious 409 and
+  # PATCH can bump the resource generation without changing anything.
   retry:
     triggers:
       - connect-failure
@@ -87,9 +66,8 @@ monitoring:
   podMonitor:
     enabled: false
 
-# Helm cannot natively wait for cert-manager Certificate custom resources. A
-# post-install/upgrade Job blocks dependent Helmfile releases until the Secrets
-# consumed by Envoy, Authorino, and the upstream are issued.
+# A post-install/upgrade Job blocks dependent releases until cert-manager has
+# issued the certificate Secrets.
 certificateWaiter:
   image:
     repository: alpine/k8s@sha256:15cfdf84d6de3559bc54d7479eb4e8aadbf71f6d7f08782cb1e91f3446f4b2d8
@@ -107,47 +85,26 @@ certificateWaiter:
 # Authorino: the ext_authz service, its instance, and the policy it enforces
 # -----------------------------------------------------------------------------
 authorino:
-  # Name of the Authorino instance. The operator derives its Services and
-  # ServiceAccount from it, and so do the certificate Secrets
-  # ("<name>-server-cert", "<name>-oidc-server-cert"): a second gateway in the
-  # same namespace needs a different name.
+  # A second gateway in the same namespace needs a different instance name.
   name: authorino
-  # Pin the runtime; the Makefile pins the operator CRD that supports its
-  # AuthConfig schema.
+  # The Makefile pins the operator CRD supporting this version's AuthConfig schema.
   image: quay.io/kuadrant/authorino:v0.28.0
   logLevel: info
-  # Extra hostnames the AuthConfig answers for. Empty: the gateway Service DNS
-  # names and localhost (see authconfig.yaml).
+  # Extra hostnames the AuthConfig answers for beyond the Service DNS and localhost.
   hosts: []
-  # Label selector (Authorino syntax) restricting which AuthConfigs this instance
-  # loads, so two Authorino instances stay disjoint. The AuthConfig this chart renders
-  # carries hyperfleet.io/gateway=general, so the default selects exactly that and
-  # nothing else in the namespace; a release whose AuthConfigs come from elsewhere (the
-  # Desire Store: hyperfleet.io/desire-store) sets its own. Empty would select every
-  # AuthConfig in the namespace. Only key, !key, key=value and key!=value terms,
-  # separated by commas, are accepted: Authorino treats a selector it cannot parse as
-  # matching everything, so a typo would silently load every AuthConfig.
+  # Restricts which AuthConfigs this instance loads, so two Authorinos stay disjoint.
+  # Only key, !key, key=value and key!=value terms: Authorino treats an unparseable
+  # selector as matching everything.
   authConfigLabelSelectors: hyperfleet.io/gateway=general
-  # Test-only CA mounted into Authorino's Go system trust directory when Helmfile
-  # selects the self-signed mock issuer over HTTPS.
+  # Test-only CA for the mock issuer, mounted into Authorino's trust store.
   mockIssuerCASecretName: ""
-  # Image of the Jobs that create and delete the wristband signing-key Secrets
-  # (kubectl and openssl). Pinned by digest. It is read whenever a hook renders,
-  # including the sweep of keys a release with `policy: null` leaves behind, so it
-  # is set whether or not the release has a policy.
   wristbandHookImage: bitnami/kubectl:1.33.4-debian-12-r0@sha256:ed0b31a0508da84ee655c5c6e01bd3897fc56ad6cf69debb27fa1893a06d2246
-  # The header the wristband leaves in, toward the upstream. The caller's credential
-  # always arrives in `authorization`. The default, `authorization`, writes
-  # "Bearer <wristband>" over it. Any other name (x-wristband) carries the raw token,
-  # and the caller's `authorization` header is deleted after authorization: the
-  # upstream receives the wristband in that one header and nothing else. A custom name
-  # is also removed from client requests before authorization, so it cannot be forged.
-  # The token comes from ext_authz metadata or, for a custom name, from the header
-  # Authorino itself set; with neither the request is denied.
+  # The header the wristband leaves in. The default writes "Bearer <wristband>"
+  # over the caller's credential; any other name carries the raw token, deletes the
+  # caller's `authorization` after it, and is stripped from client requests.
   wristbandHeader: authorization
 
-  # The AuthConfig this chart renders. Set `policy: null` for a gateway whose
-  # AuthConfigs come from elsewhere (an operator): no AuthConfig is rendered then.
+  # Set `policy: null` when the AuthConfigs come from elsewhere (an operator).
   policy:
     # At least one is required. Helmfile supplies the human provider.
     identityProviders: []
@@ -160,34 +117,27 @@ authorino:
 
     # Machine identity (adapters/sentinels) via kubernetesTokenReview.
     machineIdentity:
-      # Dedicated TokenReview audience; must match the adapter/sentinel auth.audience values.
-      audience: hyperfleet-api
-      # Exact service account names allowed as machine callers (no wildcards): only
-      # these SAs in this namespace are trusted, so an unrelated component can't be
-      # granted access just by matching a naming convention. helmfile/values/base-gateway.yaml.gotmpl
-      # derives this list from .Values.sentinels/.Values.adapters so it stays in sync
-      # with the releases actually deployed per environment; these are standalone-chart defaults.
-      allowedServiceAccounts:
-        - clusters-hyperfleet-sentinel
-        - nodepools-hyperfleet-sentinel
-        - adapter1-hyperfleet-adapter
-        - adapter2-hyperfleet-adapter
-        - adapter3-hyperfleet-adapter
+      # TokenReview audience. Required with no default: it must match the audience
+      # the machine callers request their tokens for (Helmfile sets it).
+      # audience: ""
+      # Exact SA names, no wildcards; Helmfile derives the list from the deployed
+      # sentinels and adapters. Empty denies every machine caller (fail-closed).
+      allowedServiceAccounts: []
 
     # Active AuthConfig model (onprem|oracle). Keep in sync with base-api tenant dimensions.
     tenant:
       model: onprem
 
-    # Festival Wristband settings. A chart hook creates the
-    # signing Secret in-cluster before the AuthConfig is installed. The Secret
-    # contains key.pem, a traditional PKCS#1 RSA private key required by the
-    # pinned Authorino version, and is separate from every TLS private key.
-    # The AuthConfig lists the trusted keys and the first one signs. The label
-    # hyperfleet.io/wristband-signing-key only marks the Secrets the hooks may
-    # delete. make rotate-wristband-key manages the list.
+    # The signing Secret holds a PKCS#1 RSA key.pem, required by the pinned
+    # Authorino version. The first listed key signs; make rotate-wristband-key
+    # manages the list (it rotates the API gateway's key, release
+    # hyperfleet-gateway).
     wristband:
-      # Audience the API validates; it must match the API chart's configuration.
-      audience: hyperfleet-api
+      # Audience the upstream validates the wristband against. Required with no
+      # default: it must match the upstream API's JWT audience (Helmfile sets it).
+      # audience: ""
+      # Wristband lifetime in seconds.
+      tokenDuration: 300
       # Name of the key created on a fresh install. Rotated keys get new names
       # because the name is the JWT key ID.
       signingKeySecretName: hyperfleet-wristband-signing-key

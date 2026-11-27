@@ -146,7 +146,7 @@ spec:
         wristband:
           wristband:
             issuer: {{ include "hyperfleet-gateway.wristbandIssuer" . | quote }}
-            tokenDuration: 300
+            tokenDuration: {{ $policy.wristband.tokenDuration }}
             signingKeyRefs:
               {{- range include "hyperfleet-gateway.wristbandSigningKeys" . | fromJsonArray }}
               - name: {{ . | quote }}

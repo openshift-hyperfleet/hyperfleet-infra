@@ -1,4 +1,5 @@
-# Base values for HyperFleet Gateway
+# Values shared by every gateway release; the per-gateway values are named by the
+# entries in environments/<env>/gateway-configs.yaml.gotmpl.
 {{- $mockIssuer := eq (env "OIDC_ISSUER_MODE" | default "external") "mock" -}}
 
 {{ if eq (env "OBSERVABILITY_ENABLED" | default "false") "true" }}
@@ -6,14 +7,6 @@ monitoring:
   podMonitor:
     enabled: true
 {{ end }}
-
-# The pods behind the default upstream, the API: the gateway's NetworkPolicy admits the
-# Envoy pods to them (they are the API chart's standard labels).
-upstream:
-  podSelector:
-    app.kubernetes.io/name: hyperfleet-api
-    app.kubernetes.io/instance: hyperfleet-api
-    app.kubernetes.io/component: api
 
 envoyProxy:
   logLevel: {{ env "ENVOY_LOG_LEVEL" | default "info" }}
@@ -25,9 +18,6 @@ envoyProxy:
     {{- end }}
 
 authorino:
-  # External authorization (Authorino): Envoy authenticates every request through
-  # Authorino and injects trusted tenant headers; the Authorino instance and the
-  # active AuthConfig are deployed by the gateway chart too.
   logLevel: {{ env "AUTHORINO_LOG_LEVEL" | default "info" }}
   {{- if $mockIssuer }}
   mockIssuerCASecretName: hyperfleet-mock-oidc-tls
@@ -44,37 +34,3 @@ authorino:
     - {{ . | trim | quote }}
     {{- end }}
   {{- end }}
-
-  policy:
-    # Active tenant model for the rendered AuthConfig (onprem|oracle). Must stay in
-    # lockstep with config.server.tenant.dimensions in base-api values when wired.
-    tenant:
-      model: {{ env "TENANT_MODEL" | default "onprem" }}
-
-    identityProviders:
-    {{- if $mockIssuer }}
-      - name: human-jwt
-        issuerUrl: {{ printf "https://hyperfleet-mock-oidc.%s.svc.cluster.local:8443/default" .Values.namespace | quote }}
-        audience: hyperfleet-api
-        identityClaim: email
-    {{- else }}
-      - name: human-jwt
-        issuerUrl: {{ requiredEnv "OIDC_ISSUER_URL" | quote }}
-        audience: hyperfleet-api
-        identityClaim: email
-    {{- end }}
-
-    machineIdentity:
-      audience: {{ .Values.machineIdentityAudience | quote }}
-      # Exact SA allow-list, derived from declared sentinels/adapters and any
-      # environment-specific machine callers. See helm/hyperfleet-gateway/values.yaml.
-      allowedServiceAccounts:
-        {{- range .Values.sentinels }}
-        - {{ printf "%s-hyperfleet-sentinel" .name | quote }}
-        {{- end }}
-        {{- range .Values.adapters }}
-        - {{ printf "%s-hyperfleet-adapter" .name | quote }}
-        {{- end }}
-        {{- range .Values.additionalMachineServiceAccounts }}
-        - {{ . | quote }}
-        {{- end }}

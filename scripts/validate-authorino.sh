@@ -22,7 +22,10 @@ require_command helm
 # Renders the gateway chart as a release called gw in the default namespace, with the API's
 # upstream selector and two identity providers, which the chart requires.
 render_gateway() {
-    helm template gw "$GATEWAY_CHART" --set-json "upstream.podSelector=$API_SELECTOR" --namespace default \
+    helm template gw "$GATEWAY_CHART" --set-string upstream.host=hyperfleet-api --set upstream.port=8000 --set-json "upstream.podSelector=$API_SELECTOR" --namespace default \
+        --set-string authorino.policy.machineIdentity.audience=hyperfleet-api \
+        --set-json 'authorino.policy.machineIdentity.allowedServiceAccounts=["clusters-hyperfleet-sentinel","nodepools-hyperfleet-sentinel","adapter1-hyperfleet-adapter","adapter2-hyperfleet-adapter","adapter3-hyperfleet-adapter"]' \
+        --set-string authorino.policy.wristband.audience=hyperfleet-api \
         --set-string 'authorino.policy.identityProviders[0].name=human' \
         --set-string 'authorino.policy.identityProviders[0].issuerUrl=https://issuer.invalid/oidc' \
         --set-string 'authorino.policy.identityProviders[0].audience=hyperfleet-api' \
@@ -100,13 +103,8 @@ wristband_lua() {
         on { exit }' <<<"$(rendered_document "$1" EnvoyExtensionPolicy)"
 }
 
-# Run the wristband Lua against a stub of Envoy's `handle` and check what it does with the
-# header the wristband leaves in (OUT_HEADER): a wristband from ext_authz metadata, or for a
-# custom header the one Authorino set, is delivered there, and with a custom header the
-# caller's authorization header is deleted; every other case is denied with a 403 and the
-# request is left as it was. This tests the hand-off's behaviour, not that the text of a deny
-# message exists. It needs the `lua` interpreter; without it the test is skipped with a
-# warning (the build-root image of the Prow job has no Lua yet).
+# Run the wristband Lua against a stub of Envoy's `handle`, checking behaviour, not deny
+# text. Skipped with a warning without a `lua` interpreter (the Prow build root has none yet).
 test_wristband_lua() {
     local lua_source=$1 out_header=$2 script
     command -v lua >/dev/null 2>&1 || {
@@ -216,10 +214,10 @@ LUATEST
 }
 
 assert_machine_allow_list() {
-    local output=$1 model=$2 subject_pattern
+    local output=$1 subject_pattern
     subject_pattern=$(sed -n 's/^[[:space:]]*value: "\(\^system:serviceaccount:[^"]*\)"$/\1/p' <<<"$output")
     [[ -n "$subject_pattern" ]] || {
-        echo "ERROR ($model): machine ServiceAccount allow-list pattern not rendered" >&2
+        echo "ERROR machine ServiceAccount allow-list pattern not rendered" >&2
         exit 1
     }
 
@@ -230,23 +228,21 @@ assert_machine_allow_list() {
         adapter2-hyperfleet-adapter \
         adapter3-hyperfleet-adapter; do
         printf 'system:serviceaccount:default:%s\n' "$service_account" | grep -Eq "$subject_pattern" || {
-            echo "ERROR ($model): allow-list rejects known ServiceAccount $service_account" >&2
+            echo "ERROR allow-list rejects known ServiceAccount $service_account" >&2
             exit 1
         }
     done
 
     for service_account in default hyperfleet-api hyperfleet-adapter-lookalike unrelated; do
         if printf 'system:serviceaccount:default:%s\n' "$service_account" | grep -Eq "$subject_pattern"; then
-            echo "ERROR ($model): allow-list accepts unlisted ServiceAccount $service_account" >&2
+            echo "ERROR allow-list accepts unlisted ServiceAccount $service_account" >&2
             exit 1
         fi
     done
 }
 
-# assert_listener_ref DOCUMENT KEY GATEWAY LISTENER MESSAGE
-# Passes when one item under KEY (targetRefs or parentRefs) in DOCUMENT is a
-# `kind: Gateway` reference to GATEWAY with sectionName LISTENER. An empty LISTENER
-# only checks the kind and the name.
+# assert_listener_ref DOCUMENT KEY GATEWAY [LISTENER] MESSAGE: one item under KEY is a
+# Gateway reference to GATEWAY, with sectionName LISTENER when given.
 assert_listener_ref() {
     local document=$1 key=$2 gateway=$3 listener=$4 message=$5
     awk -v key="$key" -v gateway="$gateway" -v listener="$listener" '
@@ -276,7 +272,6 @@ stripped_headers() {
 
 echo "Validating HyperFleet gateway security templates..."
 
-mode=EDGE+API
 {
     if ! out=$(render_gateway); then
         echo "ERROR: render failed" >&2
@@ -288,68 +283,68 @@ mode=EDGE+API
 
     certificate_count=$(grep -c '^kind: Certificate$' <<<"$out" || true)
     [[ "$certificate_count" -eq "$expected_certificates" ]] || {
-        echo "ERROR ($mode): unexpected number of internal TLS Certificates" >&2
+        echo "ERROR unexpected number of internal TLS Certificates" >&2
         exit 1
     }
     assert_not_contains "$out" 'protocol: HTTPS' \
-        "($mode): gateway listener must remain HTTP"
+        "gateway listener must remain HTTP"
     for kind in EnvoyProxy Gateway HTTPRoute ClientTrafficPolicy BackendTLSPolicy BackendTrafficPolicy; do
         assert_contains "$out" "^kind: $kind\$" \
-            "($mode): $kind missing"
+            "$kind missing"
     done
     assert_contains "$out" 'hostname: hyperfleet-api.default.svc' \
-        "($mode): API certificate SAN validation missing"
+        "API certificate SAN validation missing"
     assert_contains "$out" 'name: gw-hyperfleet-gateway-ca-cert' \
-        "($mode): shared CA trust missing"
+        "shared CA trust missing"
     gateway_name=gw-hyperfleet-gateway
     route_doc=$(rendered_document "$out" HTTPRoute)
     assert_listener_ref "$route_doc" parentRefs "$gateway_name" http \
-        "($mode): the HTTPRoute must attach to the serving listener of the Gateway"
+        "the HTTPRoute must attach to the serving listener of the Gateway"
     assert_contains "$route_doc" '^        - name: hyperfleet-api$' \
-        "($mode): the HTTPRoute does not send traffic to the upstream"
+        "the HTTPRoute does not send traffic to the upstream"
     # Client-supplied identity headers are removed before authorization runs. The
     # check reads the ClientTrafficPolicy's own remove list, not the whole output.
     strip_policy=$(rendered_document "$out" ClientTrafficPolicy)
     assert_listener_ref "$strip_policy" targetRefs "$gateway_name" "" \
-        "($mode): the ClientTrafficPolicy must target the Gateway"
+        "the ClientTrafficPolicy must target the Gateway"
     removed_headers=$(stripped_headers "$strip_policy")
     for header in x-tenant-org x-tenant-project x-tenant-tenancy-ocid x-tenant-compartment \
         x-hyperfleet-system x-hyperfleet-identity; do
         grep -qx -- "$header" <<<"$removed_headers" || {
-            echo "ERROR: ($mode): $header is not in the ClientTrafficPolicy remove list" >&2
+            echo "ERROR: $header is not in the ClientTrafficPolicy remove list" >&2
             exit 1
         }
     done
     assert_not_contains "$strip_policy" '^      \(add\|set\|addIfAbsent\|removeOnMatch\):' \
-        "($mode): the ClientTrafficPolicy must only remove headers"
+        "the ClientTrafficPolicy must only remove headers"
     assert_contains "$out" 'kind: Job' \
-        "($mode): certificate readiness hook missing"
+        "certificate readiness hook missing"
     assert_contains "$out" 'kubectl wait --for=condition=Ready certificate/hyperfleet-api' \
-        "($mode): API certificate readiness wait missing"
+        "API certificate readiness wait missing"
     assert_contains "$out" 'kubectl wait --for=condition=Ready certificate/gw-hyperfleet-gateway-ca' \
-        "($mode): gateway CA readiness wait missing"
+        "gateway CA readiness wait missing"
 
-    assert_contains "$out" '^kind: Authorino$' "($mode): Authorino missing"
+    assert_contains "$out" '^kind: Authorino$' "Authorino missing"
     assert_contains "$out" 'image: "quay.io/kuadrant/authorino:v0.28.0"' \
-        "($mode): expected pinned Authorino image is missing"
+        "expected pinned Authorino image is missing"
     assert_contains "$out" '^kind: SecurityPolicy$' \
-        "($mode): SecurityPolicy missing"
+        "SecurityPolicy missing"
     security_policy=$(rendered_document "$out" SecurityPolicy)
     assert_contains "$security_policy" '^    failOpen: false$' \
-        "($mode): ext_authz is not fail-closed"
+        "ext_authz is not fail-closed"
     assert_contains "$security_policy" '^    timeout: 1s$' \
-        "($mode): ext_authz has no 1s timeout"
+        "ext_authz has no 1s timeout"
     assert_contains "$security_policy" '^        - name: authorino-authorino-authorization$' \
-        "($mode): ext_authz does not target the Authorino authorization Service"
+        "ext_authz does not target the Authorino authorization Service"
     assert_contains "$security_policy" '^          port: 50051$' \
-        "($mode): ext_authz does not use Authorino's gRPC port"
+        "ext_authz does not use Authorino's gRPC port"
     assert_contains "$out" 'kubernetesTokenReview:' \
-        "($mode): TokenReview missing"
+        "TokenReview missing"
     assert_contains "$out" 'kubectl wait --for=condition=Ready certificate/authorino-authorino-authorization' \
-        "($mode): Authorino authorization certificate readiness wait missing"
+        "Authorino authorization certificate readiness wait missing"
     assert_contains "$out" 'kubectl wait --for=condition=Ready certificate/authorino-authorino-oidc' \
-        "($mode): Authorino OIDC certificate readiness wait missing"
-    assert_machine_allow_list "$out" "$mode"
+        "Authorino OIDC certificate readiness wait missing"
+    assert_machine_allow_list "$out"
     assert_jwt_claim_enforcement "$out" human \
         'https://issuer.invalid/oidc' hyperfleet-api
     assert_jwt_claim_enforcement "$out" partner \
@@ -358,38 +353,38 @@ mode=EDGE+API
     # route, so a route added there without a policy of its own is still
     # authenticated.
     assert_listener_ref "$security_policy" targetRefs "$gateway_name" http \
-        "($mode): the SecurityPolicy must target the serving listener of the Gateway"
+        "the SecurityPolicy must target the serving listener of the Gateway"
 
     assert_contains "$out" 'algorithm: RS256' 'RS256 wristband missing'
     assert_contains "$out" 'dynamicMetadata' 'wristband dynamic metadata missing'
     assert_contains "$out" 'name: gw-hyperfleet-gateway-wristband-key-provisioner' \
-        'EDGE+API: signing-key provisioner hook missing'
+        'signing-key provisioner hook missing'
     assert_contains "$out" '"helm.sh/hook": "pre-install,pre-upgrade"' \
-        'EDGE+API: signing-key provisioner must run before AuthConfig creation'
+        'signing-key provisioner must run before AuthConfig creation'
     assert_contains "$out" 'bitnami/kubectl:1.33.4-debian-12-r0@sha256:ed0b31a0508da84ee655c5c6e01bd3897fc56ad6cf69debb27fa1893a06d2246' \
-        'EDGE+API: immutable Bitnami Debian 12 kubectl image missing'
+        'immutable Bitnami Debian 12 kubectl image missing'
     assert_contains "$out" "openssl genrsa -traditional -out \"\${key_file}\" 3072" \
-        'EDGE+API: provisioner does not generate a 3072-bit PKCS#1 RSA key'
+        'provisioner does not generate a 3072-bit PKCS#1 RSA key'
     assert_contains "$out" 'does not contain a 3072-bit RSA private key' \
-        'EDGE+API: provisioner does not validate an existing key size'
+        'provisioner does not validate an existing key size'
     assert_contains "$out" 'resourceNames:' \
-        'EDGE+API: signing-key Role lacks named-Secret restrictions'
+        'signing-key Role lacks named-Secret restrictions'
     assert_contains "$out" 'name: gw-hyperfleet-gateway-wristband-key-cleanup' \
-        'EDGE+API: uninstall signing-key cleanup hook missing'
+        'uninstall signing-key cleanup hook missing'
     assert_not_contains "$out" '"helm.sh/hook": "post-install,post-upgrade,pre-delete"' \
-        'EDGE+API: cleanup must not delete a still-required signing key during upgrade'
+        'cleanup must not delete a still-required signing key during upgrade'
     assert_contains "$out" "kubectl label secret \"\${secret_name}\" hyperfleet.io/wristband-signing-key=gw --overwrite" \
-        'EDGE+API: provisioner must label an existing signing key it keeps'
+        'provisioner must label an existing signing key it keeps'
     assert_contains "$out" 'kubectl label --local -f - hyperfleet.io/wristband-signing-key=gw' \
-        'EDGE+API: provisioner must label a new signing key when it creates it'
+        'provisioner must label a new signing key when it creates it'
     assert_contains "$out" '^kind: EnvoyExtensionPolicy$' \
-        'EDGE+API: wristband Lua policy missing'
+        'wristband Lua policy missing'
     # Envoy Gateway keeps the ext_authz metadata under the plain namespace, so
     # that is the only lookup: a second key would be dead code.
     assert_contains "$out" 'dynamicMetadata():get("envoy.filters.http.ext_authz")' \
-        'EDGE+API: wristband Lua does not read the ext_authz metadata'
+        'wristband Lua does not read the ext_authz metadata'
     assert_not_contains "$out" 'ext_authz/securitypolicy' \
-        'EDGE+API: wristband Lua looks up a per-policy metadata namespace'
+        'wristband Lua looks up a per-policy metadata namespace'
     test_wristband_lua "$(wristband_lua "$out")" authorization
 }
 
@@ -407,13 +402,13 @@ signing_key_refs=$(awk '/signingKeyRefs:/ { refs = 1; next }
     refs && /- name:/ { print $3 }
     refs && /customClaims:/ { exit }' <<<"$out" | paste -sd ' ' -)
 [[ "$signing_key_refs" == "\"$new_key\" \"$old_key\"" ]] || {
-    echo "ERROR: EDGE+API: signingKeyRefs is [$signing_key_refs], expected [\"$new_key\" \"$old_key\"]" >&2
+    echo "ERROR: signingKeyRefs is [$signing_key_refs], expected [\"$new_key\" \"$old_key\"]" >&2
     exit 1
 }
 assert_contains "$out" "signer=\"$new_key\"" \
-    'EDGE+API: provisioner must create the new wristband key'
+    'provisioner must create the new wristband key'
 assert_contains "$out" "resourceNames: \[\"$new_key\",\"$old_key\"\]" \
-    'EDGE+API: signing-key RBAC must name both wristband keys'
+    'signing-key RBAC must name both wristband keys'
 if render_gateway --set 'authorino.policy.wristband.signingKeys={Bad_Key}' >/dev/null 2>&1; then
     echo "ERROR: invalid wristband signing key name was accepted" >&2
     exit 1
@@ -429,8 +424,11 @@ for removed_key in authorino.mode=EDGE authorino.enabled=true authorino.policy.w
 done
 
 for model in onprem oracle; do
-    if ! out=$(helm template gw "$GATEWAY_CHART" --set-json "upstream.podSelector=$API_SELECTOR" \
+    if ! out=$(helm template gw "$GATEWAY_CHART" --set-string upstream.host=hyperfleet-api --set upstream.port=8000 --set-json "upstream.podSelector=$API_SELECTOR" \
         --set "authorino.policy.tenant.model=$model" \
+        --set-string authorino.policy.machineIdentity.audience=hyperfleet-api \
+        --set-json 'authorino.policy.machineIdentity.allowedServiceAccounts=["clusters-hyperfleet-sentinel","nodepools-hyperfleet-sentinel","adapter1-hyperfleet-adapter","adapter2-hyperfleet-adapter","adapter3-hyperfleet-adapter"]' \
+        --set-string authorino.policy.wristband.audience=hyperfleet-api \
         --set-string 'authorino.policy.identityProviders[0].name=human' \
         --set-string 'authorino.policy.identityProviders[0].issuerUrl=https://issuer.invalid/oidc' \
         --set-string 'authorino.policy.identityProviders[0].audience=hyperfleet-api'); then
@@ -439,7 +437,7 @@ for model in onprem oracle; do
     fi
 
     assert_filter_order "$out" \
-        "($model): x-hyperfleet-identity must retain its email mapping" \
+        "x-hyperfleet-identity must retain its email mapping" \
         'x-hyperfleet-identity:' \
         'selector: auth.identity.email'
 
@@ -460,13 +458,16 @@ for model in onprem oracle; do
         found_header && $0 ~ "selector: auth.identity." claim { found_claim = 1 }
         END { exit !(found_header && found_when && found_claim) }
     ' <<<"$out" || {
-        echo "ERROR ($model): optional tenant header is not when-gated" >&2
+        echo "ERROR optional tenant header is not when-gated" >&2
         exit 1
     }
 done
 
-if helm template gw "$GATEWAY_CHART" --set-json "upstream.podSelector=$API_SELECTOR" \
+if helm template gw "$GATEWAY_CHART" --set-string upstream.host=hyperfleet-api --set upstream.port=8000 --set-json "upstream.podSelector=$API_SELECTOR" \
     --set authorino.policy.tenant.model=bogus \
+    --set-string authorino.policy.machineIdentity.audience=hyperfleet-api \
+    --set-json 'authorino.policy.machineIdentity.allowedServiceAccounts=["clusters-hyperfleet-sentinel","nodepools-hyperfleet-sentinel","adapter1-hyperfleet-adapter","adapter2-hyperfleet-adapter","adapter3-hyperfleet-adapter"]' \
+    --set-string authorino.policy.wristband.audience=hyperfleet-api \
     --set-string 'authorino.policy.identityProviders[0].name=human' \
     --set-string 'authorino.policy.identityProviders[0].issuerUrl=https://issuer.invalid/oidc' \
     --set-string 'authorino.policy.identityProviders[0].audience=hyperfleet-api' >/dev/null 2>&1; then
@@ -474,7 +475,10 @@ if helm template gw "$GATEWAY_CHART" --set-json "upstream.podSelector=$API_SELEC
     exit 1
 fi
 
-if ! hosts_out=$(helm template gw "$GATEWAY_CHART" --set-json "upstream.podSelector=$API_SELECTOR" \
+if ! hosts_out=$(helm template gw "$GATEWAY_CHART" --set-string upstream.host=hyperfleet-api --set upstream.port=8000 --set-json "upstream.podSelector=$API_SELECTOR" \
+    --set-string authorino.policy.machineIdentity.audience=hyperfleet-api \
+    --set-json 'authorino.policy.machineIdentity.allowedServiceAccounts=["clusters-hyperfleet-sentinel","nodepools-hyperfleet-sentinel","adapter1-hyperfleet-adapter","adapter2-hyperfleet-adapter","adapter3-hyperfleet-adapter"]' \
+    --set-string authorino.policy.wristband.audience=hyperfleet-api \
     --set-string 'authorino.policy.identityProviders[0].name=human' \
     --set-string 'authorino.policy.identityProviders[0].issuerUrl=https://issuer.invalid/oidc' \
     --set-string 'authorino.policy.identityProviders[0].audience=hyperfleet-api' \
@@ -503,6 +507,7 @@ rendered_objects() {
 second_gateway_args=(
     --set-string fullnameOverride=desire-store-gateway
     --set-string upstream.host=desire-store-api
+    --set upstream.port=8000
     --set-json 'upstream.podSelector={"app.kubernetes.io/name":"desire-store-api","app.kubernetes.io/instance":"desire-store-api"}'
     --set-string authorino.name=authorino-ds
     --set-string authorino.wristbandHeader=x-wristband
@@ -616,7 +621,7 @@ assert_contains "$netpol" '^          port: 9000$' 'the NetworkPolicy ignores up
 assert_contains "$netpol" 'app.kubernetes.io/name: other' 'the NetworkPolicy ignores upstream.podSelector'
 assert_not_contains "$netpol" 'hyperfleet-api' 'the NetworkPolicy keeps API labels for another upstream'
 assert_not_contains "$netpol" 'app.kubernetes.io/component' 'the NetworkPolicy keeps the API component label for another upstream'
-store_out=$(helm template gw "$GATEWAY_CHART" --namespace default --set authorino.policy=null --set-string upstream.host=store \
+store_out=$(helm template gw "$GATEWAY_CHART" --namespace default --set authorino.policy=null --set-string upstream.host=store --set upstream.port=8000 \
     --set-json 'upstream.podSelector={"app":"store"}')
 store_selector=$(rendered_document "$store_out" NetworkPolicy | awk '/^  podSelector:$/ { on = 1; next } /^  policyTypes:$/ { on = 0 } on')
 [[ "$(grep -c . <<<"$store_selector")" == 2 ]] || {
@@ -632,7 +637,7 @@ if helm template gw "$GATEWAY_CHART" --set authorino.policy=null >/dev/null 2>&1
     exit 1
 fi
 for bad_selector in 'null' '{}' '{"app.kubernetes.io/name":""}' '{"app.kubernetes.io/name":1}'; do
-    if helm template gw "$GATEWAY_CHART" --set authorino.policy=null --set-json "upstream.podSelector=$bad_selector" >/dev/null 2>&1; then
+    if helm template gw "$GATEWAY_CHART" --set authorino.policy=null --set-string upstream.host=hyperfleet-api --set upstream.port=8000 --set-json "upstream.podSelector=$bad_selector" >/dev/null 2>&1; then
         echo "ERROR: upstream.podSelector=$bad_selector was accepted" >&2
         exit 1
     fi
@@ -649,10 +654,7 @@ assert_not_contains "$second_netpol" 'hyperfleet-api' \
 assert_not_contains "$second_netpol" 'app.kubernetes.io/component' \
     'second gateway: the NetworkPolicy keeps a label it did not set'
 
-# The header the wristband leaves in. The default is authorization ("Bearer <wristband>"
-# over the caller's credential). A custom name carries the raw token, deletes the caller's
-# authorization header after authorization, is removed from client requests before it, and
-# works for a release whose AuthConfigs come from elsewhere (the Desire Store).
+# The header the wristband leaves in: the default and a custom name (the Desire Store).
 custom_out=$(render_gateway --set-string authorino.wristbandHeader=x-wristband)
 custom_eep=$(rendered_document "$custom_out" EnvoyExtensionPolicy)
 assert_contains "$custom_eep" 'replace("x-wristband", token)' 'a custom wristband header is not written'
@@ -663,7 +665,7 @@ assert_contains "$(stripped_headers "$(rendered_document "$custom_out" ClientTra
 assert_not_contains "$(rendered_document "$custom_out" ClientTrafficPolicy)" '^        - authorization$' \
     'the caller authorization header is removed before authorization'
 test_wristband_lua "$(wristband_lua "$custom_out")" x-wristband
-policy_null_out=$(helm template gw "$GATEWAY_CHART" --set-json "upstream.podSelector=$API_SELECTOR" --namespace default \
+policy_null_out=$(helm template gw "$GATEWAY_CHART" --set-string upstream.host=hyperfleet-api --set upstream.port=8000 --set-json "upstream.podSelector=$API_SELECTOR" --namespace default \
     --set authorino.policy=null --set-string authorino.wristbandHeader=x-wristband)
 assert_contains "$(rendered_document "$policy_null_out" EnvoyExtensionPolicy)" 'remove("authorization")' \
     'a release with no policy and a custom wristband header renders no hand-off'
@@ -691,10 +693,6 @@ assert_contains "$second_eep" '^  name: desire-store-gateway$' \
 assert_contains "$second_eep" 'replace("x-wristband", token)' 'second gateway: the wristband does not leave in x-wristband'
 assert_contains "$second_eep" 'remove("authorization")' 'second gateway: the caller authorization header is not deleted'
 
-# Authorino loads an AuthConfig only when its labels match the instance's selector, and treats a
-# selector it cannot parse as matching everything. The AuthConfig this chart renders carries
-# hyperfleet.io/gateway=general and the default selector picks exactly that, while the Desire
-# Store's dedicated instance selects its own label, so no AuthConfig is loaded by both.
 general_authconfig=$(rendered_document "$(render_gateway)" AuthConfig)
 assert_contains "$general_authconfig" '^    hyperfleet.io/gateway: general$' 'the general AuthConfig has no shard label'
 assert_not_contains "$general_authconfig" 'hyperfleet.io/desire-store' 'the general AuthConfig carries the Desire Store label'
@@ -710,12 +708,18 @@ for good_selector in 'hyperfleet.io/desire-store' '!hyperfleet.io/desire-store' 
         exit 1
     }
 done
-for bad_selector in 'a,' ',a' 'a,,b' 'a in (b,c)' '!!a' 'a=' 'a=b=c' '=a' 'a b'; do
+for bad_selector in 'a,' ',a' 'a,,b' 'a in (b,c)' '!!a' 'a=' 'a=b=c' '=a' 'a b' '!a=b' '!a!=b' 'a=b/c' 'a!=b/c'; do
     if render_gateway --set-json "authorino.authConfigLabelSelectors=\"$bad_selector\"" >/dev/null 2>&1; then
         echo "ERROR: authorino.authConfigLabelSelectors=$bad_selector was accepted" >&2
         exit 1
     fi
 done
+
+# An empty machine allow-list is valid and fail-closed: the restriction rule
+# still renders and its pattern matches no ServiceAccount.
+empty_allow_list=$(render_gateway --set-json 'authorino.policy.machineIdentity.allowedServiceAccounts=[]')
+assert_contains "$empty_allow_list" 'restrict-system-subjects' 'an empty machine allow-list drops the machine restriction rule'
+assert_not_contains "$empty_allow_list" 'adapter1-hyperfleet-adapter' 'an empty machine allow-list admits a ServiceAccount'
 
 # Listeners: the route, the SecurityPolicy and the Lua policy attach to every
 # listener except one marked authenticated: false (the ACME solver, 1912).
@@ -744,9 +748,18 @@ fi
 
 # A release with no policy (AuthConfigs from an operator) still renders, and its
 # hooks read the image from authorino.wristbandHookImage, not from under the policy.
-no_policy_out=$(helm template gw "$GATEWAY_CHART" --set-json "upstream.podSelector=$API_SELECTOR" --namespace default --set authorino.policy=null 2>&1)
+no_policy_out=$(helm template gw "$GATEWAY_CHART" --set-string upstream.host=hyperfleet-api --set upstream.port=8000 --set-json "upstream.podSelector=$API_SELECTOR" --namespace default --set authorino.policy=null 2>&1)
 assert_not_contains "$no_policy_out" '^kind: AuthConfig$' 'a release with policy: null renders an AuthConfig'
 assert_not_contains "$no_policy_out" 'signing-key' 'a release with policy: null renders signing-key resources'
+# The wristband lifetime is a value again: the default is 300 seconds, a release can
+# change it, and a non-positive duration is rejected.
+assert_contains "$(render_gateway)" 'tokenDuration: 300' 'the default wristband tokenDuration is not 300 seconds'
+assert_contains "$(render_gateway --set authorino.policy.wristband.tokenDuration=60)" 'tokenDuration: 60' \
+    'a custom wristband tokenDuration is not rendered'
+if render_gateway --set authorino.policy.wristband.tokenDuration=0 >/dev/null 2>&1; then
+    echo "ERROR: a non-positive wristband tokenDuration was accepted" >&2
+    exit 1
+fi
 for hook in wristband-key-cleanup wristband-key-provisioner; do
     hook_template="$GATEWAY_CHART/templates/$hook.yaml"
     grep -q '\.Values\.authorino\.wristbandHookImage' "$hook_template" \

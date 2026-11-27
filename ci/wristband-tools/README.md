@@ -102,7 +102,7 @@ Image-level tests cover key creation and validation. The hook containers'
 behavior when run against a Secret — key creation, preservation of an
 existing valid key, rejection of invalid ones, and cleanup deletion — is
 exercised on a local kind cluster by `scripts/test-wristband-hooks.sh`, which
-renders the gateway chart in `EDGE+API` mode with this image and applies the
+renders the gateway chart with this image and applies the
 hook resources with kubectl. The `helm.sh/hook` annotations are inert under
 kubectl: what is covered is the containers, RBAC and scripts as shipped, not
 the hook **event wiring** (`pre-install`/`pre-upgrade` for the provisioner,

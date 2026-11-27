@@ -93,20 +93,18 @@ CERT_MANAGER_NAMESPACE       ?= cert-manager
 CERT_MANAGER_MANIFEST        ?= https://github.com/cert-manager/cert-manager/releases/download/$(CERT_MANAGER_VERSION)/cert-manager.yaml
 CERT_MANAGER_MANIFEST_SHA256 ?= e03b668ec8675214af6b0a671699d088f2601fa3878e0dbe1b41d3feafd1879f
 
-# Envoy Gateway (control plane + Gateway API CRDs). Cluster-singleton prerequisite
-# for the hyperfleet-gateway chart (ADR-0036), installed like cert-manager and the
-# Authorino operator: the pinned upstream install.yaml, checksum-verified, applied
-# with kubectl, so there is no Helm release to lock. Bumping ENVOY_GATEWAY_VERSION
-# requires updating ENVOY_GATEWAY_MANIFEST_SHA256 with it, and checking that the
-# patches and manifests/envoy-gateway-rbac.yaml still match the upstream release.
-# The manifest is patched (scripts/patch-envoy-gateway.sh) so each Gateway's Envoy
-# runs in the Gateway's own namespace, next to Authorino and the API, and so Lua
-# EnvoyExtensionPolicies work: the EDGE+API wristband hand-off is one, and without
-# Lua enabled Envoy Gateway rejects it and answers every request with a 500. The
-# cluster-wide RBAC that mode needs is manifests/envoy-gateway-rbac.yaml. The
-# shared GatewayClass is manifests/envoy-gateway-gatewayclass.yaml. The controller
-# namespace, envoy-gateway-system, is fixed by the manifest and the RBAC file, so it
-# is not a variable.
+# Envoy Gateway (control plane + Gateway API CRDs): cluster-singleton prerequisite
+# of the gateway chart (ADR-0036), installed like cert-manager and the Authorino
+# operator — pinned upstream install.yaml, checksum-verified, applied with kubectl,
+# so there is no Helm release to lock. The manifest is patched
+# (scripts/patch-envoy-gateway.sh) so each Gateway's Envoy runs in the Gateway's own
+# namespace and Lua EnvoyExtensionPolicies work (without Lua the wristband hand-off
+# is rejected and every request gets a 500); the cluster-wide RBAC that mode needs
+# is manifests/envoy-gateway-rbac.yaml, the shared GatewayClass is
+# manifests/envoy-gateway-gatewayclass.yaml, and the controller namespace
+# (envoy-gateway-system) is fixed by both files. On a version bump: update the
+# checksum, check the patches still apply, and check the RBAC still matches (see
+# AGENTS.md).
 ENVOY_GATEWAY_VERSION         ?= v1.9.4
 ENVOY_GATEWAY_MANIFEST        ?= https://github.com/envoyproxy/gateway/releases/download/$(ENVOY_GATEWAY_VERSION)/install.yaml
 ENVOY_GATEWAY_MANIFEST_SHA256 ?= 0581247f7c182db57365b1585f84f4b370c06db0088cf612e41e96788452051d
@@ -433,7 +431,7 @@ switch-tenant-model: validate-helmfile-config install-authorino-operator ## Swit
 	@echo "OK: tenant model switched to '$(TENANT_MODEL)' (same AuthConfig name replaces the policy; old-model tokens are rejected at the gateway)"
 
 .PHONY: rotate-wristband-key
-rotate-wristband-key: validate-helmfile-config check-jq ## Rotate the EDGE+API wristband signing key; REVOKE=true drops the old key without waiting
+rotate-wristband-key: validate-helmfile-config check-jq ## Rotate the API gateway wristband signing key; REVOKE=true drops the old key without waiting
 	@./scripts/rotate-wristband-key.sh
 
 .PHONY: install-api
@@ -973,13 +971,13 @@ validate-desire-delivery: check-helm ## Validate the desire delivery render (rem
 			$$0 == "  name: " name { keep = 1 } \
 			END { if (keep) printf "%s", doc }'; \
 	}; \
-	NAMESPACE=$$namespace_prefix RUN_ID=$$namespace_prefix OIDC_ISSUER_MODE=mock OIDC_ISSUER_URL= OIDC_JWKS_URL= helmfile -f helmfile/helmfile.yaml.gotmpl -e e2e-kind repos >/dev/null \
+	NAMESPACE=$$namespace_prefix RUN_ID=$$namespace_prefix OIDC_ISSUER_MODE=mock OIDC_ISSUER_URL= helmfile -f helmfile/helmfile.yaml.gotmpl -e e2e-kind repos >/dev/null \
 		|| { echo "ERROR: Helmfile desire delivery repository setup failed"; exit 1; }; \
 	for env in e2e-kind e2e-gcp kind gcp; do \
 		ns=$$namespace_prefix-$$env; \
 		mode=mock; url=; \
 		if [ "$$env" = gcp ]; then mode=external; url=https://issuer.invalid; fi; \
-		export NAMESPACE=$$ns RUN_ID=$$ns OIDC_ISSUER_MODE=$$mode OIDC_ISSUER_URL=$$url OIDC_JWKS_URL=; \
+		export NAMESPACE=$$ns RUN_ID=$$ns OIDC_ISSUER_MODE=$$mode OIDC_ISSUER_URL=$$url; \
 		out=$$(helmfile -f helmfile/helmfile.yaml.gotmpl -e $$env $$selectors template --skip-deps) \
 			|| { echo "ERROR: Helmfile desire delivery template failed for $$env"; exit 1; }; \
 		adapters=$$(echo "$$out" | sed -n 's/^  name: \(.*\)-hyperfleet-adapter-config$$/\1/p'); \
@@ -1003,7 +1001,7 @@ validate-tenant-claims: check-helm check-helmfile ## Validate that tenant claims
 	@echo "Validating tenant claims render..."
 	@set -eu; \
 	ns=hf-validate-claims; \
-	export NAMESPACE=$$ns RUN_ID=$$ns OIDC_ISSUER_MODE=mock OIDC_ISSUER_URL= OIDC_JWKS_URL=; \
+	export NAMESPACE=$$ns RUN_ID=$$ns OIDC_ISSUER_MODE=mock OIDC_ISSUER_URL=; \
 	export TENANT_ISOLATION_ENABLED=true TENANT_MODEL=onprem; \
 	helmfile -f helmfile/helmfile.yaml.gotmpl -e e2e-kind repos >/dev/null \
 		|| { echo "ERROR: Helmfile repository setup failed"; exit 1; }; \

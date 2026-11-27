@@ -1,0 +1,51 @@
+# The API gateway's values (release hyperfleet-gateway).
+{{- $mockIssuer := eq (env "OIDC_ISSUER_MODE" | default "external") "mock" }}
+
+upstream:
+  host: hyperfleet-api
+  port: 8000
+  # The pods behind the upstream: the gateway's NetworkPolicy admits the Envoy
+  # pods to them (they are the API chart's standard labels).
+  podSelector:
+    app.kubernetes.io/name: hyperfleet-api
+    app.kubernetes.io/instance: hyperfleet-api
+    app.kubernetes.io/component: api
+
+authorino:
+  policy:
+    # Active tenant model for the rendered AuthConfig (onprem|oracle). Must stay in
+    # lockstep with config.server.tenant.dimensions in base-api values when wired.
+    tenant:
+      model: {{ env "TENANT_MODEL" | default "onprem" }}
+
+    identityProviders:
+    {{- if $mockIssuer }}
+      - name: human-jwt
+        issuerUrl: {{ printf "https://hyperfleet-mock-oidc.%s.svc.cluster.local:8443/default" .Values.namespace | quote }}
+        audience: {{ .Values.apiAudience | quote }}
+        identityClaim: email
+    {{- else }}
+      - name: human-jwt
+        issuerUrl: {{ requiredEnv "OIDC_ISSUER_URL" | quote }}
+        audience: {{ .Values.apiAudience | quote }}
+        identityClaim: email
+    {{- end }}
+
+    wristband:
+      # Must match the API chart's JWT audience.
+      audience: {{ .Values.apiAudience | quote }}
+
+    machineIdentity:
+      audience: {{ .Values.machineIdentityAudience | quote }}
+      # Exact SA allow-list, derived from declared sentinels/adapters and any
+      # environment-specific machine callers. See helm/hyperfleet-gateway/values.yaml.
+      allowedServiceAccounts:
+        {{- range .Values.sentinels }}
+        - {{ printf "%s-hyperfleet-sentinel" .name | quote }}
+        {{- end }}
+        {{- range .Values.adapters }}
+        - {{ printf "%s-hyperfleet-adapter" .name | quote }}
+        {{- end }}
+        {{- range .Values.additionalMachineServiceAccounts }}
+        - {{ . | quote }}
+        {{- end }}

@@ -144,9 +144,9 @@ Configuration precedence (highest to lowest):
 | `make install-authorino-operator` | Install the pinned Kuadrant Authorino operator (cluster-wide; prerequisite for gateway ext_authz) |
 | `make uninstall-authorino-operator` | Uninstall the Authorino operator |
 | `make switch-tenant-model` | Switch the active tenant model (`TENANT_MODEL=onprem\|oracle`); re-applies the gateway AuthConfig and API together |
-| `make rotate-wristband-key` | Rotate the wristband signing key; `REVOKE=true` drops the old key without the overlap wait |
+| `make rotate-wristband-key` | Rotate the API gateway wristband signing key; `REVOKE=true` drops the old key without the overlap wait |
 | `make mint-human-token` | Mint a test-only JWT from the mock issuer |
-| `make mint-machine-token` | Mint a short-lived ServiceAccount JWT for API or gateway authentication |
+| `make mint-machine-token` | Mint a short-lived ServiceAccount JWT for gateway authentication (the gateway validates it through TokenReview) |
 | `make check-human-token` | Verify human JWT tenant propagation, audience enforcement, and missing-claim denial |
 | `make check-gateway-e2e` | Run the full kind gateway identity, lifecycle, tenant-isolation, and NetworkPolicy suite |
 | `make check-wristband-rotation` | Rotate and then revoke the wristband signing key while checking that requests keep working |
@@ -384,12 +384,12 @@ ext_authz port) is written into the templates. `values.yaml` has these blocks:
 | ----- | ------------ |
 | `gatewayClassName` | The shared GatewayClass the Gateway uses (default `hyperfleet`, created by `make install-envoy-gateway`) |
 | `gateway` | The Gateway `listeners` (port, protocol, optional `hostname` and `tls`). Routes and authentication attach to every listener except one marked `authenticated: false`, such as the ACME solver listener |
-| `upstream` | The backend Service (`host`, `port`), the labels of the pods behind it (`podSelector`, required and with no default, which the NetworkPolicy selects; Helmfile sets the API's labels, and a release with another `host` sets its own) and, optionally, the Secret with its serving certificate |
+| `upstream` | The backend this gateway fronts, declared in full by every release (`host`, `port`, `podSelector`): all three are required with no default, so the chart assumes nothing about its upstream. `podSelector` is what the NetworkPolicy selects. Optionally, the Secret with the upstream's serving certificate |
 | `envoyProxy` | Replicas, resources, log level, and the Service type and annotations |
 | `monitoring.podMonitor.enabled` | Renders a PodMonitor that scrapes the proxy pods; Helmfile sets it when `OBSERVABILITY_ENABLED=true` |
 | `headers.stripOverride`, `traffic.retry` | Extra headers removed before authorization (the identity and tenant headers are always removed), and the triggers that are retried (only `GET`, `HEAD`, `PUT` and `DELETE` are, fixed in the route) |
 | `authorino` | Everything Authorino: the instance (`name`, `image`, `logLevel`, `hosts`, `authConfigLabelSelectors`, `mockIssuerCASecretName`), `wristbandHookImage` (the image of the signing-key hook Jobs, read in every state), `wristbandHeader` (the header the wristband leaves in: the default `authorization` writes `Bearer <wristband>` over the caller's credential; any other name, such as `x-wristband`, carries the raw token and the caller's `authorization` header is deleted after authorization; see below) and its `policy` |
-| `authorino.policy` | The AuthConfig this chart renders: identity providers, machine identity, tenant model and the wristband. Set `policy: null` for a gateway whose AuthConfigs come from elsewhere: no AuthConfig and no signing-key hooks are rendered |
+| `authorino.policy` | The AuthConfig this chart renders: identity providers, machine identity, tenant model and the wristband. The chart assumes nothing about the callers or the upstream: `identityProviders`, `machineIdentity.audience` (the TokenReview audience) and `wristband.audience` (what the upstream validates the wristband against) are required with no defaults, and `machineIdentity.allowedServiceAccounts` (exact names, empty denies every machine caller) must list the machine callers. `policy.wristband.tokenDuration` defaults to 300; `signingKeySecretName` is the key created on a fresh install; `signingKeys` is set only by `make rotate-wristband-key`. Set `policy: null` for a gateway whose AuthConfigs come from elsewhere: no AuthConfig and no signing-key hooks are rendered |
 
 The certificate Secrets are not values: they are named `<upstream.host>-server-cert`,
 `<authorino.name>-server-cert` and `<authorino.name>-oidc-server-cert`.
@@ -406,10 +406,18 @@ which is how the Desire Store's gateway is configured. `authorization` is reject
 `headers.stripOverride`, because removing it before authorization would deny every request.
 
 A second gateway, such as the Desire Store's, is a second release of the same
-chart with its own `fullnameOverride`, `upstream` (including the required `upstream.podSelector`),
-`authorino.name` and `authorino.authConfigLabelSelectors`, and `authorino.policy:
-null` when its AuthConfigs come from elsewhere; `make validate-authorino` renders
-two releases side by side and fails if their objects collide.
+chart with its own `fullnameOverride`, `upstream` (all of `host`, `port` and
+`podSelector`), `authorino.name` and `authorino.authConfigLabelSelectors`, and
+`authorino.policy: null` when its AuthConfigs come from elsewhere; `make
+validate-authorino` renders two releases side by side and fails if their objects
+collide.
+
+**How gateways are deployed.** Like adapters and Sentinels: each environment lists
+its gateways in `helmfile/environments/<env>/gateway-configs.yaml.gotmpl`, and each
+entry names the per-gateway values file (the API gateway's is
+`helmfile/values/api-gateway.yaml.gotmpl`; values shared by every gateway are in
+`base-gateway.yaml.gotmpl`). The API gateway's release name must stay
+`hyperfleet-gateway`: object names and the API's CA secret reference derive from it.
 
 **Which AuthConfigs an Authorino loads.** Each Authorino loads only the AuthConfigs whose
 labels match its `authorino.authConfigLabelSelectors`, so two instances in one namespace stay
@@ -422,15 +430,15 @@ everything, so the schema rejects anything else.
 
 ### Gateway Authentication (Authorino)
 
-Enable gateway authentication when you want every API request to have a valid
-identity before it reaches HyperFleet. Once an OIDC issuer is configured, turn
-it on with:
+Every API request must have a valid identity before it reaches HyperFleet:
+authentication at the gateway is always on and cannot be disabled. Deploying
+with a human issuer looks like:
 
 ```bash
 OIDC_ISSUER_URL=https://issuer.example.com make install-hyperfleet
 ```
 
-Authentication is always on. It means that:
+That means:
 
 - human users must send `Authorization: Bearer <token>` from the configured
   OIDC issuer;
@@ -665,6 +673,12 @@ redeploys the gateway release:
 HELMFILE_ENV=kind make rotate-wristband-key              # overlap, about 6 minutes
 HELMFILE_ENV=kind make rotate-wristband-key REVOKE=true  # compromised key
 ```
+
+The target rotates the API gateway's key (release `hyperfleet-gateway`), the
+only gateway whose wristband keys this chart manages. The AuthConfig, the
+Authorino instance and the signing-key Secrets are resolved by that release's
+labels, and the redeploy is scoped to it, so a second gateway in the namespace
+is never touched.
 
 Authorino signs with the first key in the AuthConfig and publishes every key
 in its JWKS. The JWT key ID is the Secret name, so every rotation creates a new

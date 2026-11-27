@@ -1,12 +1,20 @@
-# Values `make lint-helm` lints the chart with: the chart has no default for
-# upstream.podSelector, so a release always sets it (Helmfile does, for the API).
+# Values `make lint-helm` lints the chart with: the chart has no defaults for
+# upstream.host, upstream.port or upstream.podSelector, so a release always sets
+# them (Helmfile does, for the API gateway).
 upstream:
+  host: hyperfleet-api
+  port: 8000
   podSelector:
     app.kubernetes.io/name: hyperfleet-api
     app.kubernetes.io/instance: hyperfleet-api
     app.kubernetes.io/component: api
 authorino:
   policy:
+    machineIdentity:
+      audience: hyperfleet-api
+      allowedServiceAccounts: [clusters-hyperfleet-sentinel, nodepools-hyperfleet-sentinel, adapter1-hyperfleet-adapter, adapter2-hyperfleet-adapter, adapter3-hyperfleet-adapter]
+    wristband:
+      audience: hyperfleet-api
     identityProviders:
       - name: human-jwt
         issuerUrl: https://issuer.example.com

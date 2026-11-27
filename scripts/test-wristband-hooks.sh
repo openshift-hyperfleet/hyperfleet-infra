@@ -74,8 +74,13 @@ fi
 render() {
   helm template "$RELEASE" "$CHART_DIR" \
     --namespace "$NAMESPACE" \
+    --set-string upstream.host=hyperfleet-api \
+    --set upstream.port=8000 \
     --set-json 'upstream.podSelector={"app.kubernetes.io/name":"hyperfleet-api","app.kubernetes.io/instance":"hyperfleet-api","app.kubernetes.io/component":"api"}' \
     --set "authorino.wristbandHookImage=${IMAGE}" \
+    --set-string authorino.policy.machineIdentity.audience=hyperfleet-api \
+    --set-json 'authorino.policy.machineIdentity.allowedServiceAccounts=["clusters-hyperfleet-sentinel","nodepools-hyperfleet-sentinel","adapter1-hyperfleet-adapter","adapter2-hyperfleet-adapter","adapter3-hyperfleet-adapter"]' \
+    --set-string authorino.policy.wristband.audience=hyperfleet-api \
     --set "authorino.policy.wristband.signingKeySecretName=${SECRET_NAME}" \
     --set-json 'authorino.policy.identityProviders=[{"name":"human-jwt","issuerUrl":"https://idp.example.com","audience":"hyperfleet-api","identityClaim":"sub"}]'
 }

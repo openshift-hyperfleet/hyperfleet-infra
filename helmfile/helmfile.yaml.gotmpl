@@ -59,6 +59,7 @@ environments:
       - environments/e2e/fixture-entities.yaml
       - environments/e2e-gcp/adapter-configs.yaml.gotmpl
       - environments/e2e-gcp/sentinel-configs.yaml
+      - environments/e2e-gcp/gateway-configs.yaml.gotmpl
   e2e-kind:
     values:
       - brokerType: rabbitmq
@@ -68,12 +69,14 @@ environments:
       - environments/e2e/fixture-entities.yaml
       - environments/e2e-kind/adapter-configs.yaml.gotmpl
       - environments/e2e-kind/sentinel-configs.yaml
+      - environments/e2e-kind/gateway-configs.yaml.gotmpl
   kind:
     values:
       - brokerType: rabbitmq
         gatewayServiceType: {{ env "GATEWAY_SERVICE_TYPE" | default "ClusterIP" }}
       - environments/kind/adapter-configs.yaml.gotmpl
       - environments/kind/sentinel-configs.yaml.gotmpl
+      - environments/kind/gateway-configs.yaml.gotmpl
   gcp:
     values:
       - projectId: {{ env "PROJECT_ID" | default "hcm-hyperfleet" }}
@@ -81,6 +84,7 @@ environments:
         gatewayServiceType: {{ env "GATEWAY_SERVICE_TYPE" | default "LoadBalancer" }}
       - environments/gcp/adapter-configs.yaml.gotmpl
       - environments/gcp/sentinel-configs.yaml.gotmpl
+      - environments/gcp/gateway-configs.yaml.gotmpl
 
 commonLabels:
   group: hyperfleet
@@ -105,14 +109,8 @@ commonLabels:
 {{- if and (eq $oidcIssuerMode "external") (not (regexMatch "^https://[^[:space:]]+$" (env "OIDC_ISSUER_URL"))) }}
 {{ fail "OIDC_ISSUER_URL must be a non-empty https:// URL with OIDC_ISSUER_MODE=external" }}
 {{- end }}
-{{- if and (env "OIDC_JWKS_URL") (not (env "OIDC_ISSUER_URL")) }}
-{{ fail "OIDC_JWKS_URL is set without OIDC_ISSUER_URL" }}
-{{- end }}
 {{- if and (env "OIDC_ISSUER_URL") (not (regexMatch "^https://[^[:space:]]+$" (env "OIDC_ISSUER_URL"))) }}
 {{ fail "OIDC_ISSUER_URL must be an https:// URL" }}
-{{- end }}
-{{- if and (env "OIDC_JWKS_URL") (not (regexMatch "^https://[^[:space:]]+$" (env "OIDC_JWKS_URL"))) }}
-{{ fail "OIDC_JWKS_URL must be an https:// URL" }}
 {{- end }}
 {{- $tenantIsolationEnabled := eq (env "TENANT_ISOLATION_ENABLED" | default "false") "true" -}}
 {{- $tenantModel := env "TENANT_MODEL" | default "onprem" -}}
@@ -216,8 +214,9 @@ releases:
           create: {{ $e2eEnvironment }}
           name: "hyperfleet-e2e-runner"
 
-  - name: hyperfleet-gateway
-    namespace: {{ .Values.namespace }}
+{{ range .Values.gateways }}
+  - name: {{ .name }}
+    namespace: {{ $.Values.namespace }}
     chart: ../helm/hyperfleet-gateway
 {{ if or $e2eEnvironment (eq $oidcIssuerMode "mock") }}
     needs:
@@ -232,6 +231,10 @@ releases:
       component: gateway
     values:
       - values/base-gateway.yaml.gotmpl
+{{- if hasKey . "values" }}
+{{ toYaml .values | indent 6 }}
+{{ end }}
+{{ end }}
 
   - name: network-policies
     namespace: {{ .Values.namespace }}

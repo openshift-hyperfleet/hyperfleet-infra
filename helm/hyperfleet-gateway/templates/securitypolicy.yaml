@@ -1,8 +1,7 @@
 # Authorino authenticates every request on the authenticated listeners before it
 # is routed, so a route added there without a policy of its own is still
 # authenticated. Fail-closed and not configurable: this is the authentication
-# boundary. Rendered only where Authorino runs (EDGE and EDGE+API); in NONE and
-# API the gateway performs no authentication.
+# boundary.
 apiVersion: gateway.envoyproxy.io/v1alpha1
 kind: SecurityPolicy
 metadata:

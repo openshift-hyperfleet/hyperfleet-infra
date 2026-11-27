@@ -8,8 +8,8 @@
 {{- $jobs = append $jobs (dict "name" (include "hyperfleet-gateway.wristbandCleanupName" .) "events" "pre-delete" "keys" (concat (include "hyperfleet-gateway.wristbandSigningKeys" . | fromJsonArray) $stale | uniq)) }}
 {{- end }}
 # The sweep deletes the labeled keys the AuthConfig no longer lists, so it also
-# removes the keys of a deployment that left EDGE+API. The pre-delete Job covers
-# uninstall of an EDGE+API release. Neither waits for Authorino.
+# removes the keys of a deployment that no longer lists them. The pre-delete
+# Job covers uninstall. Neither waits for Authorino.
 {{- range $i, $job := $jobs }}
 {{- if $i }}
 ---

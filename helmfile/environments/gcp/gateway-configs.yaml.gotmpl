@@ -1,0 +1,8 @@
+# Gateways this environment deploys. Each entry is one release of the gateway
+# chart; its per-gateway values are the files it lists (relative to
+# helmfile.yaml.gotmpl). The API gateway's release name must stay
+# hyperfleet-gateway: object names and the API's CA secret reference derive from it.
+gateways:
+  - name: hyperfleet-gateway
+    values:
+      - ./values/api-gateway.yaml.gotmpl

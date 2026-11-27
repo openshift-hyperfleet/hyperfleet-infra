@@ -36,7 +36,7 @@ CI tools image (`ci/tools/`): `make build-ci-tools` and `make test-ci-tools`. Se
 
 **Never edit or commit `generated-values-from-terraform/` or `generated-values-rabbitmq/`.** Both are generated and gitignored. Helmfile renders incorrectly or fails if they are missing. `make clean-generated` removes both.
 
-Helmfile uses Go templates (`.gotmpl`) throughout. Per-environment adapter and sentinel lists live in `helmfile/environments/<env>/`, and the adapter config files they reference live in `helmfile/configs/{base,e2e}/adapters/`.
+Helmfile uses Go templates (`.gotmpl`) throughout. Per-environment adapter, sentinel and gateway lists live in `helmfile/environments/<env>/` (`adapter-configs`, `sentinel-configs`, `gateway-configs`), and the adapter config files they reference live in `helmfile/configs/{base,e2e}/adapters/`. The gateway chart has no default upstream: every gateway entry declares `upstream.host`, `port` and `podSelector` via its per-gateway values file (`values/api-gateway.yaml.gotmpl` for the API gateway), and the API gateway's release name must stay `hyperfleet-gateway` because the API chart references its CA secret by that name.
 
 ## Fixture entities
 
@@ -111,7 +111,7 @@ The hand-written Envoy chart and this one differ in proxy pod labels, the genera
 **OIDC defaults to mock in E2E environments.** `e2e-gcp` and `e2e-kind` use the namespace-local mock issuer; `gcp` and `kind` default to an external issuer. Set `OIDC_ISSUER_URL` for authenticated external deployments. Set `OIDC_ISSUER_MODE` explicitly to override an environment default. Mock deployments emit a Helmfile warning; its in-memory signing keys are replaced on issuer rollout, invalidating minted tokens. **Never use mock mode in production.** There is one authentication model (Authorino validates the caller and issues the wristband the API trusts); the old `AUTH_MODE` choices no longer exist.
 
 **Never change a wristband signing key in place.**
-The JWT key ID is the Secret name, and the API caches keys by key ID. `make rotate-wristband-key` creates a new Secret instead. The gateway chart renders `signingKeyRefs` from `authorino.policy.wristband.signingKeys` (set only by the make target), else with `lookup` from the live AuthConfig, so `helm template` always shows only the default key. The label `hyperfleet.io/wristband-signing-key` only marks the Secrets the cleanup hooks may delete; its value is the release name, so a release never sweeps another release's keys.
+The JWT key ID is the Secret name, and the API caches keys by key ID. `make rotate-wristband-key` rotates the API gateway's key (`hyperfleet-gateway`, the only release whose wristband keys this chart manages; the Desire Store's come from its operator) and creates a new Secret instead. The gateway chart renders `signingKeyRefs` from `authorino.policy.wristband.signingKeys` (set only by the make target), else with `lookup` from the live AuthConfig, so `helm template` always shows only the default key. The label `hyperfleet.io/wristband-signing-key` only marks the Secrets the cleanup hooks may delete; its value is the release name, so a release never sweeps another release's keys.
 
 **Terraform state locking is always disabled.**
 `install-terraform` and `destroy-terraform` pass `-lock=false`. If an apply left a `terraform/errored.tfstate`, resolve it before re-running.
