@@ -1,16 +1,25 @@
-{{- if include "hyperfleet-gateway.edgeAuthEnabled" . }}
-{{- $model := .Values.tenant.model | default "onprem" }}
-{{- $cfg := index .Values.tenant.models $model }}
+{{- if include "hyperfleet-gateway.authConfigEnabled" . }}
+{{- $policy := .Values.authorino.policy }}
+{{- /* Claim and header names per tenant model. A new model needs a matching change to the API's tenant dimensions, so this is not a value. */}}
+{{- $models := dict
+    "onprem" (dict "requiredRule" "require-org"
+      "required" (dict "claim" "org_id" "header" "x-tenant-org")
+      "optional" (dict "claim" "project_id" "header" "x-tenant-project"))
+    "oracle" (dict "requiredRule" "require-tenancy-ocid"
+      "required" (dict "claim" "tenancy_ocid" "header" "x-tenant-tenancy-ocid")
+      "optional" (dict "claim" "compartment_id" "header" "x-tenant-compartment")) }}
+{{- $model := $policy.tenant.model | default "onprem" }}
+{{- $cfg := index $models $model }}
 {{- if not $cfg }}
-{{- fail (printf "tenant.model %q not found in .Values.tenant.models (expected e.g. onprem|oracle)" $model) }}
+{{- fail (printf "authorino.policy.tenant.model %q is not one of onprem|oracle" $model) }}
 {{- end }}
 {{- $allowedServiceAccountsPattern := list }}
-{{- range .Values.auth.machineIdentity.allowedServiceAccounts }}
+{{- range $policy.machineIdentity.allowedServiceAccounts }}
 {{- $allowedServiceAccountsPattern = append $allowedServiceAccountsPattern (regexQuoteMeta .) }}
 {{- end }}
 {{- $providerNames := dict }}
 {{- $providerIssuers := dict }}
-{{- range .Values.auth.identityProviders }}
+{{- range $policy.identityProviders }}
 {{- if or (not .name) (eq .name "hyperfleet-components") }}
 {{- fail "Identity providers need a unique name other than hyperfleet-components" }}
 {{- end }}
@@ -27,18 +36,21 @@
 apiVersion: authorino.kuadrant.io/v1beta3
 kind: AuthConfig
 metadata:
-  name: hyperfleet-tenant-policy
+  name: {{ include "hyperfleet-gateway.authConfigName" . }}
   labels:
     {{- include "hyperfleet-gateway.labels" . | nindent 4 }}
+    # The shard label: the general gateway's Authorino selects it (authorino.authConfigLabelSelectors),
+    # and the Desire Store's dedicated Authorino does not, so the two never load the same AuthConfig.
+    hyperfleet.io/gateway: general
 spec:
   # Matched request authority: always the gateway Service DNS + localhost,
   # plus any extra hostnames configured via authorino.hosts (AUTHORINO_HOSTS).
   hosts:
-    - {{ include "hyperfleet-gateway.fullname" . | quote }}
-    - {{ printf "%s.%s.svc" (include "hyperfleet-gateway.fullname" .) .Release.Namespace | quote }}
-    - {{ printf "%s.%s.svc.cluster.local" (include "hyperfleet-gateway.fullname" .) .Release.Namespace | quote }}
+    - {{ include "hyperfleet-gateway.serviceName" . | quote }}
+    - {{ printf "%s.%s.svc" (include "hyperfleet-gateway.serviceName" .) .Release.Namespace | quote }}
+    - {{ printf "%s.%s.svc.cluster.local" (include "hyperfleet-gateway.serviceName" .) .Release.Namespace | quote }}
     - "localhost"
-    {{- range .Values.auth.authorino.hosts }}
+    {{- range .Values.authorino.hosts }}
     - {{ . | quote }}
     {{- end }}
   authentication:
@@ -50,14 +62,14 @@ spec:
         - predicate: request.headers['authorization'].startsWith('ServiceAccount ')
       kubernetesTokenReview:
         audiences:
-          - {{ .Values.auth.machineIdentity.audience | quote }}
+          - {{ $policy.machineIdentity.audience | quote }}
       credentials:
         authorizationHeader:
           prefix: ServiceAccount
       overrides:
         hf_system:
           value: "true"
-    {{- range .Values.auth.identityProviders }}
+    {{- range $policy.identityProviders }}
     {{ .name | quote }}:
       when:
         - predicate: request.headers['authorization'].startsWith('Bearer ')
@@ -90,7 +102,7 @@ spec:
           - selector: auth.identity.hf_identity
             operator: neq
             value: ""
-    {{- range .Values.auth.identityProviders }}
+    {{- range $policy.identityProviders }}
     {{- if .identityClaimPattern }}
     {{ printf "%s-identity" .name | quote }}:
       when:
@@ -105,7 +117,7 @@ spec:
     {{- end }}
     {{- end }}
     # Machine callers only: allow only the exact SAs listed in
-    # auth.machineIdentity.allowedServiceAccounts, in this namespace.
+    # authorino.policy.machineIdentity.allowedServiceAccounts, in this namespace.
     # Audience alone is not the credential.
     "restrict-system-subjects":
       when:
@@ -130,12 +142,11 @@ spec:
             value: ""
   response:
     success:
-      {{- if eq .Values.auth.mode "EDGE+API" }}
       dynamicMetadata:
         wristband:
           wristband:
             issuer: {{ include "hyperfleet-gateway.wristbandIssuer" . | quote }}
-            tokenDuration: {{ .Values.auth.wristband.tokenDuration }}
+            tokenDuration: {{ $policy.wristband.tokenDuration }}
             signingKeyRefs:
               {{- range include "hyperfleet-gateway.wristbandSigningKeys" . | fromJsonArray }}
               - name: {{ . | quote }}
@@ -143,7 +154,7 @@ spec:
               {{- end }}
             customClaims:
               aud:
-                value: {{ .Values.auth.wristband.audience | quote }}
+                value: {{ $policy.wristband.audience | quote }}
               sub:
                 expression: "auth.identity.hf_system == 'true' ? auth.identity.user.username : auth.identity.hf_identity"
               hf_identity:
@@ -154,7 +165,6 @@ spec:
                 expression: {{ printf "%s in auth.identity ? auth.identity[%s] : ''" ($cfg.required.claim | toJson) ($cfg.required.claim | toJson) | quote }}
               {{ $cfg.optional.claim | quote }}:
                 expression: {{ printf "%s in auth.identity ? auth.identity[%s] : ''" ($cfg.optional.claim | toJson) ($cfg.optional.claim | toJson) | quote }}
-      {{- end }}
       headers:
         # "true" for machine callers (hyperfleet-components), "false" for humans.
         x-hyperfleet-system:

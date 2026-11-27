@@ -1,0 +1,25 @@
+# Authorino authenticates every request on the authenticated listeners before it
+# is routed, so a route added there without a policy of its own is still
+# authenticated. Fail-closed and not configurable: this is the authentication
+# boundary.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: SecurityPolicy
+metadata:
+  name: {{ include "hyperfleet-gateway.fullname" . }}
+  labels:
+    {{- include "hyperfleet-gateway.labels" . | nindent 4 }}
+spec:
+  targetRefs:
+    {{- range fromJsonArray (include "hyperfleet-gateway.authenticatedListeners" .) }}
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: {{ include "hyperfleet-gateway.gatewayName" $ }}
+      sectionName: {{ . }}
+    {{- end }}
+  extAuth:
+    failOpen: false
+    timeout: 1s
+    grpc:
+      backendRefs:
+        - name: {{ include "hyperfleet-gateway.authorinoAuthorizationService" . }}
+          port: 50051

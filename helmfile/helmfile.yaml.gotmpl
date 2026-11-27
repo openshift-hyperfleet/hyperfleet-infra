@@ -1,9 +1,8 @@
-{{- $globalAuthMode := env "AUTH_MODE" | default "NONE" -}}
 {{- $globalOIDCIssuerMode := env "OIDC_ISSUER_MODE" | default "external" -}}
 # Helmfile configuration
 # Documentation: https://helmfile.readthedocs.io/
 
-{{ if and (has $globalAuthMode (list "EDGE" "API" "EDGE+API")) (eq $globalOIDCIssuerMode "mock") }}
+{{ if eq $globalOIDCIssuerMode "mock" }}
 hooks:
   - events: ["prepare"]
     showlogs: true
@@ -27,8 +26,6 @@ helmDefaults:
 # Base values for all environments
 values:
   - values/production-entities.yaml
-  # AUTH_MODE is the sole authentication-placement control.
-  - authMode: {{ env "AUTH_MODE" | default "NONE" | quote }}
   - namespace: {{ requiredEnv "NAMESPACE" }}
   - chartOrg: {{ env "CHART_ORG" | default "openshift-hyperfleet" }}
   # API audience shared by human JWTs and adapter/sentinel ServiceAccount tokens.
@@ -62,6 +59,7 @@ environments:
       - environments/e2e/fixture-entities.yaml
       - environments/e2e-gcp/adapter-configs.yaml.gotmpl
       - environments/e2e-gcp/sentinel-configs.yaml
+      - environments/e2e-gcp/gateway-configs.yaml.gotmpl
   e2e-kind:
     values:
       - brokerType: rabbitmq
@@ -71,12 +69,14 @@ environments:
       - environments/e2e/fixture-entities.yaml
       - environments/e2e-kind/adapter-configs.yaml.gotmpl
       - environments/e2e-kind/sentinel-configs.yaml
+      - environments/e2e-kind/gateway-configs.yaml.gotmpl
   kind:
     values:
       - brokerType: rabbitmq
         gatewayServiceType: {{ env "GATEWAY_SERVICE_TYPE" | default "ClusterIP" }}
       - environments/kind/adapter-configs.yaml.gotmpl
       - environments/kind/sentinel-configs.yaml.gotmpl
+      - environments/kind/gateway-configs.yaml.gotmpl
   gcp:
     values:
       - projectId: {{ env "PROJECT_ID" | default "hcm-hyperfleet" }}
@@ -84,6 +84,7 @@ environments:
         gatewayServiceType: {{ env "GATEWAY_SERVICE_TYPE" | default "LoadBalancer" }}
       - environments/gcp/adapter-configs.yaml.gotmpl
       - environments/gcp/sentinel-configs.yaml.gotmpl
+      - environments/gcp/gateway-configs.yaml.gotmpl
 
 commonLabels:
   group: hyperfleet
@@ -94,41 +95,27 @@ commonLabels:
 {{ fail "fixtureEntities are only allowed in e2e-kind and e2e-gcp" }}
 {{- end }}
 
-{{ if not (has .Values.authMode (list "NONE" "EDGE" "API" "EDGE+API")) }}
-{{ fail "AUTH_MODE must be NONE, EDGE, API, or EDGE+API" }}
-{{ end }}
-{{- $edgeAuth := has .Values.authMode (list "EDGE" "EDGE+API") -}}
 {{- $e2eEnvironment := has .Environment.Name (list "e2e-kind" "e2e-gcp") -}}
-{{- $oidcAuth := has .Values.authMode (list "EDGE" "API" "EDGE+API") -}}
 {{- $oidcIssuerMode := env "OIDC_ISSUER_MODE" | default "external" -}}
 {{- if not (has $oidcIssuerMode (list "mock" "external")) }}
 {{ fail "OIDC_ISSUER_MODE must be mock or external" }}
 {{- end }}
-{{- if and $oidcAuth (eq $oidcIssuerMode "mock") (not (has .Environment.Name (list "gcp" "kind" "e2e-kind" "e2e-gcp"))) }}
+{{- if and (eq $oidcIssuerMode "mock") (not (has .Environment.Name (list "gcp" "kind" "e2e-kind" "e2e-gcp"))) }}
 {{ fail "OIDC_ISSUER_MODE=mock is test-only and allowed only in gcp, kind, e2e-kind, or e2e-gcp" }}
 {{- end }}
-{{- if and $oidcAuth (eq $oidcIssuerMode "mock") (env "OIDC_ISSUER_URL") }}
-{{ fail "OIDC_ISSUER_URL must be empty with OIDC_ISSUER_MODE=mock in authenticated modes" }}
+{{- if and (eq $oidcIssuerMode "mock") (env "OIDC_ISSUER_URL") }}
+{{ fail "OIDC_ISSUER_URL must be empty with OIDC_ISSUER_MODE=mock" }}
 {{- end }}
-{{- if and $edgeAuth (eq $oidcIssuerMode "external") (not (regexMatch "^https://[^[:space:]]+$" (env "OIDC_ISSUER_URL"))) }}
-{{ fail "OIDC_ISSUER_URL must be a non-empty https:// URL with OIDC_ISSUER_MODE=external in edge modes" }}
-{{- end }}
-{{- if and (env "OIDC_JWKS_URL") (not (env "OIDC_ISSUER_URL")) }}
-{{ fail "OIDC_JWKS_URL is set without OIDC_ISSUER_URL" }}
+{{- if and (eq $oidcIssuerMode "external") (not (regexMatch "^https://[^[:space:]]+$" (env "OIDC_ISSUER_URL"))) }}
+{{ fail "OIDC_ISSUER_URL must be a non-empty https:// URL with OIDC_ISSUER_MODE=external" }}
 {{- end }}
 {{- if and (env "OIDC_ISSUER_URL") (not (regexMatch "^https://[^[:space:]]+$" (env "OIDC_ISSUER_URL"))) }}
 {{ fail "OIDC_ISSUER_URL must be an https:// URL" }}
 {{- end }}
-{{- if and (env "OIDC_JWKS_URL") (not (regexMatch "^https://[^[:space:]]+$" (env "OIDC_JWKS_URL"))) }}
-{{ fail "OIDC_JWKS_URL must be an https:// URL" }}
-{{- end }}
 {{- $tenantIsolationEnabled := eq (env "TENANT_ISOLATION_ENABLED" | default "false") "true" -}}
-{{- if and $tenantIsolationEnabled (not $edgeAuth) }}
-{{ fail "TENANT_ISOLATION_ENABLED=true requires AUTH_MODE=EDGE or EDGE+API" }}
-{{- end }}
 {{- $tenantModel := env "TENANT_MODEL" | default "onprem" -}}
-{{- if and (or $edgeAuth $tenantIsolationEnabled) (not (has $tenantModel (list "onprem" "oracle"))) }}
-{{ fail "TENANT_MODEL must be onprem or oracle when edge auth or tenant isolation is enabled" }}
+{{- if not (has $tenantModel (list "onprem" "oracle")) }}
+{{ fail "TENANT_MODEL must be onprem or oracle" }}
 {{- end }}
 repositories:
   - name: hyperfleet-api
@@ -160,17 +147,17 @@ releases:
 {{ end }}
 
   # Development-only human issuer. Keep the release in Helmfile state when disabled so
-  # an auth-mode change or teardown removes a previously deployed mock.
+  # a change of issuer mode or a teardown removes a previously deployed mock.
   - name: hyperfleet-mock-oidc
     namespace: {{ .Values.namespace }}
     chart: ../helm/mock-oidc
-    installed: {{ and $oidcAuth (eq $oidcIssuerMode "mock") }}
+    installed: {{ eq $oidcIssuerMode "mock" }}
     labels:
       component: mock-oidc
     values:
       - fullnameOverride: hyperfleet-mock-oidc
         tls:
-          enabled: {{ and $oidcAuth (eq $oidcIssuerMode "mock") }}
+          enabled: {{ eq $oidcIssuerMode "mock" }}
 
   # Desire delivery: the Redis desire store and the applier that serves this
   # namespace's store partition.
@@ -206,14 +193,11 @@ releases:
   - name: hyperfleet-api
     namespace: {{ .Values.namespace }}
     chart: hyperfleet-api/hyperfleet-api
-    # The gateway owns the internal PKI and (in EDGE+API) Authorino wristband
-    # discovery plus the in-cluster signing-key lifecycle hook.
+    # The gateway owns the internal PKI and the Authorino wristband discovery plus
+    # the in-cluster signing-key lifecycle hook.
     # It must exist before the API mounts its serving certificate and CA bundle.
     needs:
       - hyperfleet-gateway
-{{ if and (eq .Values.authMode "API") (eq $oidcIssuerMode "mock") }}
-      - hyperfleet-mock-oidc
-{{ end }}
     labels:
       component: api
     values:
@@ -230,15 +214,16 @@ releases:
           create: {{ $e2eEnvironment }}
           name: "hyperfleet-e2e-runner"
 
-  - name: hyperfleet-gateway
-    namespace: {{ .Values.namespace }}
+{{ range .Values.gateways }}
+  - name: {{ .name }}
+    namespace: {{ $.Values.namespace }}
     chart: ../helm/hyperfleet-gateway
-{{ if or $e2eEnvironment (and $edgeAuth (eq $oidcIssuerMode "mock")) }}
+{{ if or $e2eEnvironment (eq $oidcIssuerMode "mock") }}
     needs:
 {{- if $e2eEnvironment }}
       - hyperfleet-e2e
 {{- end }}
-{{- if and $edgeAuth (eq $oidcIssuerMode "mock") }}
+{{- if eq $oidcIssuerMode "mock" }}
       - hyperfleet-mock-oidc
 {{ end }}
 {{ end }}
@@ -246,13 +231,16 @@ releases:
       component: gateway
     values:
       - values/base-gateway.yaml.gotmpl
+{{- if hasKey . "values" }}
+{{ toYaml .values | indent 6 }}
+{{ end }}
+{{ end }}
 
   - name: network-policies
     namespace: {{ .Values.namespace }}
     chart: ../helm/network-policies
     needs:
       - hyperfleet-api
-      - hyperfleet-gateway
     labels:
       component: network-policies
     values:

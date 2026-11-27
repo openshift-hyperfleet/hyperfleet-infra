@@ -21,7 +21,7 @@ fi
 KUBECTL
 chmod +x "$work/bin/kubectl"
 export PATH="$work/bin:$PATH"
-export AUTH_MODE=API OIDC_ISSUER_MODE=external OIDC_ISSUER_URL='' OIDC_JWKS_URL=''
+export OIDC_ISSUER_MODE=mock OIDC_ISSUER_URL=''
 export TENANT_ISOLATION_ENABLED=false OBSERVABILITY_ENABLED=false TRACING_ENABLED=false
 export EXTERNAL_DNS_ENABLED=false
 namespace_prefix=hf-fixtures

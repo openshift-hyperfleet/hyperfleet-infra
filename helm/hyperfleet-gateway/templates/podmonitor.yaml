@@ -1,0 +1,18 @@
+{{- if .Values.monitoring.podMonitor.enabled }}
+# Scrapes the Envoy proxy pods Envoy Gateway creates for this Gateway; the
+# proxy serves Prometheus stats at /stats/prometheus on its metrics port.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: {{ include "hyperfleet-gateway.fullname" . }}
+  labels:
+    {{- include "hyperfleet-gateway.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "hyperfleet-gateway.proxyPodLabels" . | nindent 6 }}
+  podMetricsEndpoints:
+    - port: metrics
+      path: /stats/prometheus
+      interval: 30s
+{{- end }}

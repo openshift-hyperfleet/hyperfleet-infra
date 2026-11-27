@@ -1,7 +1,15 @@
 #!/usr/bin/env bash
-# Rotate the EDGE+API wristband signing key with gateway upgrades. Authorino
+# Rotate the API gateway's wristband signing key. Authorino
 # signs with the first signingKeyRefs entry and publishes every entry in its
 # JWKS, and the key ID is the Secret name, so each key gets a new Secret.
+#
+# This rotates the API gateway's key (release hyperfleet-gateway), the only
+# gateway whose wristband keys this chart manages: the Desire Store's
+# AuthConfigs come from elsewhere (authorino.policy: null) and its keys with
+# them. The AuthConfig and the Authorino instance are looked up by the
+# release's instance label, and the helmfile sync is scoped to that one
+# release, so another gateway in the namespace is never re-synced with the
+# API gateway's signing keys.
 #
 #   REVOKE=false: [old] -> [new,old] -> wait for old wristbands to expire -> [new]
 #   REVOKE=true:  [old] -> [new]
@@ -16,12 +24,11 @@ set -euo pipefail
 
 NAMESPACE="${NAMESPACE:-}"
 HELMFILE_ENV="${HELMFILE_ENV:-}"
-AUTH_MODE="${AUTH_MODE:-}"
 REVOKE="${REVOKE:-false}"
+gateway_release=hyperfleet-gateway
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "$0")" && pwd)
 REPO_ROOT=$(cd -- "$SCRIPT_DIR/.." && pwd)
-authconfig="hyperfleet-tenant-policy"
 wristband_path="{.spec.response.success.dynamicMetadata.wristband.wristband"
 jwks_timeout=300
 # hyperfleet-api accepts a JWT up to 30s past its exp claim.
@@ -32,7 +39,6 @@ fail() {
     exit 1
 }
 
-[[ "$AUTH_MODE" == "EDGE+API" ]] || fail "rotate-wristband-key requires AUTH_MODE=EDGE+API (got '$AUTH_MODE')"
 case "$REVOKE" in
     true|false) ;;
     *) fail "REVOKE must be true or false (got '$REVOKE')" ;;
@@ -43,9 +49,23 @@ for cmd in kubectl jq helmfile; do
     command -v "$cmd" >/dev/null 2>&1 || fail "required command not found: $cmd"
 done
 
+# Resolve the AuthConfig and the Authorino instance of the API gateway by its
+# instance label, so the script does not duplicate the chart's naming.
+authconfig=$(kubectl get authconfig --namespace "$NAMESPACE" \
+    -l "app.kubernetes.io/instance=$gateway_release" \
+    -o jsonpath='{.items[*].metadata.name}')
+case "$authconfig" in
+    "") fail "no AuthConfig labeled app.kubernetes.io/instance=$gateway_release in $NAMESPACE; the API gateway renders no policy, so it has no chart-managed wristband keys" ;;
+    *" "*) fail "expected one AuthConfig for $gateway_release, found: $authconfig" ;;
+esac
+authorino_name=$(kubectl get authorino --namespace "$NAMESPACE" \
+    -l "app.kubernetes.io/instance=$gateway_release" \
+    -o jsonpath='{.items[0].metadata.name}')
+[[ -n "$authorino_name" ]] || fail "no Authorino labeled app.kubernetes.io/instance=$gateway_release in $NAMESPACE"
+
 read -r -a old_keys <<<"$(kubectl get authconfig "$authconfig" --namespace "$NAMESPACE" \
     -o jsonpath="${wristband_path}.signingKeyRefs[*].name}")"
-(( ${#old_keys[@]} > 0 )) || fail "AuthConfig $authconfig has no wristband signing keys; deploy the gateway with AUTH_MODE=EDGE+API first"
+(( ${#old_keys[@]} > 0 )) || fail "AuthConfig $authconfig has no wristband signing keys; deploy the gateway first"
 token_duration=$(kubectl get authconfig "$authconfig" --namespace "$NAMESPACE" \
     -o jsonpath="${wristband_path}.tokenDuration}")
 [[ "$token_duration" =~ ^[0-9]+$ ]] || fail "AuthConfig $authconfig has no wristband tokenDuration"
@@ -56,7 +76,7 @@ if kubectl get secret "$new_key" --namespace "$NAMESPACE" >/dev/null 2>&1; then
     fail "Secret $new_key already exists; rerun in a second"
 fi
 
-jwks_path="/api/v1/namespaces/${NAMESPACE}/services/https:authorino-authorino-oidc:8083/proxy/${NAMESPACE}/${authconfig}/wristband/.well-known/openid-connect/certs"
+jwks_path="/api/v1/namespaces/${NAMESPACE}/services/https:${authorino_name}-authorino-oidc:8083/proxy/${NAMESPACE}/${authconfig}/wristband/.well-known/openid-connect/certs"
 
 # The AuthConfig Ready condition has no observedGeneration, so it cannot show
 # that Authorino applied a change. Poll the JWKS that the API reads instead.
@@ -76,16 +96,17 @@ wait_for_jwks() {
 gateway_sync() {
     local IFS=,
     helmfile -f "$REPO_ROOT/helmfile/helmfile.yaml.gotmpl" -e "$HELMFILE_ENV" \
-        -l component=gateway sync --set "auth.wristband.signingKeys={$*}"
+        -l "component=gateway,name=$gateway_release" sync --set "authorino.policy.wristband.signingKeys={$*}"
 }
 
-echo "Rotating wristband signing key ${old_keys[*]} -> ${new_key} (REVOKE=${REVOKE})"
-# The sweep deletes by label and REVOKE=true never lists the old keys, so label
-# them here. A key from before keys were labeled has none; a rolled-back
+echo "Rotating the API gateway wristband signing key: ${old_keys[*]} -> ${new_key} (REVOKE=${REVOKE})"
+# The sweep deletes by label (whose value is the release name) and REVOKE=true
+# never lists the old keys, so label them here. A key from before keys were
+# labeled has none; a rolled-back
 # AuthConfig can name a Secret that is gone.
 for key in "${old_keys[@]}"; do
     [[ -z "$(kubectl get secret "$key" --namespace "$NAMESPACE" --ignore-not-found -o name)" ]] \
-        || kubectl label secret "$key" --namespace "$NAMESPACE" hyperfleet.io/wristband-signing-key=true --overwrite >/dev/null
+        || kubectl label secret "$key" --namespace "$NAMESPACE" "hyperfleet.io/wristband-signing-key=$gateway_release" --overwrite >/dev/null
 done
 if [[ "$REVOKE" == "false" ]]; then
     gateway_sync "$new_key" "${old_keys[@]}"

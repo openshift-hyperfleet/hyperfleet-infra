@@ -53,7 +53,6 @@ metadata:
 spec:
   ca:
     secretName: {{ $rootCASecretName }}
-{{- if include "hyperfleet-gateway.edgeAuthEnabled" . }}
 ---
 apiVersion: cert-manager.io/v1
 kind: Certificate
@@ -62,7 +61,7 @@ metadata:
   labels:
     {{- include "hyperfleet-gateway.labels" . | nindent 4 }}
 spec:
-  secretName: {{ .Values.tls.authorinoAuthorizationTLSSecretName }}
+  secretName: {{ include "hyperfleet-gateway.authorinoAuthorizationTLSSecretName" . }}
   privateKey:
     # HYPERFLEET-1523: this pre-existing leaf-key rotation policy is outside
     # this PR. Do not change rotation behaviour until the spike decides it.
@@ -83,7 +82,7 @@ metadata:
   labels:
     {{- include "hyperfleet-gateway.labels" . | nindent 4 }}
 spec:
-  secretName: {{ .Values.tls.authorinoOIDCTLSSecretName }}
+  secretName: {{ include "hyperfleet-gateway.authorinoOIDCTLSSecretName" . }}
   privateKey:
     # HYPERFLEET-1523: this pre-existing leaf-key rotation policy is outside
     # this PR. Do not change rotation behaviour until the spike decides it.
@@ -96,16 +95,15 @@ spec:
     - {{ $authorinoOIDCServiceName }}
     - {{ printf "%s.%s.svc" $authorinoOIDCServiceName .Release.Namespace }}
     - {{ printf "%s.%s.svc.cluster.local" $authorinoOIDCServiceName .Release.Namespace }}
-{{- end }}
 ---
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
-  name: hyperfleet-api
+  name: {{ .Values.upstream.host }}
   labels:
     {{- include "hyperfleet-gateway.labels" . | nindent 4 }}
 spec:
-  secretName: {{ .Values.tls.hyperfleetApiTLSSecretName }}
+  secretName: {{ include "hyperfleet-gateway.upstreamTLSSecretName" . }}
   privateKey:
     # HYPERFLEET-1523: this pre-existing leaf-key rotation policy is outside
     # this PR. Do not change rotation behaviour until the spike decides it.
@@ -115,6 +113,6 @@ spec:
     kind: Issuer
     group: cert-manager.io
   dnsNames:
-    - {{ .Values.envoy.upstream.host }}
-    - {{ printf "%s.%s.svc" .Values.envoy.upstream.host .Release.Namespace }}
-    - {{ printf "%s.%s.svc.cluster.local" .Values.envoy.upstream.host .Release.Namespace }}
+    - {{ .Values.upstream.host }}
+    - {{ printf "%s.%s.svc" .Values.upstream.host .Release.Namespace }}
+    - {{ printf "%s.%s.svc.cluster.local" .Values.upstream.host .Release.Namespace }}

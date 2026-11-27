@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Manually exercise the deployed gateway/API authentication modes.
+# Manually exercise the deployed gateway's authentication.
 # Successful requests expect HTTP 200; rejected credentials expect 401 or 403.
 
 set -euo pipefail
@@ -7,7 +7,6 @@ set -euo pipefail
 SCRIPT_DIR=$(cd -- "$(dirname -- "$0")" && pwd)
 REPO_ROOT=$(cd -- "$SCRIPT_DIR/.." && pwd)
 
-AUTH_MODE="${AUTH_MODE:-}"
 HELMFILE_ENV="${HELMFILE_ENV:-gcp}"
 GATEWAY_SERVICE="${GATEWAY_SERVICE:-hyperfleet-gateway}"
 GATEWAY_PORT="${GATEWAY_PORT:-8000}"
@@ -17,15 +16,6 @@ TENANT_MODEL="${TENANT_MODEL:-onprem}"
 TOKEN_SUBJECT="${TOKEN_SUBJECT:-human@example.com}"
 TOKEN_TENANT="${TOKEN_TENANT:-}"
 TOKEN_SUBTENANT="${TOKEN_SUBTENANT:-}"
-
-AUTH_MODE=$(printf '%s' "$AUTH_MODE" | tr '[:lower:]' '[:upper:]')
-case "$AUTH_MODE" in
-    NONE|API|EDGE|EDGE+API) ;;
-    *)
-        echo "Usage: AUTH_MODE=NONE|API|EDGE|EDGE+API $0" >&2
-        exit 2
-        ;;
-esac
 
 if [[ -z "${NAMESPACE:-}" ]]; then
     case "$HELMFILE_ENV" in
@@ -39,7 +29,7 @@ if [[ -z "${NAMESPACE:-}" ]]; then
     esac
 fi
 
-export AUTH_MODE HELMFILE_ENV NAMESPACE
+export HELMFILE_ENV NAMESPACE
 
 require_command() {
     command -v "$1" >/dev/null 2>&1 || {
@@ -53,9 +43,9 @@ require_command curl
 require_command lsof
 require_command make
 
-if [[ "$AUTH_MODE" != "NONE" && -z "$TOKEN_TENANT" ]]; then
+if [[ -z "$TOKEN_TENANT" ]]; then
     echo "ERROR: TOKEN_TENANT is required to mint the human token (TENANT_MODEL=$TENANT_MODEL)" >&2
-    echo "Example: TOKEN_TENANT=org-acme AUTH_MODE=$AUTH_MODE $0" >&2
+    echo "Example: TOKEN_TENANT=org-acme $0" >&2
     exit 2
 fi
 
@@ -200,7 +190,6 @@ check_case() {
 
 mint_human_token() {
     make -C "$REPO_ROOT" --no-print-directory \
-        "AUTH_MODE=$AUTH_MODE" \
         "HELMFILE_ENV=$HELMFILE_ENV" \
         "NAMESPACE=$NAMESPACE" \
         OIDC_ISSUER_MODE=mock \
@@ -213,50 +202,27 @@ mint_human_token() {
 
 mint_machine_token() {
     make -C "$REPO_ROOT" --no-print-directory \
-        "AUTH_MODE=$AUTH_MODE" \
         "HELMFILE_ENV=$HELMFILE_ENV" \
         "NAMESPACE=$NAMESPACE" \
         mint-machine-token
 }
 
-echo "Testing AUTH_MODE=$AUTH_MODE at ${BASE_URL%/}/api/hyperfleet/v1/clusters (namespace=$NAMESPACE)"
+echo "Testing authentication at ${BASE_URL%/}/api/hyperfleet/v1/clusters (namespace=$NAMESPACE)"
 
-case "$AUTH_MODE" in
-    NONE)
-        check_case 'No Authorization header' 200
-        ;;
-    API)
-        if ! human_token=$(mint_human_token); then
-            echo "ERROR: failed to mint human token" >&2
-            exit 1
-        fi
-        check_case 'Human token with Bearer scheme' 200 "Bearer $human_token"
-        check_case 'Human token with ServiceAccount scheme' reject "ServiceAccount $human_token"
-        check_case 'No Authorization header' reject
+if ! human_token=$(mint_human_token); then
+    echo "ERROR: failed to mint human token" >&2
+    exit 1
+fi
+check_case 'Human token with Bearer scheme' 200 "Bearer $human_token"
+check_case 'Human token with ServiceAccount scheme' reject "ServiceAccount $human_token"
+check_case 'No Authorization header' reject
 
-        if ! machine_token=$(mint_machine_token); then
-            echo "ERROR: failed to mint machine token" >&2
-            exit 1
-        fi
-        check_case 'Machine token with Bearer scheme' 200 "Bearer $machine_token"
-        ;;
-    EDGE|EDGE+API)
-        if ! human_token=$(mint_human_token); then
-            echo "ERROR: failed to mint human token" >&2
-            exit 1
-        fi
-        check_case 'Human token with Bearer scheme' 200 "Bearer $human_token"
-        check_case 'Human token with ServiceAccount scheme' reject "ServiceAccount $human_token"
-        check_case 'No Authorization header' reject
-
-        if ! machine_token=$(mint_machine_token); then
-            echo "ERROR: failed to mint machine token" >&2
-            exit 1
-        fi
-        check_case 'Machine token with Bearer scheme' reject "Bearer $machine_token"
-        check_case 'Machine token with ServiceAccount scheme' 200 "ServiceAccount $machine_token"
-        ;;
-esac
+if ! machine_token=$(mint_machine_token); then
+    echo "ERROR: failed to mint machine token" >&2
+    exit 1
+fi
+check_case 'Machine token with Bearer scheme' reject "Bearer $machine_token"
+check_case 'Machine token with ServiceAccount scheme' 200 "ServiceAccount $machine_token"
 
 if (( FAILURES > 0 )); then
     printf '\n%d authentication test(s) failed.\n' "$FAILURES" >&2

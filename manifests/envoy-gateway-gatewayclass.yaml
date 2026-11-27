@@ -1,0 +1,14 @@
+# The one GatewayClass every HyperFleet Gateway uses. It is cluster-scoped and
+# identical for all releases (it only names the controller), so it belongs next to
+# the controller, not in the gateway chart: a chart-rendered class would be left
+# behind by every abandoned run on a shared cluster. The per-release settings live
+# in each release's EnvoyProxy, which the Gateway points at through
+# infrastructure.parametersRef.
+#
+# Applied by `make install-envoy-gateway`, removed by `make uninstall-envoy-gateway`.
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: hyperfleet
+spec:
+  controllerName: gateway.envoyproxy.io/gatewayclass-controller

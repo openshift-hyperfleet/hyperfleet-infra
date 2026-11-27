@@ -1,0 +1,72 @@
+{{- $gatewayName := include "hyperfleet-gateway.gatewayName" . }}
+# Proxy infrastructure for this release's Gateway: the Envoy Deployment, its
+# Service and its PodDisruptionBudget. Envoy Gateway reads it through the
+# Gateway's infrastructure.parametersRef and creates the objects in this
+# namespace (the controller runs in GatewayNamespace mode).
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: {{ $gatewayName }}
+  labels:
+    {{- include "hyperfleet-gateway.labels" . | nindent 4 }}
+spec:
+  logging:
+    level:
+      default: {{ .Values.envoyProxy.logLevel }}
+  telemetry:
+    accessLog:
+      settings:
+        - format:
+            type: Text
+            # Envoy's own default format, but PATH(NQ) instead of
+            # REQ(X-ENVOY-ORIGINAL-PATH?:PATH) so query strings - which may carry
+            # tokens or other secrets - aren't logged.
+            text: |
+              [%START_TIME%] "%REQ(:METHOD)% %PATH(NQ)% %PROTOCOL%" %RESPONSE_CODE% %RESPONSE_FLAGS% %RESPONSE_CODE_DETAILS% %CONNECTION_TERMINATION_DETAILS% "%UPSTREAM_TRANSPORT_FAILURE_REASON%" %BYTES_RECEIVED% %BYTES_SENT% %DURATION% %RESP(X-ENVOY-UPSTREAM-SERVICE-TIME)% "%REQ(X-FORWARDED-FOR)%" "%REQ(USER-AGENT)%" "%REQ(X-REQUEST-ID)%" "%REQ(:AUTHORITY)%" "%UPSTREAM_HOST%"
+          sinks:
+            - type: File
+              file:
+                path: /dev/stdout
+  provider:
+    type: Kubernetes
+    kubernetes:
+      envoyDeployment:
+        name: {{ $gatewayName }}
+        replicas: {{ .Values.envoyProxy.replicas }}
+        container:
+          resources:
+            {{- toYaml .Values.envoyProxy.resources | nindent 12 }}
+          # The same hardening as the other HyperFleet pods (API, adapters).
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+            seccompProfile:
+              type: RuntimeDefault
+        pod:
+          securityContext:
+            fsGroup: 65532
+            runAsNonRoot: true
+            runAsUser: 65532
+          # Spread the replicas across nodes when there is room.
+          affinity:
+            podAntiAffinity:
+              preferredDuringSchedulingIgnoredDuringExecution:
+                - weight: 100
+                  podAffinityTerm:
+                    topologyKey: kubernetes.io/hostname
+                    labelSelector:
+                      matchLabels:
+                        {{- include "hyperfleet-gateway.proxyPodLabels" . | nindent 24 }}
+      envoyService:
+        name: {{ include "hyperfleet-gateway.serviceName" . }}
+        type: {{ .Values.envoyProxy.service.type }}
+        {{- with .Values.envoyProxy.service.annotations }}
+        annotations:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+      envoyPDB:
+        name: {{ $gatewayName }}
+        maxUnavailable: 1

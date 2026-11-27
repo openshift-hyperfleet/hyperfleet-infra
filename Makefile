@@ -44,10 +44,6 @@ DRY_RUN_FLAG      := $(if $(filter $(TRUTHY_VALUES),$(strip $(DRY_RUN))),--dry-r
 AUTO_APPROVE_FLAG := $(if $(filter $(TRUTHY_VALUES),$(strip $(AUTO_APPROVE))),-auto-approve)
 BUILD_IMAGES_ENABLED := $(if $(filter $(TRUTHY_VALUES),$(strip $(BUILD_IMAGES))),1,)
 
-# Authentication has one public control.
-AUTH_MODE ?= EDGE+API
-EDGE_AUTH_ENABLED := $(if $(filter EDGE EDGE+API,$(strip $(AUTH_MODE))),1,)
-
 
 # Default Dirs
 MANIFESTS_DIR    ?= manifests
@@ -83,8 +79,7 @@ MACHINE_TOKEN_AUDIENCE ?= hyperfleet-api
 MACHINE_TOKEN_DURATION ?= 10m
 
 # Authorino operator (Kuadrant). Cluster-singleton prerequisite for the gateway
-# ext_authz auth boundary; installs AuthConfig / Authorino CRDs when AUTH_MODE
-# is EDGE or EDGE+API. Pinned by commit (not the mutable version tag) and
+# ext_authz auth boundary; installs the AuthConfig / Authorino CRDs. Pinned by commit (not the mutable version tag) and
 # checksum-verified before being applied. Bumping AUTHORINO_OPERATOR_VERSION
 # requires updating COMMIT and SHA256 together.
 AUTHORINO_OPERATOR_VERSION        ?= v0.27.0
@@ -97,6 +92,22 @@ CERT_MANAGER_VERSION         ?= v1.21.2
 CERT_MANAGER_NAMESPACE       ?= cert-manager
 CERT_MANAGER_MANIFEST        ?= https://github.com/cert-manager/cert-manager/releases/download/$(CERT_MANAGER_VERSION)/cert-manager.yaml
 CERT_MANAGER_MANIFEST_SHA256 ?= e03b668ec8675214af6b0a671699d088f2601fa3878e0dbe1b41d3feafd1879f
+
+# Envoy Gateway (control plane + Gateway API CRDs): cluster-singleton prerequisite
+# of the gateway chart (ADR-0036), installed like cert-manager and the Authorino
+# operator — pinned upstream install.yaml, checksum-verified, applied with kubectl,
+# so there is no Helm release to lock. The manifest is patched
+# (scripts/patch-envoy-gateway.sh) so each Gateway's Envoy runs in the Gateway's own
+# namespace and Lua EnvoyExtensionPolicies work (without Lua the wristband hand-off
+# is rejected and every request gets a 500); the cluster-wide RBAC that mode needs
+# is manifests/envoy-gateway-rbac.yaml, the shared GatewayClass is
+# manifests/envoy-gateway-gatewayclass.yaml, and the controller namespace
+# (envoy-gateway-system) is fixed by both files. On a version bump: update the
+# checksum, check the patches still apply, and check the RBAC still matches (see
+# AGENTS.md).
+ENVOY_GATEWAY_VERSION         ?= v1.9.4
+ENVOY_GATEWAY_MANIFEST        ?= https://github.com/envoyproxy/gateway/releases/download/$(ENVOY_GATEWAY_VERSION)/install.yaml
+ENVOY_GATEWAY_MANIFEST_SHA256 ?= 0581247f7c182db57365b1585f84f4b370c06db0088cf612e41e96788452051d
 
 LIFECYCLE_DIR        ?= functions/lifecycle-enforcer
 OCI_SWEEP_DIR        ?= functions/oci-ci-sweep
@@ -290,6 +301,39 @@ uninstall-cert-manager: check-kubectl ## Uninstall cert-manager explicitly (clus
 	rc=$$?; rm -f "$$tmp"; exit $$rc
 	@echo "OK: cert-manager uninstalled"
 
+.PHONY: install-envoy-gateway
+install-envoy-gateway: check-kubectl ## Install Envoy Gateway (pinned, patched, cluster-wide) and the shared GatewayClass - prerequisite for the gateway chart
+	@echo "Installing Envoy Gateway $$ENVOY_GATEWAY_VERSION..."
+	@kubectl apply -f "$$MANIFESTS_DIR/envoy-gateway-rbac.yaml"
+	@tmp=$$(mktemp) && \
+	$(call fetch_manifest,$$ENVOY_GATEWAY_MANIFEST,Envoy Gateway manifest); \
+	actual=$$( (command -v sha256sum >/dev/null 2>&1 && sha256sum "$$tmp" || shasum -a 256 "$$tmp") | cut -d' ' -f1 ); \
+	if [ "$$actual" != "$$ENVOY_GATEWAY_MANIFEST_SHA256" ]; then \
+		echo "ERROR: Envoy Gateway manifest checksum mismatch (expected $$ENVOY_GATEWAY_MANIFEST_SHA256, got $$actual)"; rm -f "$$tmp"; exit 1; \
+	fi; \
+	./scripts/patch-envoy-gateway.sh < "$$tmp" > "$$tmp.patched" || { rm -f "$$tmp" "$$tmp.patched"; exit 1; }; \
+	kubectl apply --server-side --force-conflicts -f "$$tmp.patched"; \
+	rc=$$?; rm -f "$$tmp" "$$tmp.patched"; exit $$rc
+	@kubectl wait --for=condition=Available deployment/envoy-gateway --namespace envoy-gateway-system --timeout=180s
+	@kubectl apply -f "$$MANIFESTS_DIR/envoy-gateway-gatewayclass.yaml"
+	@kubectl wait --for=condition=Accepted gatewayclass/hyperfleet --timeout=60s
+	@echo "OK: Envoy Gateway installed"
+
+.PHONY: uninstall-envoy-gateway
+uninstall-envoy-gateway: check-kubectl ## Uninstall Envoy Gateway, its GatewayClass and namespace; deletes the CRDs, and with them every Gateway, route and policy, so uninstall the gateway release first
+	@echo "Uninstalling Envoy Gateway $$ENVOY_GATEWAY_VERSION..."
+	@kubectl delete -f "$$MANIFESTS_DIR/envoy-gateway-gatewayclass.yaml" --ignore-not-found
+	@tmp=$$(mktemp) && \
+	$(call fetch_manifest,$$ENVOY_GATEWAY_MANIFEST,Envoy Gateway manifest); \
+	actual=$$( (command -v sha256sum >/dev/null 2>&1 && sha256sum "$$tmp" || shasum -a 256 "$$tmp") | cut -d' ' -f1 ); \
+	if [ "$$actual" != "$$ENVOY_GATEWAY_MANIFEST_SHA256" ]; then \
+		echo "ERROR: Envoy Gateway manifest checksum mismatch (expected $$ENVOY_GATEWAY_MANIFEST_SHA256, got $$actual)"; rm -f "$$tmp"; exit 1; \
+	fi; \
+	kubectl delete -f "$$tmp" --ignore-not-found; \
+	rc=$$?; rm -f "$$tmp"; exit $$rc
+	@kubectl delete -f "$$MANIFESTS_DIR/envoy-gateway-rbac.yaml" --ignore-not-found
+	@echo "OK: Envoy Gateway uninstalled"
+
 .PHONY: install-authorino-operator
 install-authorino-operator: check-kubectl ## Install the Authorino operator (pinned, cluster-wide) - prerequisite for gateway ext_authz
 	@echo "Installing Authorino operator $(AUTHORINO_OPERATOR_VERSION)..."
@@ -318,25 +362,13 @@ uninstall-authorino-operator: check-kubectl ## Uninstall the Authorino operator
 	rc=$$?; rm -f "$$tmp"; exit $$rc
 	@echo "OK: Authorino operator uninstalled"
 
-.PHONY: maybe-install-authorino-operator
-maybe-install-authorino-operator: ## Install the Authorino operator only for AUTH_MODE=EDGE or EDGE+API
-ifneq ($(EDGE_AUTH_ENABLED),)
-	$(MAKE) install-authorino-operator
-else
-	@echo "[NOTE: Skipping Authorino operator install (AUTH_MODE=$(AUTH_MODE))]"
-endif
-
-.PHONY: ensure-kubernetes-oidc-discovery
-ensure-kubernetes-oidc-discovery: check-kubectl check-kubectl-context ## Allow API-mode JWKS discovery on Kind before deployment
-	@./scripts/ensure-kubernetes-oidc-discovery.sh
-
 .PHONY: mint-human-token
 mint-human-token: ## Mint a test-only mock human JWT
 	@$(MAKE) --no-print-directory check-kubectl-context check-jq >&2
 	@./scripts/mint-human-token.sh
 
 .PHONY: mint-machine-token
-mint-machine-token: ## Mint a projected ServiceAccount JWT for API or gateway authentication
+mint-machine-token: ## Mint a projected ServiceAccount JWT for gateway authentication
 	@$(MAKE) --no-print-directory check-kubectl-context >&2
 	@./scripts/mint-machine-token.sh
 
@@ -380,18 +412,15 @@ install-repos: check-helmfile-env ## Add all hyperfleet helm repos
 	$(call add-helm-repo,adapter,$(ADAPTER_CHART_REF))
 
 .PHONY: install-hyperfleet
-install-hyperfleet: validate-helmfile-config check-hyperfleet-namespace maybe-install-authorino-operator install-cert-manager ensure-kubernetes-oidc-discovery ## Install all HyperFleet components with mandatory request-path TLS
+install-hyperfleet: validate-helmfile-config check-hyperfleet-namespace install-authorino-operator install-cert-manager install-envoy-gateway ## Install all HyperFleet components with mandatory request-path TLS
 	helmfile -f helmfile/helmfile.yaml.gotmpl -e $(HELMFILE_ENV) apply
 
 .PHONY: install-gateway
-install-gateway: validate-helmfile-config check-hyperfleet-namespace maybe-install-authorino-operator install-cert-manager ensure-kubernetes-oidc-discovery ## Install or update HyperFleet gateway, Authorino, and AuthConfig only
+install-gateway: validate-helmfile-config check-hyperfleet-namespace install-authorino-operator install-cert-manager install-envoy-gateway ## Install or update HyperFleet gateway, Authorino, and AuthConfig only
 	helmfile -f helmfile/helmfile.yaml.gotmpl -e $(HELMFILE_ENV) -l component=gateway apply --include-needs
 
 .PHONY: switch-tenant-model
-switch-tenant-model: validate-helmfile-config maybe-install-authorino-operator ## Switch the active tenant model; requires AUTH_MODE=EDGE or EDGE+API
-	@if [ -z "$(EDGE_AUTH_ENABLED)" ]; then \
-		echo "ERROR: switch-tenant-model requires AUTH_MODE=EDGE or EDGE+API"; exit 1; \
-	fi
+switch-tenant-model: validate-helmfile-config install-authorino-operator ## Switch the active tenant model
 	@case "$(TENANT_MODEL)" in \
 		onprem|oracle) ;; \
 		*) echo "ERROR: TENANT_MODEL='$(TENANT_MODEL)' must be 'onprem' or 'oracle'"; exit 1 ;; \
@@ -402,7 +431,7 @@ switch-tenant-model: validate-helmfile-config maybe-install-authorino-operator #
 	@echo "OK: tenant model switched to '$(TENANT_MODEL)' (same AuthConfig name replaces the policy; old-model tokens are rejected at the gateway)"
 
 .PHONY: rotate-wristband-key
-rotate-wristband-key: validate-helmfile-config check-jq ## Rotate the EDGE+API wristband signing key; REVOKE=true drops the old key without waiting
+rotate-wristband-key: validate-helmfile-config check-jq ## Rotate the API gateway wristband signing key; REVOKE=true drops the old key without waiting
 	@./scripts/rotate-wristband-key.sh
 
 .PHONY: install-api
@@ -824,7 +853,9 @@ test-network-policy-enforcement: check-kubectl ## Check default-deny enforcement
 lint-helm: check-helm helm-deps ## Lint all Helm charts
 	@for chart in $(HELM_DIR)/*/; do \
 		echo "Linting $$chart..."; \
-		helm lint "$$chart" || exit 1; \
+		values=""; \
+		if [ -f "$$chart/ci/lint-values.yaml" ]; then values="-f $$chart/ci/lint-values.yaml"; fi; \
+		helm lint $$values "$$chart" || exit 1; \
 	done
 
 .PHONY: lint-shellcheck
@@ -837,7 +868,7 @@ lint-shellcheck: ## Validate shell scripts with shellcheck
 		echo "WARN: shellcheck not installed, skipping"; \
 	fi
 .PHONY: validate-authorino
-validate-authorino: check-helm ## Validate internal TLS and all gateway AUTH_MODE templates
+validate-authorino: check-helm ## Validate internal TLS and the gateway templates
 	@./scripts/validate-authorino.sh
 
 .PHONY: validate-network-policies
@@ -848,7 +879,12 @@ validate-network-policies: check-helm ## Validate network-policies Helm chart re
 	echo "$$out" | grep -q "name: hyperfleet-api-ingress" \
 		|| { echo "ERROR: hyperfleet-api-ingress NetworkPolicy not rendered"; exit 1; }; \
 	echo "$$out" | grep -q "name: hyperfleet-api-postgres-ingress" \
-		|| { echo "ERROR: hyperfleet-api-postgres-ingress NetworkPolicy not rendered"; exit 1; }
+		|| { echo "ERROR: hyperfleet-api-postgres-ingress NetworkPolicy not rendered"; exit 1; }; \
+	if echo "$$out" | grep -q "gateway.envoyproxy.io"; then \
+		echo "ERROR: network-policies must not name the gateway: the hyperfleet-gateway chart renders the gateway-to-upstream policy"; exit 1; \
+	fi; \
+	echo "$$out" | grep -q "port: 9090" \
+		|| { echo "ERROR: the Prometheus rule of hyperfleet-api-ingress is missing"; exit 1; }
 	@echo "OK: network-policies chart rendered successfully"
 
 .PHONY: validate-namespace-cleaner
@@ -935,13 +971,13 @@ validate-desire-delivery: check-helm ## Validate the desire delivery render (rem
 			$$0 == "  name: " name { keep = 1 } \
 			END { if (keep) printf "%s", doc }'; \
 	}; \
-	NAMESPACE=$$namespace_prefix RUN_ID=$$namespace_prefix OIDC_ISSUER_MODE=mock OIDC_ISSUER_URL= OIDC_JWKS_URL= helmfile -f helmfile/helmfile.yaml.gotmpl -e e2e-kind repos >/dev/null \
+	NAMESPACE=$$namespace_prefix RUN_ID=$$namespace_prefix OIDC_ISSUER_MODE=mock OIDC_ISSUER_URL= helmfile -f helmfile/helmfile.yaml.gotmpl -e e2e-kind repos >/dev/null \
 		|| { echo "ERROR: Helmfile desire delivery repository setup failed"; exit 1; }; \
 	for env in e2e-kind e2e-gcp kind gcp; do \
 		ns=$$namespace_prefix-$$env; \
 		mode=mock; url=; \
 		if [ "$$env" = gcp ]; then mode=external; url=https://issuer.invalid; fi; \
-		export NAMESPACE=$$ns RUN_ID=$$ns OIDC_ISSUER_MODE=$$mode OIDC_ISSUER_URL=$$url OIDC_JWKS_URL=; \
+		export NAMESPACE=$$ns RUN_ID=$$ns OIDC_ISSUER_MODE=$$mode OIDC_ISSUER_URL=$$url; \
 		out=$$(helmfile -f helmfile/helmfile.yaml.gotmpl -e $$env $$selectors template --skip-deps) \
 			|| { echo "ERROR: Helmfile desire delivery template failed for $$env"; exit 1; }; \
 		adapters=$$(echo "$$out" | sed -n 's/^  name: \(.*\)-hyperfleet-adapter-config$$/\1/p'); \
@@ -965,8 +1001,8 @@ validate-tenant-claims: check-helm check-helmfile ## Validate that tenant claims
 	@echo "Validating tenant claims render..."
 	@set -eu; \
 	ns=hf-validate-claims; \
-	export NAMESPACE=$$ns RUN_ID=$$ns OIDC_ISSUER_MODE=mock OIDC_ISSUER_URL= OIDC_JWKS_URL=; \
-	export TENANT_ISOLATION_ENABLED=true AUTH_MODE=EDGE+API TENANT_MODEL=onprem; \
+	export NAMESPACE=$$ns RUN_ID=$$ns OIDC_ISSUER_MODE=mock OIDC_ISSUER_URL=; \
+	export TENANT_ISOLATION_ENABLED=true TENANT_MODEL=onprem; \
 	helmfile -f helmfile/helmfile.yaml.gotmpl -e e2e-kind repos >/dev/null \
 		|| { echo "ERROR: Helmfile repository setup failed"; exit 1; }; \
 	out=$$(helmfile -f helmfile/helmfile.yaml.gotmpl -e e2e-kind -l component=api template --skip-deps) \

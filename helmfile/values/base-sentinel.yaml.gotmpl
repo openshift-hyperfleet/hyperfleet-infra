@@ -30,9 +30,9 @@ config:
     hyperfleetApi:
       baseUrl: {{ env "API_BASE_URL" | default "http://hyperfleet-gateway:8000" }}
       auth:
-        enabled: {{ ne .Values.authMode "NONE" }}
+        enabled: true
         audience: {{ .Values.machineIdentityAudience | quote }}
-        scheme: {{ if has .Values.authMode (list "EDGE" "EDGE+API") }}ServiceAccount{{ else }}Bearer{{ end }}
+        scheme: ServiceAccount
 
 broker:
   type: {{ .Values.brokerType }}

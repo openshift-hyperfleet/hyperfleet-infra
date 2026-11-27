@@ -4,15 +4,12 @@ fullnameOverride: ""
 
 monitoringNamespace: monitoring
 
-# Name/instance labels of the workloads this chart guards. Must match the
+# Name/instance labels of the API this chart guards. Must match the
 # `app.kubernetes.io/name` and `app.kubernetes.io/instance` labels rendered by
-# the hyperfleet-api and hyperfleet-gateway releases (helmfile release names by
-# default) — override these if either release is installed under a different
-# name or release instance.
+# the hyperfleet-api release (helmfile release name by default) — override these
+# if it is installed under a different name or release instance.
 apiNameLabel: hyperfleet-api
 apiInstanceLabel: hyperfleet-api
-gatewayNameLabel: hyperfleet-gateway
-gatewayInstanceLabel: hyperfleet-gateway
 
 # Add or edit policies here — this is the only file that needs to change.
 # `podSelector` and `ingress` are passed through `tpl`, so they can reference
@@ -24,17 +21,10 @@ networkPolicies:
       app.kubernetes.io/instance: "{{ .Values.apiInstanceLabel }}"
       app.kubernetes.io/component: api
     ingress:
-      # Sole ingress source for the API's app port: the gateway. No
-      # sentinel/adapter exception — they reach the API through the gateway
-      # (baseUrl defaults to http://hyperfleet-gateway:8000).
-      - from:
-          - podSelector:
-              matchLabels:
-                app.kubernetes.io/name: "{{ .Values.gatewayNameLabel }}"
-                app.kubernetes.io/instance: "{{ .Values.gatewayInstanceLabel }}"
-        ports:
-          - protocol: TCP
-            port: 8000
+      # The API's app port is admitted by the NetworkPolicy the hyperfleet-gateway
+      # chart renders for its upstream (`<release>-to-upstream`): the gateway is the
+      # sole source, and there is no sentinel/adapter exception, because they reach
+      # the API through the gateway (baseUrl defaults to http://hyperfleet-gateway:8000).
       # Prometheus metrics-only exception: the actual Prometheus pods
       # (not the whole monitoring namespace), scrape :9090 only.
       - from:

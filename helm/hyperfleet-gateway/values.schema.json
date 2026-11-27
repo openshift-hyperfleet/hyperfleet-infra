@@ -2,183 +2,438 @@
   "$schema": "https://json-schema.org/draft-07/schema#",
   "title": "HyperFleet Gateway values",
   "type": "object",
+  "additionalProperties": false,
   "properties": {
-    "tls": {
+    "gatewayClassName": {
+      "type": "string",
+      "minLength": 1
+    },
+    "nameOverride": {
+      "type": "string"
+    },
+    "fullnameOverride": {
+      "type": "string"
+    },
+    "gateway": {
       "type": "object",
-      "required": [
-        "hyperfleetApiTLSSecretName",
-        "authorinoAuthorizationTLSSecretName",
-        "authorinoOIDCTLSSecretName"
-      ],
+      "additionalProperties": false,
       "properties": {
-        "hyperfleetApiTLSSecretName": { "type": "string", "minLength": 1 },
-        "authorinoAuthorizationTLSSecretName": { "type": "string", "minLength": 1 },
-        "authorinoOIDCTLSSecretName": { "type": "string", "minLength": 1 },
-        "certificateWaiter": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "enabled": { "type": "boolean" },
-            "image": {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "repository": { "type": "string", "minLength": 1 },
-                "pullPolicy": { "type": "string", "minLength": 1 }
+        "listeners": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "port",
+              "protocol"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+              },
+              "port": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 65535
+              },
+              "protocol": {
+                "type": "string",
+                "enum": [
+                  "HTTP",
+                  "HTTPS"
+                ]
+              },
+              "hostname": {
+                "type": "string"
+              },
+              "tls": {
+                "type": "object"
+              },
+              "authenticated": {
+                "type": "boolean"
               }
-            },
-            "timeoutSeconds": { "type": "integer", "minimum": 1 },
-            "resources": { "type": "object" }
+            }
           }
         }
       }
     },
-    "auth": {
+    "upstream": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "host",
+        "port",
+        "podSelector"
+      ],
+      "properties": {
+        "host": {
+          "type": "string",
+          "minLength": 1
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "tlsSecretName": {
+          "type": "string"
+        },
+        "podSelector": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "envoyProxy": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "mode": { "type": "string", "enum": ["NONE", "EDGE", "API", "EDGE+API"] },
-        "extAuthz": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
-            "timeout": { "type": "string", "minLength": 1 }
-          }
+        "replicas": {
+          "type": "integer",
+          "minimum": 1
         },
-        "authorino": {
+        "resources": {
+          "type": "object"
+        },
+        "logLevel": {
+          "type": "string",
+          "enum": [
+            "trace",
+            "debug",
+            "info",
+            "warn",
+            "error",
+            "critical",
+            "off"
+          ]
+        },
+        "service": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "image": { "type": "string" },
-            "hosts": { "type": "array", "items": { "type": "string", "minLength": 1 } },
-            "mockIssuerCASecretName": { "type": "string" },
-            "logging": {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": { "level": { "type": "string", "minLength": 1 } }
+            "type": {
+              "type": "string",
+              "enum": [
+                "ClusterIP",
+                "LoadBalancer",
+                "NodePort"
+              ]
+            },
+            "annotations": {
+              "type": "object"
+            }
+          }
+        }
+      }
+    },
+    "headers": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "stripOverride": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9-]+$"
+          }
+        }
+      }
+    },
+    "traffic": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "retry": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "triggers": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "enum": [
+                  "5xx",
+                  "gateway-error",
+                  "reset",
+                  "reset-before-request",
+                  "connect-failure",
+                  "retriable-4xx",
+                  "refused-stream",
+                  "retriable-status-codes",
+                  "cancelled",
+                  "deadline-exceeded",
+                  "internal",
+                  "resource-exhausted",
+                  "unavailable"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "monitoring": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "podMonitor": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            }
+          }
+        }
+      }
+    },
+    "certificateWaiter": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "image": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "repository": {
+              "type": "string",
+              "minLength": 1
+            },
+            "pullPolicy": {
+              "type": "string",
+              "minLength": 1
             }
           }
         },
-        "identityProviders": {
+        "timeoutSeconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "resources": {
+          "type": "object"
+        }
+      }
+    },
+    "authorino": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+        },
+        "image": {
+          "type": "string"
+        },
+        "logLevel": {
+          "type": "string",
+          "minLength": 1
+        },
+        "hosts": {
           "type": "array",
           "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["name", "issuerUrl", "audience"],
-            "properties": {
-              "name": { "type": "string", "minLength": 1 },
-              "issuerUrl": { "type": "string", "minLength": 1 },
-              "allowInsecureIssuer": { "type": "boolean" },
-              "audience": { "type": "string", "minLength": 1 },
-              "identityClaim": { "type": "string", "minLength": 1 },
-              "identityClaimPattern": { "type": "string" }
-            },
-            "allOf": [
-              {
-                "if": {
-                  "required": ["allowInsecureIssuer"],
-                  "properties": { "allowInsecureIssuer": { "const": true } }
-                },
-                "then": { "properties": { "issuerUrl": { "pattern": "^https?://[^[:space:]]+$" } } },
-                "else": { "properties": { "issuerUrl": { "pattern": "^https://[^[:space:]]+$" } } }
-              }
-            ]
+            "type": "string",
+            "minLength": 1
           }
         },
-        "wristband": {
-          "type": "object",
+        "authConfigLabelSelectors": {
+          "type": "string",
+          "pattern": "^(([a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?!=[A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?|([a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?=[A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?|!([a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?|([a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?)(,(([a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?!=[A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?|([a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?=[A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?|!([a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?|([a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?))*$"
+        },
+        "mockIssuerCASecretName": {
+          "type": "string"
+        },
+        "wristbandHookImage": {
+          "type": "string",
+          "minLength": 1
+        },
+        "wristbandHeader": {
+          "type": "string",
+          "pattern": "^[a-z0-9-]+$"
+        },
+        "policy": {
+          "type": [
+            "object",
+            "null"
+          ],
           "additionalProperties": false,
           "properties": {
-            "signingKeySecretName": { "type": "string", "minLength": 1 },
-            "signingKeys": {
+            "identityProviders": {
               "type": "array",
               "items": {
-                "type": "string",
-                "maxLength": 253,
-                "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "name",
+                  "issuerUrl",
+                  "audience"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "issuerUrl": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "allowInsecureIssuer": {
+                    "type": "boolean"
+                  },
+                  "audience": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "identityClaim": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "identityClaimPattern": {
+                    "type": "string"
+                  }
+                },
+                "allOf": [
+                  {
+                    "if": {
+                      "required": [
+                        "allowInsecureIssuer"
+                      ],
+                      "properties": {
+                        "allowInsecureIssuer": {
+                          "const": true
+                        }
+                      }
+                    },
+                    "then": {
+                      "properties": {
+                        "issuerUrl": {
+                          "pattern": "^https?://[^[:space:]]+$"
+                        }
+                      }
+                    },
+                    "else": {
+                      "properties": {
+                        "issuerUrl": {
+                          "pattern": "^https://[^[:space:]]+$"
+                        }
+                      }
+                    }
+                  }
+                ]
               }
             },
-            "audience": { "type": "string", "minLength": 1 },
-            "tokenDuration": { "type": "integer", "minimum": 1 },
-            "lifecycle": {
+            "machineIdentity": {
               "type": "object",
               "additionalProperties": false,
               "properties": {
-                "image": { "type": "string", "minLength": 1 },
-                "pullPolicy": { "type": "string", "minLength": 1 },
-                "resources": { "type": "object" }
+                "audience": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "allowedServiceAccounts": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "uniqueItems": true
+                }
+              },
+              "required": [
+                "audience"
+              ]
+            },
+            "tenant": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "model": {
+                  "type": "string",
+                  "enum": [
+                    "onprem",
+                    "oracle"
+                  ]
+                }
               }
-            }
-          }
-        },
-        "machineIdentity": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "audience": { "type": "string", "minLength": 1 },
-            "allowedServiceAccounts": {
-              "type": "array",
-              "items": { "type": "string", "minLength": 1 },
-              "uniqueItems": true
+            },
+            "wristband": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "audience": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "tokenDuration": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "signingKeySecretName": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "signingKeys": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "maxLength": 253,
+                    "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+                  }
+                }
+              },
+              "required": [
+                "audience"
+              ]
             }
           }
         }
       },
       "allOf": [
         {
-          "if": { "properties": { "mode": { "enum": ["EDGE", "EDGE+API"] } }, "required": ["mode"] },
-          "then": {
-            "required": ["identityProviders", "machineIdentity"],
+          "if": {
             "properties": {
-              "identityProviders": { "minItems": 1 },
-              "machineIdentity": {
-                "required": ["audience", "allowedServiceAccounts"],
-                "properties": { "allowedServiceAccounts": { "minItems": 1 } }
+              "policy": {
+                "type": "object"
+              }
+            },
+            "required": [
+              "policy"
+            ]
+          },
+          "then": {
+            "properties": {
+              "policy": {
+                "required": [
+                  "identityProviders",
+                  "machineIdentity"
+                ],
+                "properties": {
+                  "identityProviders": {
+                    "minItems": 1
+                  },
+                  "machineIdentity": {
+                    "required": [
+                      "audience",
+                      "allowedServiceAccounts"
+                    ]
+                  }
+                }
               }
             }
-          }
-        },
-        {
-          "if": { "properties": { "mode": { "const": "EDGE+API" } }, "required": ["mode"] },
-          "then": {
-            "required": ["wristband"],
-            "properties": { "wristband": { "required": ["signingKeySecretName", "audience", "tokenDuration", "lifecycle"] } }
           }
         }
       ]
-    },
-    "tenant": {
-      "type": "object",
-      "properties": {
-        "model": { "type": "string", "enum": ["onprem", "oracle"] },
-        "models": {
-          "type": "object",
-          "additionalProperties": {
-            "type": "object",
-            "required": ["requiredRule", "required", "optional"],
-            "properties": {
-              "requiredRule": { "type": "string", "minLength": 1 },
-              "required": {
-                "type": "object",
-                "required": ["claim", "header"],
-                "properties": {
-                  "claim": { "type": "string", "minLength": 1 },
-                  "header": { "type": "string", "minLength": 1 }
-                }
-              },
-              "optional": {
-                "type": "object",
-                "required": ["claim", "header"],
-                "properties": {
-                  "claim": { "type": "string", "minLength": 1 },
-                  "header": { "type": "string", "minLength": 1 }
-                }
-              }
-            }
-          }
-        }
-      }
     }
   }
 }

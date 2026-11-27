@@ -69,7 +69,7 @@
   {{- $accounts = append $accounts (printf "%s-hyperfleet-sentinel" .) -}}
   {{- $config := get $configs (printf "%s-hyperfleet-sentinel-config" .) -}}
   {{- include "assertEqual" (list (printf "%s-%s" $.Values.namespace .) $config.clients.broker.topic "Sentinel topic") -}}
-  {{- include "assertEqual" (list "Bearer" $config.clients.hyperfleet_api.auth.scheme "Sentinel API authentication") -}}
+  {{- include "assertEqual" (list "ServiceAccount" $config.clients.hyperfleet_api.auth.scheme "Sentinel API authentication") -}}
   {{- if has . (list "nodepools" "cascadechildren") -}}
     {{- $owner := dict "id" "resource.owner_references.id" "href" "resource.owner_references.href" "kind" "resource.owner_references.kind" -}}
     {{- include "assertEqual" (list $owner $config.message_data.owner_references (printf "%s owner references" .)) -}}
@@ -83,5 +83,5 @@
 {{- if $e2e -}}
   {{- $accounts = concat $accounts .Values.e2eMachineServiceAccounts -}}
 {{- end -}}
-{{- include "assertEqual" (list (sortAlpha $accounts) (sortAlpha $gateway.auth.machineIdentity.allowedServiceAccounts) "gateway service accounts") -}}
+{{- include "assertEqual" (list (sortAlpha $accounts) (sortAlpha $gateway.authorino.policy.machineIdentity.allowedServiceAccounts) "gateway service accounts") -}}
 {{- end -}}

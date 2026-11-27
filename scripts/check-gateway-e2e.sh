@@ -10,10 +10,12 @@ PHASE="${1:-}"
 NAMESPACE="${NAMESPACE:-}"
 HELMFILE_ENV="${HELMFILE_ENV:-}"
 OIDC_ISSUER_MODE="${OIDC_ISSUER_MODE:-}"
-AUTH_MODE="${AUTH_MODE:-NONE}"
 TENANT_ISOLATION_ENABLED="${TENANT_ISOLATION_ENABLED:-false}"
 TENANT_MODEL="${TENANT_MODEL:-onprem}"
 GATEWAY_SERVICE="${GATEWAY_SERVICE:-hyperfleet-gateway}"
+# Name of the Gateway, which is also the Service name (both are the release name);
+# Envoy Gateway labels its proxy pods with it.
+GATEWAY_NAME="${GATEWAY_NAME:-$GATEWAY_SERVICE}"
 API_SERVICE="${API_SERVICE:-hyperfleet-api}"
 CURL_IMAGE="${CURL_IMAGE:-curlimages/curl:8.22.0@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777}"
 GATEWAY_E2E_TIMEOUT="${GATEWAY_E2E_TIMEOUT:-300}"
@@ -45,7 +47,7 @@ current_hint=""
 passed=0
 
 usage() {
-    echo "usage: $0 {human|current-model|full|rotation}" >&2
+    echo "usage: $0 {human|current-model|full|rotation|shard}" >&2
 }
 
 error() {
@@ -125,20 +127,16 @@ configure_model() {
 
 validate_inputs() {
     case "$PHASE" in
-        human|current-model|full|rotation) ;;
+        human|current-model|full|rotation|shard) ;;
         *) usage; exit 1 ;;
     esac
     if [[ "$PHASE" == "full" && "$HELMFILE_ENV" != "kind" ]]; then
         fail "full requires HELMFILE_ENV=kind because it verifies Cilium NetworkPolicy enforcement"
     fi
-    if [[ "$PHASE" == "rotation" && "$AUTH_MODE" != "EDGE+API" ]]; then
-        fail "rotation requires AUTH_MODE=EDGE+API because only it issues wristbands"
-    fi
     require_command kubectl
     require_command jq
     [[ -n "$NAMESPACE" ]] || fail "NAMESPACE is required"
     [[ "$OIDC_ISSUER_MODE" == "mock" ]] || fail "$PHASE requires OIDC_ISSUER_MODE=mock"
-    [[ "$AUTH_MODE" == "EDGE" || "$AUTH_MODE" == "EDGE+API" ]] || fail "$PHASE requires AUTH_MODE=EDGE or EDGE+API"
     [[ "$TENANT_ISOLATION_ENABLED" == "true" ]] || fail "$PHASE requires TENANT_ISOLATION_ENABLED=true"
     configure_model
 }
@@ -240,7 +238,7 @@ expect_denied_at_gateway() {
     while (( SECONDS < deadline )); do
         # Envoy writes access log lines asynchronously, and a pod that cannot
         # serve logs yet is read again on the next poll.
-        entry=$(kubectl logs --namespace "$NAMESPACE" -l app.kubernetes.io/name=hyperfleet-gateway \
+        entry=$(kubectl logs --namespace "$NAMESPACE" -l "gateway.envoyproxy.io/owning-gateway-name=${GATEWAY_NAME}" \
             --container envoy --since=10m --tail=-1 2>/dev/null | grep -F -- " ${path} " || true)
         if [[ -n "$entry" ]]; then
             [[ "$entry" == *" UAEX "* && "$entry" == *'"-"' ]] \
@@ -310,6 +308,8 @@ cleanup_resources() {
     local rc=0
     cleanup_current_cluster || { error "failed to clean the suite-owned Cluster"; rc=1; }
     kubectl delete pod --namespace "$NAMESPACE" -l "$pod_labels" \
+        --ignore-not-found --wait=false >/dev/null 2>&1 || rc=1
+    kubectl delete authconfig --namespace "$NAMESPACE" -l hyperfleet.io/gateway-e2e-run="${run_id}" \
         --ignore-not-found --wait=false >/dev/null 2>&1 || rc=1
     rm -f "$mint_log"
     [[ -z "$rotation_output" ]] || rm -f "$rotation_output"
@@ -381,7 +381,7 @@ on_exit() {
     if [[ "$restore_onprem" == "true" ]]; then
         echo "Restoring tenant model to onprem..." >&2
         switch_model onprem || {
-            error "tenant model NOT restored. Run: HELMFILE_ENV=$HELMFILE_ENV AUTH_MODE=$AUTH_MODE OIDC_ISSUER_MODE=mock TENANT_ISOLATION_ENABLED=true make switch-tenant-model TENANT_MODEL=onprem"
+            error "tenant model NOT restored. Run: HELMFILE_ENV=$HELMFILE_ENV OIDC_ISSUER_MODE=mock TENANT_ISOLATION_ENABLED=true make switch-tenant-model TENANT_MODEL=onprem"
             rc=1
         }
     fi
@@ -462,12 +462,9 @@ run_current_model() {
     current_cluster_id=$(printf '%s' "$body" | jq -er '.id | select(type == "string" and length > 0)') \
         || fail "forged-header cluster response did not contain a cluster id"
     assert_tenancy "$body" "$tenant_a" ""
-    # Only EDGE+API gives the API a caller identity, the gateway wristband
-    # subject. In EDGE mode the API records its system default instead.
-    if [[ "$AUTH_MODE" == "EDGE+API" ]]; then
-        body_matches "$body" --arg subject "$subject_a" '.created_by == $subject' \
-            || fail "API did not record the gateway-derived identity $subject_a as created_by"
-    fi
+    # The wristband gives the API a caller identity, its subject.
+    body_matches "$body" --arg subject "$subject_a" '.created_by == $subject' \
+        || fail "API did not record the gateway-derived identity $subject_a as created_by"
     pass
 
     # The namespace's default ServiceAccount is never on the gateway allow-list.
@@ -526,6 +523,57 @@ printf "gateway=%s api_exit=%s api=%s\\n" "$gateway" "$api_exit" "$api"
     pass
 }
 
+# Shard isolation: the gateway's Authorino selects exactly the AuthConfigs
+# labeled hyperfleet.io/gateway=general. A decoy labeled for another shard (the
+# Desire Store's) claims the gateway's hosts with a policy that authorizes
+# everyone. It must not take effect: a request the decoy would authorize (no
+# credential at all) must still be denied, and it must stay status-less, because
+# Authorino sets a status on every AuthConfig it watches. Authorino lets the
+# incumbent policy keep a duplicated host, so a wrongly watched decoy can be
+# behaviorally inert — the status assertion is what catches that case; the
+# request assertion is the contract, and catches a decoy that ever wins the host.
+run_shard_isolation() {
+    local hosts decoy poll conditions
+    check "the gateway's Authorino loads no AuthConfig of another shard" \
+        "hyperfleet.io/gateway=general is the shard selector; a decoy AuthConfig must stay status-less and authorize nothing"
+    hosts=$(kubectl get authconfig hyperfleet-tenant-policy --namespace "$NAMESPACE" \
+        -o json | jq -c '.spec.hosts') \
+        || fail "could not read the hosts of the live AuthConfig"
+    decoy="hf-gateway-e2e-shard-${run_id}"
+    kubectl apply --namespace "$NAMESPACE" -f - >/dev/null <<DECOY
+apiVersion: authorino.kuadrant.io/v1beta3
+kind: AuthConfig
+metadata:
+  name: ${decoy}
+  labels:
+    hyperfleet.io/gateway-e2e-run: "${run_id}"
+    hyperfleet.io/desire-store: ""
+spec:
+  hosts: ${hosts}
+  authentication:
+    "decoy":
+      anonymous: {}
+DECOY
+    for (( poll = 0; poll < 3; poll++ )); do
+        sleep "$GATEWAY_E2E_POLL_INTERVAL"
+        # Read the whole object and extract with jq: a status-less AuthConfig is
+        # an absent .status, not a failed read, and a failed read must fail the
+        # check instead of passing as empty.
+        conditions=$(kubectl get authconfig "$decoy" --namespace "$NAMESPACE" -o json \
+            | jq -r '(.status.conditions // []) | map(.type) | join(" ")') \
+            || fail "could not read the decoy AuthConfig $decoy"
+        [[ -z "$conditions" ]] || fail "the general Authorino watched $decoy (status: $conditions)"
+    done
+    [[ "$(kubectl get authconfig hyperfleet-tenant-policy --namespace "$NAMESPACE" \
+        -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}')" == "True" ]] \
+        || fail "the real AuthConfig is not Ready; the decoy proves nothing without a live watcher"
+    # The decoy authorizes everyone, so a request with no credential at all
+    # would pass under it; the real policy must deny it.
+    expect_denied_at_gateway decoy-shard none ""
+    kubectl delete authconfig --namespace "$NAMESPACE" "$decoy" --wait=false >/dev/null
+    pass
+}
+
 run_full() {
     [[ "$TENANT_MODEL" == "onprem" ]] || fail "full must start with TENANT_MODEL=onprem"
     local onprem_subject="hf-gateway-e2e-old-${run_id}@example.com"
@@ -533,6 +581,7 @@ run_full() {
     local token
     run_network_policy_probe
     run_current_model
+    run_shard_isolation
 
     # The mock issuer serves both models, so on-prem tokens are minted after
     # the switch with the claims the on-prem pass just accepted. No token has
@@ -629,13 +678,18 @@ run_rotation() {
 
 validate_inputs
 # mint-human-token.sh reads these from the environment.
-export NAMESPACE AUTH_MODE OIDC_ISSUER_MODE TENANT_MODEL
+export NAMESPACE OIDC_ISSUER_MODE TENANT_MODEL
 mint_log=$(mktemp)
 trap on_exit EXIT
 check "HyperFleet stack is deployed and ready" \
     "bring it up with: HELMFILE_ENV=kind OIDC_ISSUER_MODE=mock TENANT_ISOLATION_ENABLED=true make local-up-kind"
+kubectl wait --for=condition=Programmed "gateway/${GATEWAY_NAME}" --namespace "$NAMESPACE" \
+    --timeout="${GATEWAY_E2E_TIMEOUT}s" >/dev/null
 kubectl wait --for=condition=Available deployment --namespace "$NAMESPACE" \
-    -l 'app.kubernetes.io/name in (mock-oidc,hyperfleet-gateway,hyperfleet-api,hyperfleet-sentinel,hyperfleet-adapter)' \
+    -l "gateway.envoyproxy.io/owning-gateway-name=${GATEWAY_NAME}" \
+    --timeout="${GATEWAY_E2E_TIMEOUT}s" >/dev/null
+kubectl wait --for=condition=Available deployment --namespace "$NAMESPACE" \
+    -l 'app.kubernetes.io/name in (mock-oidc,hyperfleet-api,hyperfleet-sentinel,hyperfleet-adapter)' \
     --timeout="${GATEWAY_E2E_TIMEOUT}s" >/dev/null
 kubectl wait --for=condition=Ready authconfig/hyperfleet-tenant-policy \
     --namespace "$NAMESPACE" --timeout="${GATEWAY_E2E_TIMEOUT}s" >/dev/null
@@ -645,4 +699,5 @@ case "$PHASE" in
     current-model) run_current_model ;;
     full) run_full ;;
     rotation) run_rotation ;;
+    shard) run_shard_isolation ;;
 esac
