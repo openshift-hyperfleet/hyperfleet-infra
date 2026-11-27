@@ -702,13 +702,13 @@ assert_contains "$(rendered_document "$second_out" Authorino)" 'authConfigLabelS
     'second gateway: the dedicated Authorino does not select the Desire Store shard label'
 assert_not_contains "$(rendered_document "$second_out" Authorino)" 'hyperfleet.io/gateway' \
     'second gateway: the dedicated Authorino selects the general shard label'
-for good_selector in 'hyperfleet.io/desire-store' '!hyperfleet.io/desire-store' 'hyperfleet.io/gateway=general' 'a=b,!c' 'a,b!=c'; do
+for good_selector in 'hyperfleet.io/desire-store' '!hyperfleet.io/desire-store' 'hyperfleet.io/gateway=general' 'a=b,!c' 'a,b!=c' 'a.b.c/d=e' '!a.b/d'; do
     render_gateway --set-json "authorino.authConfigLabelSelectors=\"$good_selector\"" >/dev/null || {
         echo "ERROR: authorino.authConfigLabelSelectors=$good_selector was rejected" >&2
         exit 1
     }
 done
-for bad_selector in 'a,' ',a' 'a,,b' 'a in (b,c)' '!!a' 'a=' 'a=b=c' '=a' 'a b' '!a=b' '!a!=b' 'a=b/c' 'a!=b/c'; do
+for bad_selector in 'a,' ',a' 'a,,b' 'a in (b,c)' '!!a' 'a=' 'a=b=c' '=a' 'a b' '!a=b' '!a!=b' 'a=b/c' 'a!=b/c' 'hyperfleet_io/desire-store' 'Hyperfleet.io/desire-store' 'a..b/c=d' '.a/b=c'; do
     if render_gateway --set-json "authorino.authConfigLabelSelectors=\"$bad_selector\"" >/dev/null 2>&1; then
         echo "ERROR: authorino.authConfigLabelSelectors=$bad_selector was accepted" >&2
         exit 1

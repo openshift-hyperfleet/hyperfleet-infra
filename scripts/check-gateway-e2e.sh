@@ -47,7 +47,7 @@ current_hint=""
 passed=0
 
 usage() {
-    echo "usage: $0 {human|current-model|full|rotation}" >&2
+    echo "usage: $0 {human|current-model|full|rotation|shard}" >&2
 }
 
 error() {
@@ -127,7 +127,7 @@ configure_model() {
 
 validate_inputs() {
     case "$PHASE" in
-        human|current-model|full|rotation) ;;
+        human|current-model|full|rotation|shard) ;;
         *) usage; exit 1 ;;
     esac
     if [[ "$PHASE" == "full" && "$HELMFILE_ENV" != "kind" ]]; then
@@ -308,6 +308,8 @@ cleanup_resources() {
     local rc=0
     cleanup_current_cluster || { error "failed to clean the suite-owned Cluster"; rc=1; }
     kubectl delete pod --namespace "$NAMESPACE" -l "$pod_labels" \
+        --ignore-not-found --wait=false >/dev/null 2>&1 || rc=1
+    kubectl delete authconfig --namespace "$NAMESPACE" -l hyperfleet.io/gateway-e2e-run="${run_id}" \
         --ignore-not-found --wait=false >/dev/null 2>&1 || rc=1
     rm -f "$mint_log"
     [[ -z "$rotation_output" ]] || rm -f "$rotation_output"
@@ -521,6 +523,57 @@ printf "gateway=%s api_exit=%s api=%s\\n" "$gateway" "$api_exit" "$api"
     pass
 }
 
+# Shard isolation: the gateway's Authorino selects exactly the AuthConfigs
+# labeled hyperfleet.io/gateway=general. A decoy labeled for another shard (the
+# Desire Store's) claims the gateway's hosts with a policy that authorizes
+# everyone. It must not take effect: a request the decoy would authorize (no
+# credential at all) must still be denied, and it must stay status-less, because
+# Authorino sets a status on every AuthConfig it watches. Authorino lets the
+# incumbent policy keep a duplicated host, so a wrongly watched decoy can be
+# behaviorally inert — the status assertion is what catches that case; the
+# request assertion is the contract, and catches a decoy that ever wins the host.
+run_shard_isolation() {
+    local hosts decoy poll conditions
+    check "the gateway's Authorino loads no AuthConfig of another shard" \
+        "hyperfleet.io/gateway=general is the shard selector; a decoy AuthConfig must stay status-less and authorize nothing"
+    hosts=$(kubectl get authconfig hyperfleet-tenant-policy --namespace "$NAMESPACE" \
+        -o json | jq -c '.spec.hosts') \
+        || fail "could not read the hosts of the live AuthConfig"
+    decoy="hf-gateway-e2e-shard-${run_id}"
+    kubectl apply --namespace "$NAMESPACE" -f - >/dev/null <<DECOY
+apiVersion: authorino.kuadrant.io/v1beta3
+kind: AuthConfig
+metadata:
+  name: ${decoy}
+  labels:
+    hyperfleet.io/gateway-e2e-run: "${run_id}"
+    hyperfleet.io/desire-store: ""
+spec:
+  hosts: ${hosts}
+  authentication:
+    "decoy":
+      anonymous: {}
+DECOY
+    for (( poll = 0; poll < 3; poll++ )); do
+        sleep "$GATEWAY_E2E_POLL_INTERVAL"
+        # Read the whole object and extract with jq: a status-less AuthConfig is
+        # an absent .status, not a failed read, and a failed read must fail the
+        # check instead of passing as empty.
+        conditions=$(kubectl get authconfig "$decoy" --namespace "$NAMESPACE" -o json \
+            | jq -r '(.status.conditions // []) | map(.type) | join(" ")') \
+            || fail "could not read the decoy AuthConfig $decoy"
+        [[ -z "$conditions" ]] || fail "the general Authorino watched $decoy (status: $conditions)"
+    done
+    [[ "$(kubectl get authconfig hyperfleet-tenant-policy --namespace "$NAMESPACE" \
+        -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}')" == "True" ]] \
+        || fail "the real AuthConfig is not Ready; the decoy proves nothing without a live watcher"
+    # The decoy authorizes everyone, so a request with no credential at all
+    # would pass under it; the real policy must deny it.
+    expect_denied_at_gateway decoy-shard none ""
+    kubectl delete authconfig --namespace "$NAMESPACE" "$decoy" --wait=false >/dev/null
+    pass
+}
+
 run_full() {
     [[ "$TENANT_MODEL" == "onprem" ]] || fail "full must start with TENANT_MODEL=onprem"
     local onprem_subject="hf-gateway-e2e-old-${run_id}@example.com"
@@ -528,6 +581,7 @@ run_full() {
     local token
     run_network_policy_probe
     run_current_model
+    run_shard_isolation
 
     # The mock issuer serves both models, so on-prem tokens are minted after
     # the switch with the claims the on-prem pass just accepted. No token has
@@ -645,4 +699,5 @@ case "$PHASE" in
     current-model) run_current_model ;;
     full) run_full ;;
     rotation) run_rotation ;;
+    shard) run_shard_isolation ;;
 esac

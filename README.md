@@ -148,7 +148,7 @@ Configuration precedence (highest to lowest):
 | `make mint-human-token` | Mint a test-only JWT from the mock issuer |
 | `make mint-machine-token` | Mint a short-lived ServiceAccount JWT for gateway authentication (the gateway validates it through TokenReview) |
 | `make check-human-token` | Verify human JWT tenant propagation, audience enforcement, and missing-claim denial |
-| `make check-gateway-e2e` | Run the full kind gateway identity, lifecycle, tenant-isolation, and NetworkPolicy suite |
+| `make check-gateway-e2e` | Run the full kind gateway identity, lifecycle, tenant-isolation, shard-isolation, and NetworkPolicy suite |
 | `make check-wristband-rotation` | Rotate and then revoke the wristband signing key while checking that requests keep working |
 
 `make install-hyperfleet` installs the Authorino operator automatically before

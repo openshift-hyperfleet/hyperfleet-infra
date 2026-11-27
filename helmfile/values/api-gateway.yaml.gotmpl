@@ -37,15 +37,12 @@ authorino:
 
     machineIdentity:
       audience: {{ .Values.machineIdentityAudience | quote }}
-      # Exact SA allow-list, derived from declared sentinels/adapters and any
-      # environment-specific machine callers. See helm/hyperfleet-gateway/values.yaml.
-      allowedServiceAccounts:
-        {{- range .Values.sentinels }}
-        - {{ printf "%s-hyperfleet-sentinel" .name | quote }}
-        {{- end }}
-        {{- range .Values.adapters }}
-        - {{ printf "%s-hyperfleet-adapter" .name | quote }}
-        {{- end }}
-        {{- range .Values.additionalMachineServiceAccounts }}
-        - {{ . | quote }}
-        {{- end }}
+      {{- /* Exact SA allow-list, derived from declared sentinels/adapters and any
+           environment-specific machine callers (see helm/hyperfleet-gateway/values.yaml).
+           Collected and serialized as one list so an environment with no machine callers
+           renders [] (deny all), not a null that Helm would drop against the schema. */}}
+      {{- $accounts := list }}
+      {{- range .Values.sentinels }}{{ $accounts = append $accounts (printf "%s-hyperfleet-sentinel" .name) }}{{ end }}
+      {{- range .Values.adapters }}{{ $accounts = append $accounts (printf "%s-hyperfleet-adapter" .name) }}{{ end }}
+      {{- range .Values.additionalMachineServiceAccounts }}{{ $accounts = append $accounts . }}{{ end }}
+      allowedServiceAccounts: {{ $accounts | toJson }}

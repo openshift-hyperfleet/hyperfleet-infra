@@ -126,5 +126,5 @@ config:
         - issuer_url: {{ $wristbandIssuer | quote }}
           jwk_cert_url: {{ $wristbandJWKS | quote }}
           jwk_cert_ca_file: /etc/hyperfleet/gateway-ca/ca.crt
-          audience: hyperfleet-api
+          audience: {{ .Values.apiAudience | quote }}
           identity_claim: sub
